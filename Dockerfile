@@ -21,3 +21,4 @@ COPY . .
 # будут переданы в контейнер при его запуске.
 CMD ["python", "main.py"]
 LABEL authors  = "Diana Globuz"
+EXPOSE 8000
