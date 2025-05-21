@@ -12,3 +12,8 @@ venv/
 *.db
 *.log
 .env
+*.svg
+/682c6abc30dfb.svg
+/ROADMAP.MD
+/TABLES.MD
+/V_01.MD
