@@ -154,16 +154,3 @@ Ensure the output is a valid JSON object.
     except Exception as e:
         logger.exception("An unexpected error occurred during DeepSeek request.")
         return {"error": f"Unexpected exception: {e}", "corrected_text": raw_text}
-
-# Для локального тестирования этого файла, если нужно
-# async def main_test():
-#     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-#     if not DEEPSEEK_API_KEY:
-#         print("Set DEEPSEEK_API_KEY environment variable.")
-#         return
-#     sample_text = "завтра в обед встреча с петром по поводу проекта альфа в кафе центральное"
-#     result = await enhance_text_with_llm(sample_text)
-#     print(json.dumps(result, indent=2, ensure_ascii=False))
-
-# if __name__ == "__main__":
-#     asyncio.run(main_test())
