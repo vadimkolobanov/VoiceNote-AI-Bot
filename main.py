@@ -148,6 +148,16 @@ async def handle_voice(message: types.Message, state: FSMContext):
     await get_or_create_user(message.from_user)  # Убедимся, что пользователь есть в БД
 
     voice = message.voice
+    MIN_VOICE_DURATION_SEC = 2  # Минимальная длительность в секундах (например, 1 или 2 секунды)
+    MIN_VOICE_FILE_SIZE_BYTES = 1000  # Минимальный размер файла в байтах (например, 1KB)
+
+    if voice.duration < MIN_VOICE_DURATION_SEC:
+        logger.info(f"Пользователь {message.from_user.id} отправил слишком короткое голосовое: {voice.duration} сек.")
+        await message.reply(
+            f"🎤 Ваше голосовое сообщение слишком короткое ({voice.duration} сек.).\n"
+            f"Пожалуйста, запишите сообщение длительностью не менее {MIN_VOICE_DURATION_SEC} сек."
+        )
+        return  # Прерываем дальнейшую обработку
     file_id = voice.file_id
 
     status_message = await message.reply("✔️ Запись получена. Начинаю распознавание речи...")
@@ -161,9 +171,23 @@ async def handle_voice(message: types.Message, state: FSMContext):
         return
     voice_message_datetime = message.date
     raw_text = await hf_speech_to_text(file_url)
-    if not raw_text:
+    MIN_STT_TEXT_LENGTH_CHARS = 5
+
+    if not raw_text or not raw_text.strip():
+        logger.info(f"STT для пользователя {message.from_user.id} вернул пустой текст.")
         await status_message.edit_text(
-            "❌ Не удалось распознать речь. Попробуйте записать четче."
+            "❌ К сожалению, не удалось распознать речь в вашем сообщении.\n"
+            "Попробуйте записать его четче или в более тихом месте."
+        )
+        return
+
+    if len(raw_text.strip()) < MIN_STT_TEXT_LENGTH_CHARS:
+        logger.info(
+            f"STT для пользователя {message.from_user.id} вернул слишком короткий текст (символы): '{raw_text}'")
+        await status_message.edit_text(
+            f"❌ Распознанный текст слишком короткий, чтобы из него можно было сделать осмысленную заметку.\n"
+            f"Распознано: {hcode(raw_text)}\n"
+            "Пожалуйста, попробуйте еще раз."
         )
         return
 
@@ -189,7 +213,7 @@ async def handle_voice(message: types.Message, state: FSMContext):
             details_parts = []
             if llm_result_dict.get("task_description"):
                 details_parts.append(f"📝 {hbold('Задача:')} {hitalic(llm_result_dict['task_description'])}")
-            # ... (остальные детали, как в предыдущей версии)
+
             dates_times_str_list = []
             for dt_entry in llm_result_dict.get("dates_times", []):
                 mention = dt_entry.get('original_mention', 'N/A')
@@ -211,15 +235,14 @@ async def handle_voice(message: types.Message, state: FSMContext):
     else:
         llm_info_for_user = f"{hitalic('LLM обработка пропущена: DEEPSEEK_API_KEY не настроен.')}"
 
-    # Сохраняем данные в FSM для подтверждения
     await state.set_state(NoteCreationStates.awaiting_confirmation)
     await state.update_data(
         original_stt_text=raw_text,
-        corrected_text=corrected_text_for_response,  # Текст, который будет сохранен
-        llm_analysis_json=llm_analysis_result,  # Полный JSON от LLM или None
+        corrected_text=corrected_text_for_response,
+        llm_analysis_json=llm_analysis_result,
         original_audio_telegram_file_id=file_id,
         voice_message_date=voice_message_datetime
-        # Можно добавить и другие данные, если нужно, например, due_date из llm_analysis_result
+
     )
 
     response_message_text = (
