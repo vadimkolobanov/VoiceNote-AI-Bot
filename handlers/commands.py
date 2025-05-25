@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.utils.markdown import hbold  # Для MarkdownV2 в /start
 
 # Импортируем константы и функции из других модулей
-from config import MAX_NOTES_MVP
+from config import MAX_NOTES_MVP, MAX_DAILY_STT_RECOGNITIONS_MVP
 from inline_keyboards import get_main_menu_keyboard, \
     PageNavigation  # <--- ИЗМЕНЕНИЕ get_action_keyboard на get_main_menu_keyboard
 from services.common import get_or_create_user
@@ -52,6 +52,7 @@ async def cmd_help(message: types.Message):
    - Я распознаю твою речь, улучшу текст и извлеку важные детали.
    - Тебе будет предложено сохранить заметку.
    - В текущей версии действует лимит: **{MAX_NOTES_MVP} активных заметок**.
+   - **{MAX_DAILY_STT_RECOGNITIONS_MVP} распознаваний голосовых в день**. 
 
 📝 **Мои заметки:**
    - Нажми кнопку "📝 Мои заметки" в главном меню (или команда /my_notes).

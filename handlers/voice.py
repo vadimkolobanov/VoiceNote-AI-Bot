@@ -12,7 +12,7 @@ from config import (
 )
 from inline_keyboards import get_note_confirmation_keyboard
 from llm_processor import enhance_text_with_llm
-from services.common import get_or_create_user
+from services.common import get_or_create_user, check_and_update_stt_limit, increment_stt_recognition_count
 from states import NoteCreationStates
 from utills import download_audio_content, recognize_speech_yandex
 from main import bot_instance  # Импортируем экземпляр бота из main.py
@@ -25,6 +25,15 @@ router = Router()
 async def handle_voice_message(message: types.Message, state: FSMContext):
     """Обрабатывает входящие голосовые сообщения."""
     await get_or_create_user(message.from_user)
+    user_tg = message.from_user
+    can_recognize, remaining_recognitions = await check_and_update_stt_limit(user_tg.id)
+    if not can_recognize:
+        logger.info(f"User {user_tg.id} exceeded daily STT limit.")
+        await message.reply(
+            "Вы достигли дневного лимита на распознавание голосовых сообщений. 😔\n"
+            "Попробуйте снова завтра. Спасибо за понимание!"
+        )
+        return
     voice = message.voice
 
     if voice.duration < MIN_VOICE_DURATION_SEC:
@@ -67,7 +76,8 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             "Попробуйте записать его четче или в более тихом месте."
         )
         return
-
+    await increment_stt_recognition_count(user_tg.id)
+    logger.info(f"STT successful for user {user_tg.id}. Remaining for today: {remaining_recognitions - 1}")
     if len(raw_text_stt.strip()) < MIN_STT_TEXT_CHARS or \
             len(raw_text_stt.strip().split()) < MIN_STT_TEXT_WORDS:
         logger.info(f"Yandex STT for user {message.from_user.id} returned too short text: '{raw_text_stt}'")
