@@ -28,6 +28,7 @@ MIN_VOICE_DURATION_SEC = 1  # Минимальная длительность г
 NOTES_PER_PAGE = 3 # Количество заметок на одной странице при пагинации
 MIN_STT_TEXT_CHARS = 5 # Минимальная длина текста после STT для обработки
 MIN_STT_TEXT_WORDS = 1 # Минимальное кол-во слов после STT для обработки
+MAX_DAILY_STT_RECOGNITIONS_MVP = 2
 
 # --- Feature Flags (based on API key presence) ---
 DEEPSEEK_API_KEY_EXISTS = bool(DEEPSEEK_API_KEY)

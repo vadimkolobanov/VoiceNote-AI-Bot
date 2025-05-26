@@ -3,7 +3,7 @@ import json
 import asyncpg
 import logging
 import os
-from datetime import datetime, timezone  # , timedelta # timedelta не используется напрямую здесь
+from datetime import datetime, timezone, date  # , timedelta # timedelta не используется напрямую здесь
 
 # Импортируем константы из config.py
 from config import DATABASE_URL, MAX_NOTES_MVP, NOTES_PER_PAGE  # <--- ИЗМЕНЕНИЕ
@@ -368,9 +368,18 @@ async def delete_note(note_id: int, telegram_id: int) -> bool:
             logger.info(f"Удалена заметка #{note_id} пользователя {telegram_id}.")
         return deleted_count > 0
 
+async def update_user_stt_counters(telegram_id: int, new_count: int, reset_date: date):
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE users 
+            SET daily_stt_recognitions_count = $1, last_stt_reset_date = $2, updated_at = NOW()
+            WHERE telegram_id = $3
+            """, new_count, reset_date, telegram_id
+        )
 
-# ... (остальные функции update_user_custom_data, update_user_subscription_status, update_note_text, archive_note, pin_note, get_subscription_type_by_name)
-# ... (setup_database_on_startup, shutdown_database_on_shutdown, _test_db_operations - без изменений)
+
 async def setup_database_on_startup():
     try:
         await init_db()
