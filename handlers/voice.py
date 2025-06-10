@@ -15,7 +15,7 @@ from llm_processor import enhance_text_with_llm
 from services.common import get_or_create_user, check_and_update_stt_limit, increment_stt_recognition_count
 from states import NoteCreationStates
 from utills import download_audio_content, recognize_speech_yandex
-from main import bot_instance  # Импортируем экземпляр бота из main.py
+# Экземпляр бота больше не импортируется отсюда
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -50,8 +50,10 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     status_msg = await message.reply("✔️ Запись получена. Скачиваю и начинаю распознавание...")
 
     try:
-        file_info = await bot_instance.get_file(file_id)  # Используем bot_instance
-        file_url = f"https://api.telegram.org/file/bot{bot_instance.token}/{file_info.file_path}"
+        # Используем message.bot вместо импортированного экземпляра
+        file_info = await message.bot.get_file(file_id)
+        # И здесь тоже используем токен из message.bot
+        file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file_info.file_path}"
     except Exception as e:
         logger.exception(f"Error getting file info for user {message.from_user.id}")
         await status_msg.edit_text(f"❌ Ошибка при получении файла от Telegram: {e}")
@@ -93,7 +95,7 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
 
     llm_analysis_result_json = None
     corrected_text_for_response = raw_text_stt
-    llm_info_for_user_display = ""  # Инициализируем пустой строкой
+    llm_info_for_user_display = ""
 
     if DEEPSEEK_API_KEY_EXISTS:
         llm_result_dict = await enhance_text_with_llm(raw_text_stt)
@@ -148,13 +150,13 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     try:
         await status_msg.edit_text(
             response_to_user,
-            reply_markup=get_note_confirmation_keyboard(),  # <--- ИЗМЕНЕНИЕ
+            reply_markup=get_note_confirmation_keyboard(),
             parse_mode="HTML"
         )
     except Exception as e:
         logger.warning(f"Could not edit status message, sending new: {e}")
         await message.answer(
             response_to_user,
-            reply_markup=get_note_confirmation_keyboard(),  # <--- ИЗМЕНЕНИЕ
+            reply_markup=get_note_confirmation_keyboard(),
             parse_mode="HTML"
         )
