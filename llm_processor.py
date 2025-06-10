@@ -2,7 +2,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import os
 
 import aiohttp
@@ -15,15 +15,14 @@ DEEPSEEK_MODEL_NAME = "deepseek-chat"
 
 logger = logging.getLogger(__name__)
 
-def _get_current_date_str() -> str:
-    """Возвращает текущую дату в формате YYYY-MM-DD для использования в промптах."""
-    return datetime.now().strftime("%Y-%m-%d")
+
+def _get_current_datetime_utc_iso() -> str:
+    """Возвращает текущую дату и время в UTC в формате ISO 8601."""
+    return datetime.now(timezone.utc).isoformat()
+
 
 def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
-    """
-    Пытается распарсить JSON из ответа LLM.
-    Ожидает, что LLM вернет JSON-строку.
-    """
+    # ... (эта функция без изменений) ...
     try:
         extracted_info = json.loads(response_text)
         if not isinstance(extracted_info, dict):
@@ -40,54 +39,53 @@ def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
         logger.error(f"Unexpected error parsing LLM response: {e}. LLM Response: {response_text[:500]}...")
         return {"error": f"Unexpected error: {str(e)}", "corrected_text": original_text}
 
+
 async def enhance_text_with_llm(
     raw_text: str,
     api_key: str = DEEPSEEK_API_KEY,
     api_url: str = DEEPSEEK_API_URL,
     model_name: str = DEEPSEEK_MODEL_NAME
 ) -> dict:
-    """
-    Отправляет текст в LLM DeepSeek для улучшения и извлечения сущностей.
-    """
     if not api_key:
+        # ... (проверки без изменений) ...
         logger.error("DeepSeek API key is not configured. Set DEEPSEEK_API_KEY environment variable.")
         return {"error": "DeepSeek API key not configured", "corrected_text": raw_text}
     if not api_url or not model_name:
         logger.error("DeepSeek API URL or Model Name is not configured.")
         return {"error": "DeepSeek API URL or Model Name not configured", "corrected_text": raw_text}
 
-    today_date_str = _get_current_date_str()
+    # <--- ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ И ОБНОВЛЯЕМ ПРОМПТ --->
+    current_datetime_utc_str = _get_current_datetime_utc_iso()
     system_prompt = f"""You are an AI assistant specialized in processing transcribed voice notes in Russian.
 Your tasks are:
-1. Correct any transcription errors, improve grammar, and punctuation of the provided Russian text, while preserving the original meaning. The corrected text should also be in Russian.
-2. Analyze the corrected Russian text and extract structured information.
-3. Return the output ONLY as a single JSON object. Do NOT include any explanatory text before or after the JSON.
+1. Correct transcription errors, improve grammar, and punctuation of the provided Russian text.
+2. Analyze the corrected text and extract structured information.
+3. Return the output ONLY as a single, valid JSON object. Do NOT include any explanatory text before or after the JSON.
 
-The JSON object should strictly follow this structure:
+The JSON object must strictly follow this structure:
 {{
-  "corrected_text": "Полностью исправленный и отформатированный текст заметки на русском языке.",
-  "task_description": "Краткое описание основной задачи или действия на русском языке, если есть. Null, если не применимо.",
-  "event_description": "Описание события на русском языке, если есть (например, 'день рождения', 'встреча'). Null, если не применимо.",
+  "corrected_text": "...",
+  "task_description": "...",
+  "event_description": "...",
   "dates_times": [
     {{
-      "original_mention": "Как дата/время было упомянуто в тексте (например, 'завтра', 'в следующий понедельник в 10 утра'). На русском языке.",
-      "absolute_datetime_start": "Рассчитанное абсолютное начальное дата и время в формате ISO 8601 (YYYY-MM-DDTHH:MM:SS). Если упомянута только дата, используйте T00:00:00. Если упомянуто только время, предполагайте сегодняшнюю дату.",
-      "absolute_datetime_end": "Рассчитанное абсолютное конечное дата и время в формате ISO 8601 (опционально, если это продолжительность или диапазон). Null, если не применимо."
+      "original_mention": "Как дата/время было упомянуто в тексте.",
+      "absolute_datetime_start": "Рассчитанное абсолютное время в UTC, в формате ISO 8601 (YYYY-MM-DDTHH:MM:SSZ). Это поле ОБЯЗАТЕЛЬНО должно быть в UTC.",
+      "absolute_datetime_end": "..."
     }}
   ],
-  "people_mentioned": ["Список имен упомянутых людей (на русском). Пустой массив, если нет."],
-  "locations_mentioned": ["Список упомянутых мест (на русском). Пустой массив, если нет."],
-  "implied_intent": ["Список потенциальных намерений пользователя (например, 'create_reminder', 'add_to_calendar', 'get_weather_forecast', 'general_note', 'ask_question'). Ключи намерений на английском. Пустой массив, если не ясно."]
+  "people_mentioned": [...],
+  "locations_mentioned": [...],
+  "implied_intent": ["..."]
 }}
 
-Current date for reference: {today_date_str}.
-When calculating absolute dates from Russian text:
-- 'Завтра' is { (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d') }.
-- 'Послезавтра' is { (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d') }.
-- 'Через неделю' means 7 days from today.
-- If a day of the week is mentioned (e.g., 'в пятницу'), assume the closest upcoming Friday. If 'в следующую пятницу', then the Friday of the following week.
-All textual outputs in the JSON (like corrected_text, descriptions, mentions) should be in Russian.
-Ensure the output is a valid JSON object.
+IMPORTANT:
+- Current date and time for reference is: {current_datetime_utc_str}. This is the point in time from which all relative times ('in 2 minutes', 'tomorrow at 5 PM') should be calculated.
+- All absolute date/time values in the output JSON ('absolute_datetime_start', 'absolute_datetime_end') MUST be calculated and returned in UTC timezone, ending with 'Z'.
+- If a time is mentioned without a date (e.g., 'at 7 PM'), assume it's for the current day or the next day if that time has already passed today in UTC.
+- If a date is mentioned without a time (e.g., 'on Friday'), use T00:00:00Z for the time part.
+- If no date or time is mentioned in the text, the "dates_times" array should be empty.
+- If a date/time is mentioned, the "implied_intent" array MUST include 'create_reminder'.
 """
     user_prompt = f"Проанализируй следующий текст голосовой заметки (он на русском языке):\n\n\"{raw_text}\""
 
@@ -102,12 +100,13 @@ Ensure the output is a valid JSON object.
             {"role": "user", "content": user_prompt}
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.3,
+        "temperature": 0.2, # Снижаем температуру для большей точности в датах
         "max_tokens": 2048,
     }
 
-    logger.debug(f"Sending request to DeepSeek. Model: {model_name}. URL: {api_url}")
+    logger.debug(f"Sending request to DeepSeek. Current UTC time for prompt: {current_datetime_utc_str}")
     try:
+        # ... (остальной код функции без изменений) ...
         async with aiohttp.ClientSession() as session:
             async with session.post(api_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 response_text = await resp.text()
@@ -122,7 +121,7 @@ Ensure the output is a valid JSON object.
                         message_content_str = response_data['choices'][0].get('message', {}).get('content')
                         if message_content_str:
                             parsed_result = _parse_llm_json_response(message_content_str, raw_text)
-                            parsed_result["raw_llm_response_content"] = message_content_str # Сохраняем JSON из 'content'
+                            parsed_result["raw_llm_response_content"] = message_content_str
                             return parsed_result
                         else:
                             logger.error("DeepSeek response 'message.content' is missing or empty.")

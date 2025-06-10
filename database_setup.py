@@ -30,7 +30,8 @@ CREATE_TABLE_STATEMENTS = [
     # Безопасное добавление колонок, если они отсутствуют.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_stt_recognitions_count INTEGER DEFAULT 0;",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_stt_reset_date DATE;",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';", # <--- НОВОЕ ПОЛЕ
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip BOOLEAN DEFAULT FALSE;", # <--- НОВОЕ ПОЛЕ
     """
     CREATE TABLE IF NOT EXISTS subscriptions
     (
@@ -63,10 +64,11 @@ CREATE_TABLE_STATEMENTS = [
         is_pinned BOOLEAN DEFAULT FALSE
     );
     """,
+    # <--- НОВОЕ ПОЛЕ. ALTER TABLE здесь не нужен, т.к. мы задали DEFAULT в CREATE
+    # и эта колонка уже была в прошлой версии. Просто для ясности, что она используется для категорий.
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes (created_at DESC);",
-    # ... (остальные CREATE TABLE без изменений) ...
     """
     CREATE TABLE IF NOT EXISTS payments
     (
@@ -179,9 +181,8 @@ async def get_user_profile(telegram_id: int) -> dict | None:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
         return dict(user_record) if user_record else None
 
-# <--- НОВАЯ ФУНКЦИЯ --->
+
 async def set_user_timezone(telegram_id: int, timezone_str: str) -> bool:
-    """Устанавливает часовой пояс для пользователя."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -191,6 +192,43 @@ async def set_user_timezone(telegram_id: int, timezone_str: str) -> bool:
         updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
         if updated_count > 0:
             logger.info(f"Для пользователя {telegram_id} установлен часовой пояс: {timezone_str}")
+        return updated_count > 0
+
+async def get_all_users_paginated(page: int = 1, per_page: int = 10) -> tuple[list[dict], int]:
+    """
+    Получает список всех пользователей с пагинацией.
+    Возвращает список пользователей на странице и общее количество пользователей.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Сначала получаем общее количество пользователей
+        total_items = await conn.fetchval("SELECT COUNT(*) FROM users")
+        total_items = total_items or 0
+
+        # Затем получаем пользователей для конкретной страницы
+        offset = (page - 1) * per_page
+        users_query = """
+            SELECT telegram_id, username, first_name, is_vip, created_at
+            FROM users
+            ORDER BY created_at DESC
+            LIMIT $1 OFFSET $2;
+        """
+        users_records = await conn.fetch(users_query, per_page, offset)
+
+        return [dict(record) for record in users_records], total_items
+
+async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
+    """Устанавливает VIP-статус для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE users SET is_vip = $1, updated_at = NOW() WHERE telegram_id = $2",
+            is_vip, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            status = "активирован" if is_vip else "деактивирован"
+            logger.info(f"VIP-статус для пользователя {telegram_id} был {status}.")
         return updated_count > 0
 
 
@@ -213,11 +251,9 @@ async def get_paginated_notes_for_user(
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE"
-
         total_query = f"SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND {archived_filter_sql}"
         total_items = await conn.fetchval(total_query, telegram_id)
         total_items = total_items or 0
-
         offset = (page - 1) * per_page
         notes_query = f"""
             SELECT * FROM notes
@@ -226,7 +262,6 @@ async def get_paginated_notes_for_user(
             LIMIT $2 OFFSET $3;
         """
         notes_records = await conn.fetch(notes_query, telegram_id, per_page, offset)
-
         return [dict(record) for record in notes_records], total_items
 
 
@@ -306,6 +341,33 @@ async def set_note_archived_status(note_id: int, telegram_id: int, archived: boo
             status = "архивирована" if archived else "восстановлена из архива"
             logger.info(f"Заметка #{note_id} была {status} пользователем {telegram_id}.")
         return updated_count > 0
+
+# <--- НОВЫЕ ФУНКЦИИ --->
+async def update_note_category(note_id: int, new_category: str, telegram_id: int) -> bool:
+    """Обновляет категорию заметки."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
+            new_category, note_id, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Категория заметки #{note_id} обновлена на '{new_category}'.")
+        return updated_count > 0
+
+async def get_notes_with_reminders() -> list[dict]:
+    """Получает все активные, неархивированные заметки с due_date в будущем."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        now = datetime.now(timezone.utc)
+        query = """
+            SELECT note_id, telegram_id, corrected_text, due_date
+            FROM notes
+            WHERE is_archived = FALSE AND due_date IS NOT NULL AND due_date > $1;
+        """
+        notes_records = await conn.fetch(query, now)
+        return [dict(record) for record in notes_records]
 
 
 async def update_user_stt_counters(telegram_id: int, new_count: int, reset_date: date):
