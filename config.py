@@ -8,6 +8,10 @@ load_dotenv()
 # --- Telegram Bot Token ---
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 
+# --- Admin ID ---
+ADMIN_TELEGRAM_ID = int(os.environ.get("ADMIN_TELEGRAM_ID")) if os.environ.get("ADMIN_TELEGRAM_ID") else None
+
+
 # --- API Keys & IDs ---
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 YANDEX_SPEECHKIT_API_KEY = os.environ.get("YANDEX_SPEECHKIT_API_KEY")
@@ -23,12 +27,18 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 
 # --- Application Settings ---
-MAX_NOTES_MVP = 5  # Лимит заметок на пользователя в MVP
-MIN_VOICE_DURATION_SEC = 1  # Минимальная длительность голосового сообщения
-NOTES_PER_PAGE = 3 # Количество заметок на одной странице при пагинации
-MIN_STT_TEXT_CHARS = 5 # Минимальная длина текста после STT для обработки
-MIN_STT_TEXT_WORDS = 1 # Минимальное кол-во слов после STT для обработки
+MAX_NOTES_MVP = 5
+MIN_VOICE_DURATION_SEC = 1
+NOTES_PER_PAGE = 3
+MIN_STT_TEXT_CHARS = 5
+MIN_STT_TEXT_WORDS = 1
 MAX_DAILY_STT_RECOGNITIONS_MVP = 15
+
+# <--- НОВЫЙ СПИСОК --->
+NOTE_CATEGORIES = [
+    "Общее", "Работа", "Личное", "Задачи", "Идеи", "Покупки"
+]
+
 
 # --- Feature Flags (based on API key presence) ---
 DEEPSEEK_API_KEY_EXISTS = bool(DEEPSEEK_API_KEY)
@@ -36,8 +46,10 @@ YANDEX_STT_CONFIGURED = bool(YANDEX_SPEECHKIT_API_KEY and YANDEX_SPEECHKIT_FOLDE
 
 
 # --- Logging Configuration ---
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__) # Глобальный логгер для config, если нужен
+logger = logging.getLogger(__name__)
+
+if not ADMIN_TELEGRAM_ID:
+    logger.warning("Переменная окружения ADMIN_TELEGRAM_ID не установлена! Админ-команды будут недоступны.")
