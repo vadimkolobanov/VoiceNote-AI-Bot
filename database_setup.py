@@ -3,109 +3,57 @@ import json
 import asyncpg
 import logging
 import os
-from datetime import datetime, timezone, date  # , timedelta # timedelta не используется напрямую здесь
+from datetime import datetime, timezone, date
 
 # Импортируем константы из config.py
-from config import DATABASE_URL, MAX_NOTES_MVP, NOTES_PER_PAGE  # <--- ИЗМЕНЕНИЕ
-
-# Загрузка .env не нужна здесь, если DATABASE_URL уже сформирован в config.py
-# from dotenv import load_dotenv
-# load_dotenv()
+from config import DATABASE_URL, MAX_NOTES_MVP, NOTES_PER_PAGE
 
 logger = logging.getLogger(__name__)
 
 # --- SCHEMA DEFINITION ---
-# ... (CREATE_TABLE_STATEMENTS без изменений, как в предыдущих версиях) ...
 CREATE_TABLE_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS users
     (
-        telegram_id
-        BIGINT
-        PRIMARY
-        KEY,
-        username
-        TEXT,
-        first_name
-        TEXT,
-        last_name
-        TEXT,
-        language_code
-        TEXT,
-        created_at
-        TIMESTAMPTZ
-        DEFAULT
-        NOW
-    (
-    ),
-        updated_at TIMESTAMPTZ DEFAULT NOW
-    (
-    ),
+        telegram_id BIGINT PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        language_code TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
         custom_profile_data JSONB,
         subscription_status TEXT DEFAULT 'free',
         subscription_expires_at TIMESTAMPTZ
-        );
+    );
     """,
+    # Безопасное добавление колонок, если они отсутствуют.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_stt_recognitions_count INTEGER DEFAULT 0;",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_stt_reset_date DATE;",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';", # <--- НОВОЕ ПОЛЕ
     """
     CREATE TABLE IF NOT EXISTS subscriptions
     (
-        subscription_id
-        SERIAL
-        PRIMARY
-        KEY,
-        name
-        TEXT
-        UNIQUE
-        NOT
-        NULL,
-        description
-        TEXT,
-        price_cents
-        INTEGER
-        NOT
-        NULL,
-        currency
-        TEXT
-        NOT
-        NULL
-        DEFAULT
-        'RUB',
-        duration_days
-        INTEGER
-        NOT
-        NULL,
-        is_active
-        BOOLEAN
-        DEFAULT
-        TRUE
+        subscription_id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        price_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'RUB',
+        duration_days INTEGER NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE
     );
     """,
     """
     CREATE TABLE IF NOT EXISTS notes
     (
-        note_id
-        SERIAL
-        PRIMARY
-        KEY,
-        telegram_id
-        BIGINT
-        NOT
-        NULL
-        REFERENCES
-        users
-    (
-        telegram_id
-    ) ON DELETE CASCADE,
+        note_id SERIAL PRIMARY KEY,
+        telegram_id BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
         original_stt_text TEXT,
         corrected_text TEXT NOT NULL,
         category TEXT DEFAULT 'Общее',
         tags TEXT[],
-        created_at TIMESTAMPTZ DEFAULT NOW
-    (
-    ),
-        updated_at TIMESTAMPTZ DEFAULT NOW
-    (
-    ),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
         note_taken_at TIMESTAMPTZ,
         original_audio_telegram_file_id TEXT,
         llm_analysis_json JSONB,
@@ -113,77 +61,41 @@ CREATE_TABLE_STATEMENTS = [
         location_info JSONB,
         is_archived BOOLEAN DEFAULT FALSE,
         is_pinned BOOLEAN DEFAULT FALSE
-        );
+    );
     """,
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
-    "CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes (created_at DESC);",  # Для сортировки
+    "CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes (created_at DESC);",
+    # ... (остальные CREATE TABLE без изменений) ...
     """
     CREATE TABLE IF NOT EXISTS payments
     (
-        payment_id
-        SERIAL
-        PRIMARY
-        KEY,
-        telegram_id
-        BIGINT
-        NOT
-        NULL
-        REFERENCES
-        users
-    (
-        telegram_id
-    ) ON DELETE CASCADE,
-        subscription_id INTEGER REFERENCES subscriptions
-    (
-        subscription_id
-    ),
+        payment_id SERIAL PRIMARY KEY,
+        telegram_id BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        subscription_id INTEGER REFERENCES subscriptions (subscription_id),
         amount_cents INTEGER NOT NULL,
         currency TEXT NOT NULL,
         payment_system TEXT,
         external_payment_id TEXT UNIQUE,
         status TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW
-    (
-    ),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
         paid_at TIMESTAMPTZ,
         payment_metadata JSONB
-        );
+    );
     """,
     """
     CREATE TABLE IF NOT EXISTS user_subscriptions
     (
-        user_subscription_id
-        SERIAL
-        PRIMARY
-        KEY,
-        telegram_id
-        BIGINT
-        NOT
-        NULL
-        REFERENCES
-        users
-    (
-        telegram_id
-    ) ON DELETE CASCADE,
-        subscription_id INTEGER NOT NULL REFERENCES subscriptions
-    (
-        subscription_id
-    )
-      ON DELETE CASCADE,
+        user_subscription_id SERIAL PRIMARY KEY,
+        telegram_id BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        subscription_id INTEGER NOT NULL REFERENCES subscriptions (subscription_id) ON DELETE CASCADE,
         start_date TIMESTAMPTZ NOT NULL,
         end_date TIMESTAMPTZ NOT NULL,
-        payment_id INTEGER REFERENCES payments
-    (
-        payment_id
-    )
-      ON DELETE SET NULL,
+        payment_id INTEGER REFERENCES payments (payment_id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'active',
         auto_renew BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMPTZ DEFAULT NOW
-    (
-    )
-        );
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
     """,
     "CREATE INDEX IF NOT EXISTS idx_user_subscriptions_telegram_id ON user_subscriptions (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_user_subscriptions_end_date ON user_subscriptions (end_date);"
@@ -194,11 +106,10 @@ db_pool: asyncpg.Pool | None = None
 
 
 async def get_db_pool() -> asyncpg.Pool:
-    """Возвращает пул соединений к БД, создавая его при необходимости."""
     global db_pool
     if db_pool is None:
         try:
-            db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=2, max_size=10)  # Увеличил min_size
+            db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=2, max_size=10)
             logger.info("Пул соединений к PostgreSQL успешно создан.")
         except Exception as e:
             logger.critical(f"Не удалось подключиться к PostgreSQL: {e}", exc_info=True)
@@ -207,7 +118,6 @@ async def get_db_pool() -> asyncpg.Pool:
 
 
 async def close_db_pool():
-    """Закрывает пул соединений к БД."""
     global db_pool
     if db_pool:
         await db_pool.close()
@@ -216,7 +126,6 @@ async def close_db_pool():
 
 
 async def init_db():
-    """Инициализирует базу данных, создавая таблицы, если они не существуют."""
     pool = await get_db_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
@@ -230,8 +139,6 @@ async def init_db():
 
 
 async def add_default_subscription_type():
-    """Добавляет тип подписки по умолчанию, если его нет."""
-    # ... (без изменений)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         existing = await conn.fetchrow("SELECT subscription_id FROM subscriptions WHERE name = $1", "Full Месячная")
@@ -248,8 +155,6 @@ async def add_default_subscription_type():
 # --- USER OPERATIONS ---
 async def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None,
                              last_name: str = None, language_code: str = None) -> dict | None:
-    """Добавляет нового пользователя или обновляет существующего."""
-    # ... (без изменений)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         now = datetime.now(timezone.utc)
@@ -265,21 +170,31 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
                     RETURNING *; \
                 """
         user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
-        # logger.info(f"Пользователь {telegram_id} добавлен/обновлен.") # Можно убрать, если слишком много логов
         return dict(user_record) if user_record else None
 
 
 async def get_user_profile(telegram_id: int) -> dict | None:
-    """Получает профиль пользователя по telegram_id."""
-    # ... (без изменений)
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
         return dict(user_record) if user_record else None
 
+# <--- НОВАЯ ФУНКЦИЯ --->
+async def set_user_timezone(telegram_id: int, timezone_str: str) -> bool:
+    """Устанавливает часовой пояс для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2",
+            timezone_str, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Для пользователя {telegram_id} установлен часовой пояс: {timezone_str}")
+        return updated_count > 0
+
 
 async def count_active_notes_for_user(telegram_id: int) -> int:
-    """Считает количество активных (неархивированных) заметок пользователя."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         count = await conn.fetchval(
@@ -292,33 +207,30 @@ async def count_active_notes_for_user(telegram_id: int) -> int:
 async def get_paginated_notes_for_user(
         telegram_id: int,
         page: int = 1,
-        per_page: int = NOTES_PER_PAGE,  # Используем NOTES_PER_PAGE из config
+        per_page: int = NOTES_PER_PAGE,
         archived: bool = False
 ) -> tuple[list[dict], int]:
-    """
-    Получает заметки пользователя для указанной страницы и общее количество таких заметок.
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        archived_filter_sql = "AND is_archived = FALSE" if not archived else "AND is_archived = TRUE"
+        archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE"
 
-        total_query = f"SELECT COUNT(*) FROM notes WHERE telegram_id = $1 {archived_filter_sql}"
+        total_query = f"SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND {archived_filter_sql}"
         total_items = await conn.fetchval(total_query, telegram_id)
         total_items = total_items or 0
 
         offset = (page - 1) * per_page
         notes_query = f"""
             SELECT * FROM notes
-            WHERE telegram_id = $1 {archived_filter_sql}
+            WHERE telegram_id = $1 AND {archived_filter_sql}
             ORDER BY is_pinned DESC, note_taken_at DESC, created_at DESC
             LIMIT $2 OFFSET $3;
-        """  # Добавил note_taken_at в сортировку
+        """
         notes_records = await conn.fetch(notes_query, telegram_id, per_page, offset)
 
         return [dict(record) for record in notes_records], total_items
 
 
-# --- NOTE OPERATIONS --- (create_note, get_note_by_id, delete_note и т.д. - без изменений, как были)
+# --- NOTE OPERATIONS ---
 async def create_note(
         telegram_id: int, corrected_text: str, original_stt_text: str = None, category: str = 'Общее',
         tags: list[str] = None, note_taken_at: datetime = None, original_audio_telegram_file_id: str = None,
@@ -365,15 +277,43 @@ async def delete_note(note_id: int, telegram_id: int) -> bool:
         )
         deleted_count = int(result.split(" ")[1]) if result.startswith("DELETE ") else 0
         if deleted_count > 0:
-            logger.info(f"Удалена заметка #{note_id} пользователя {telegram_id}.")
+            logger.info(f"Удалена (навсегда) заметка #{note_id} пользователя {telegram_id}.")
         return deleted_count > 0
+
+
+async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET corrected_text = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
+            new_text, note_id, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Текст заметки #{note_id} обновлен пользователем {telegram_id}.")
+        return updated_count > 0
+
+
+async def set_note_archived_status(note_id: int, telegram_id: int, archived: bool) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
+            archived, note_id, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            status = "архивирована" if archived else "восстановлена из архива"
+            logger.info(f"Заметка #{note_id} была {status} пользователем {telegram_id}.")
+        return updated_count > 0
+
 
 async def update_user_stt_counters(telegram_id: int, new_count: int, reset_date: date):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            UPDATE users 
+            UPDATE users
             SET daily_stt_recognitions_count = $1, last_stt_reset_date = $2, updated_at = NOW()
             WHERE telegram_id = $3
             """, new_count, reset_date, telegram_id

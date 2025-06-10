@@ -8,3 +8,11 @@ class NoteCreationStates(StatesGroup):
 class NoteNavigationStates(StatesGroup):
     """Состояния для навигации по списку заметок."""
     browsing_notes = State()
+
+class NoteEditingStates(StatesGroup):
+    """Состояния для процесса редактирования заметки."""
+    awaiting_new_text = State()
+
+class ProfileSettingsStates(StatesGroup):
+    """Состояния для настройки профиля пользователя."""
+    awaiting_timezone = State()
