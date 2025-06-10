@@ -5,7 +5,7 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-
+from handlers import timezone_selector as tz_router
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -76,7 +76,7 @@ async def main():
     dp.include_router(notes_router.router)
     dp.include_router(voice_router.router)
     dp.include_router(profile_router.router)  # Роутер для профиля
-
+    dp.include_router(tz_router.router)
     # Регистрация lifecycle handlers
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
