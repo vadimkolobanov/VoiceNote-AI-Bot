@@ -27,7 +27,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s [%(levelname)s] - %(message)s (%(filename)s:%(lineno)d)'
 )
 logger = logging.getLogger(__name__)  # Основной логгер приложения
-
+logging.getLogger("aiogram").setLevel(logging.WARNING)
 # --- Bot Instance ---
 if not TG_BOT_TOKEN:
     logger.critical("Переменная окружения TG_BOT_TOKEN не установлена!")
@@ -38,6 +38,11 @@ bot_instance = Bot(token=TG_BOT_TOKEN)
 # --- Lifecycle Handlers ---
 async def on_startup(dispatcher: Dispatcher):
     """Выполняется при запуске бота."""
+    try:
+        await dispatcher.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Вебхук успешно удален. Начинаем работу в режиме polling")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении вебхука: {e}")
     logger.info("Инициализация базы данных...")
     await db.setup_database_on_startup()
     logger.info("Бот запущен и готов к работе!")
@@ -78,6 +83,11 @@ async def main():
 
     logger.info("Запуск polling...")
     try:
+        # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: Убедимся, что вебхук удален
+        if await bot_instance.get_webhook_info():
+            logger.warning("Обнаружен активный вебхук! Принудительное удаление...")
+            await bot_instance.delete_webhook()
+
         # Передаем экземпляр бота в start_polling
         await dp.start_polling(bot_instance, allowed_updates=dp.resolve_used_update_types())
     except Exception as e:
