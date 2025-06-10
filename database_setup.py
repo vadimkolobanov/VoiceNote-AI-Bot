@@ -27,9 +27,10 @@ CREATE_TABLE_STATEMENTS = [
         subscription_expires_at TIMESTAMPTZ
     );
     """,
-    # Безопасное добавление колонок, если они отсутствуют. Не вызовет ошибки, если уже есть.
+    # Безопасное добавление колонок, если они отсутствуют.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_stt_recognitions_count INTEGER DEFAULT 0;",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_stt_reset_date DATE;",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';", # <--- НОВОЕ ПОЛЕ
     """
     CREATE TABLE IF NOT EXISTS subscriptions
     (
@@ -65,6 +66,7 @@ CREATE_TABLE_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes (created_at DESC);",
+    # ... (остальные CREATE TABLE без изменений) ...
     """
     CREATE TABLE IF NOT EXISTS payments
     (
@@ -104,7 +106,6 @@ db_pool: asyncpg.Pool | None = None
 
 
 async def get_db_pool() -> asyncpg.Pool:
-    """Возвращает пул соединений к БД, создавая его при необходимости."""
     global db_pool
     if db_pool is None:
         try:
@@ -117,7 +118,6 @@ async def get_db_pool() -> asyncpg.Pool:
 
 
 async def close_db_pool():
-    """Закрывает пул соединений к БД."""
     global db_pool
     if db_pool:
         await db_pool.close()
@@ -126,7 +126,6 @@ async def close_db_pool():
 
 
 async def init_db():
-    """Инициализирует базу данных, создавая таблицы, если они не существуют."""
     pool = await get_db_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
@@ -140,7 +139,6 @@ async def init_db():
 
 
 async def add_default_subscription_type():
-    """Добавляет тип подписки по умолчанию, если его нет."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         existing = await conn.fetchrow("SELECT subscription_id FROM subscriptions WHERE name = $1", "Full Месячная")
@@ -157,7 +155,6 @@ async def add_default_subscription_type():
 # --- USER OPERATIONS ---
 async def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None,
                              last_name: str = None, language_code: str = None) -> dict | None:
-    """Добавляет нового пользователя или обновляет существующего."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         now = datetime.now(timezone.utc)
@@ -177,15 +174,27 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
 
 
 async def get_user_profile(telegram_id: int) -> dict | None:
-    """Получает профиль пользователя по telegram_id."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
         return dict(user_record) if user_record else None
 
+# <--- НОВАЯ ФУНКЦИЯ --->
+async def set_user_timezone(telegram_id: int, timezone_str: str) -> bool:
+    """Устанавливает часовой пояс для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2",
+            timezone_str, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Для пользователя {telegram_id} установлен часовой пояс: {timezone_str}")
+        return updated_count > 0
+
 
 async def count_active_notes_for_user(telegram_id: int) -> int:
-    """Считает количество активных (неархивированных) заметок пользователя."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         count = await conn.fetchval(
@@ -201,9 +210,6 @@ async def get_paginated_notes_for_user(
         per_page: int = NOTES_PER_PAGE,
         archived: bool = False
 ) -> tuple[list[dict], int]:
-    """
-    Получает заметки пользователя для указанной страницы и общее количество таких заметок.
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE"
@@ -264,7 +270,6 @@ async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
 
 
 async def delete_note(note_id: int, telegram_id: int) -> bool:
-    """Полностью удаляет заметку из базы данных."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -277,7 +282,6 @@ async def delete_note(note_id: int, telegram_id: int) -> bool:
 
 
 async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> bool:
-    """Обновляет текст заметки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -291,7 +295,6 @@ async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> boo
 
 
 async def set_note_archived_status(note_id: int, telegram_id: int, archived: bool) -> bool:
-    """Устанавливает статус архивации для заметки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
