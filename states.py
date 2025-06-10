@@ -12,3 +12,7 @@ class NoteNavigationStates(StatesGroup):
 class NoteEditingStates(StatesGroup):
     """Состояния для процесса редактирования заметки."""
     awaiting_new_text = State()
+
+class ProfileSettingsStates(StatesGroup):
+    """Состояния для настройки профиля пользователя."""
+    awaiting_timezone = State()
