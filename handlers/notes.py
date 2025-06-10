@@ -18,6 +18,7 @@ from inline_keyboards import (
     get_confirm_delete_keyboard
 )
 import database_setup as db
+from services.tz_utils import format_datetime_for_user  # <--- НОВЫЙ ИМПОРТ
 from states import NoteCreationStates, NoteNavigationStates, NoteEditingStates
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,6 @@ router = Router()
 # --- FSM HANDLERS FOR NOTE CREATION (Confirm/Cancel) ---
 @router.callback_query(NoteCreationStates.awaiting_confirmation, F.data == "confirm_save_note")
 async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FSMContext):
-    """Обрабатывает подтверждение сохранения заметки из состояния FSM."""
     user_data = await state.get_data()
     telegram_id = callback_query.from_user.id
 
@@ -88,7 +88,6 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
 
 @router.callback_query(NoteCreationStates.awaiting_confirmation, F.data == "cancel_save_note")
 async def cancel_save_note_fsm_handler(callback_query: CallbackQuery, state: FSMContext):
-    """Обрабатывает отмену сохранения заметки из состояния FSM."""
     await callback_query.message.edit_text("🚫 Сохранение отменено.", reply_markup=None)
     await callback_query.answer()
     await state.clear()
@@ -104,7 +103,6 @@ async def _display_notes_list_page(
         state: FSMContext,
         is_archive_list: bool
 ):
-    """Отображает страницу со списком активных или архивных заметок."""
     await state.set_state(NoteNavigationStates.browsing_notes)
     await state.update_data(current_notes_page=page_num, is_archive_view=is_archive_list)
 
@@ -141,7 +139,6 @@ async def _display_notes_list_page(
         await target_message.answer(text_content, reply_markup=keyboard, parse_mode="HTML")
 
 
-# Обработчик для "Мои заметки", "Архив" и кнопок пагинации
 @router.callback_query(PageNavigation.filter(F.target == "notes"))
 async def notes_list_paginated_handler(
         callback_query: types.CallbackQuery,
@@ -158,7 +155,6 @@ async def notes_list_paginated_handler(
     )
 
 
-# Команда /my_notes для вызова списка активных заметок
 @router.message(Command("my_notes"))
 async def cmd_my_notes(message: types.Message, state: FSMContext):
     await _display_notes_list_page(
@@ -180,6 +176,7 @@ async def back_to_main_menu_from_notes_handler(callback_query: types.CallbackQue
     await callback_query.answer()
 
 
+# <--- ЗДЕСЬ ОСНОВНЫЕ ИЗМЕНЕНИЯ --->
 @router.callback_query(NoteAction.filter(F.action == "view"))
 async def view_note_detail_handler(
         callback_query: types.CallbackQuery,
@@ -195,6 +192,10 @@ async def view_note_detail_handler(
     await state.set_state(NoteNavigationStates.browsing_notes)
     await state.update_data(current_notes_page=current_page, is_archive_view=is_archived_view)
 
+    # Получаем профиль пользователя, чтобы узнать его таймзону
+    user_profile = await db.get_user_profile(telegram_id)
+    user_timezone = user_profile.get('timezone', 'UTC') if user_profile else 'UTC'
+
     note = await db.get_note_by_id(note_id, telegram_id)
 
     if not note:
@@ -202,18 +203,21 @@ async def view_note_detail_handler(
         await _display_notes_list_page(callback_query.message, telegram_id, current_page, state, is_archived_view)
         return
 
-    note_taken_at_utc = note.get('note_taken_at') or note['created_at']
-    note_date_str = note_taken_at_utc.strftime("%d.%m.%Y %H:%M UTC")
+    # --- Форматируем все даты с учетом таймзоны пользователя ---
+    note_taken_at_local = format_datetime_for_user(note.get('note_taken_at') or note['created_at'], user_timezone)
+    updated_at_local = format_datetime_for_user(note.get('updated_at'), user_timezone)
+    due_date_local = format_datetime_for_user(note.get('due_date'), user_timezone)
 
     status_icon = "🗄️" if note['is_archived'] else "📌"
     text = f"{status_icon} {hbold(f'Заметка #{note['note_id']}')}\n\n"
-    text += f"Созд./Записана: {hitalic(note_date_str)}\n"
+    text += f"Созд./Записана: {hitalic(note_taken_at_local)}\n"
+
+    # Показываем дату обновления, только если она действительно отличается от даты создания
     if note.get('updated_at') and note['updated_at'].strftime('%Y%m%d%H%M') != note['created_at'].strftime(
             '%Y%m%d%H%M'):
-        text += f"Обновлена: {hitalic(note['updated_at'].strftime('%d.%m.%Y %H:%M UTC'))}\n"
-    if note.get('due_date'):
-        due_date_str = note['due_date'].strftime("%d.%m.%Y %H:%M UTC")
-        text += f"Срок до: {hitalic(due_date_str)}\n"
+        text += f"Обновлена: {hitalic(updated_at_local)}\n"
+    if due_date_local:
+        text += f"Срок до: {hitalic(due_date_local)}\n"
 
     text += f"\n{hbold('Текст заметки:')}\n{hcode(note['corrected_text'])}\n"
 
@@ -226,6 +230,7 @@ async def view_note_detail_handler(
 
 
 # --- NOTE ACTIONS: ARCHIVE, UNARCHIVE, DELETE ---
+# (остальные хендлеры без изменений)
 
 @router.callback_query(NoteAction.filter(F.action == "archive"))
 async def archive_note_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
@@ -253,7 +258,6 @@ async def unarchive_note_handler(callback_query: CallbackQuery, callback_data: N
 
 @router.callback_query(NoteAction.filter(F.action == "confirm_delete"))
 async def confirm_delete_note_handler(callback_query: CallbackQuery, callback_data: NoteAction):
-    """Показывает подтверждение перед удалением."""
     await callback_query.message.edit_text(
         f"‼️ {hbold('ВЫ УВЕРЕНЫ?')}\n\n"
         f"Вы собираетесь {hbold('НАВСЕГДА')} удалить заметку #{callback_data.note_id}.\n"
@@ -270,15 +274,12 @@ async def confirm_delete_note_handler(callback_query: CallbackQuery, callback_da
 
 @router.callback_query(NoteAction.filter(F.action == "delete"))
 async def delete_note_confirmed_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    """Обрабатывает подтвержденное удаление заметки."""
     deleted = await db.delete_note(callback_data.note_id, callback_query.from_user.id)
     is_archive_list = callback_data.target_list == 'archive'
-
     if deleted:
         await callback_query.answer("🗑️ Заметка удалена навсегда!")
     else:
         await callback_query.answer("❌ Не удалось удалить заметку.", show_alert=True)
-
     await _display_notes_list_page(
         callback_query.message, callback_query.from_user.id, callback_data.page, state, is_archive_list
     )
@@ -288,44 +289,40 @@ async def delete_note_confirmed_handler(callback_query: CallbackQuery, callback_
 
 @router.callback_query(NoteAction.filter(F.action == "edit"))
 async def start_note_edit_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    """Начинает процесс редактирования заметки."""
     await state.set_state(NoteEditingStates.awaiting_new_text)
     await state.update_data(
         note_id_to_edit=callback_data.note_id,
         page_to_return_to=callback_data.page,
         original_message_id=callback_query.message.message_id
     )
-
     await callback_query.message.edit_text(
         f"✏️ {hbold('Редактирование заметки #{callback_data.note_id}')}\n\n"
         "Пришлите мне новый текст для этой заметки. "
         "Чтобы отменить, просто отправьте /cancel.",
         parse_mode="HTML",
-        reply_markup=None  # Убираем клавиатуру
+        reply_markup=None
     )
     await callback_query.answer()
 
 
 @router.message(NoteEditingStates.awaiting_new_text, Command("cancel"))
 async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
-    """Отменяет процесс редактирования."""
     user_data = await state.get_data()
     note_id = user_data.get("note_id_to_edit")
     original_message_id = user_data.get("original_message_id")
     await state.clear()
-
     await message.answer("🚫 Редактирование отменено.")
-
     try:
+        # Для возврата к просмотру нам снова нужен user_timezone
+        user_profile = await db.get_user_profile(message.from_user.id)
+        user_timezone = user_profile.get('timezone', 'UTC') if user_profile else 'UTC'
         note = await db.get_note_by_id(note_id, message.from_user.id)
         if not note: raise ValueError("Note not found or access denied")
 
-        # Восстанавливаем сообщение с детальным просмотром заметки
-        note_taken_at_utc = note.get('note_taken_at') or note['created_at']
-        note_date_str = note_taken_at_utc.strftime("%d.%m.%Y %H:%M UTC")
+        note_taken_at_local = format_datetime_for_user(note.get('note_taken_at') or note['created_at'], user_timezone)
         status_icon = "🗄️" if note['is_archived'] else "📌"
         text = f"{status_icon} {hbold(f'Заметка #{note['note_id']}')}\n\n"
-        text += f"Созд./Записана: {hitalic(note_date_str)}\n"
+        text += f"Созд./Записана: {hitalic(note_taken_at_local)}\n"
         text += f"\n{hbold('Текст заметки:')}\n{hcode(note['corrected_text'])}\n"
 
         await message.bot.edit_message_text(
@@ -344,30 +341,22 @@ async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
 
 @router.message(NoteEditingStates.awaiting_new_text, F.text)
 async def process_note_edit_handler(message: types.Message, state: FSMContext):
-    """Получает новый текст и обновляет заметку."""
     user_data = await state.get_data()
     note_id = user_data.get("note_id_to_edit")
     page_to_return_to = user_data.get("page_to_return_to", 1)
     original_message_id = user_data.get("original_message_id")
-
     new_text = message.text
     if len(new_text) < 3:
         await message.reply("Текст заметки слишком короткий. Введите более содержательный текст или отмените /cancel.")
         return
-
     success = await db.update_note_text(note_id, new_text, message.from_user.id)
     await state.clear()
-
     if success:
         await message.reply(f"✅ Текст заметки #{note_id} успешно обновлен.")
-
-        # Удаляем сообщение с предложением редактировать
         try:
             await message.bot.delete_message(chat_id=message.chat.id, message_id=original_message_id)
         except Exception:
-            pass  # Не страшно, если не получится
-
-        # Возвращаем пользователя к списку заметок
+            pass
         await _display_notes_list_page(message, message.from_user.id, page_to_return_to, state, is_archive_list=False)
     else:
         await message.reply("❌ Произошла ошибка при обновлении заметки. Попробуйте еще раз.")
