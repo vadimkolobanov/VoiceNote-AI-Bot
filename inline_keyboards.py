@@ -9,7 +9,6 @@ from services.tz_utils import COMMON_TIMEZONES
 
 
 # --- CallbackData Factories ---
-
 class NoteAction(CallbackData, prefix="note_act"):
     action: str
     note_id: int
@@ -35,6 +34,10 @@ class TimezoneAction(CallbackData, prefix="tz_act"):
     tz_name: str | None = None
 
 
+class InfoAction(CallbackData, prefix="info_act"):
+    action: str
+
+
 class AdminAction(CallbackData, prefix="adm_act"):
     action: str
     target_user_id: int
@@ -44,8 +47,6 @@ class AdminAction(CallbackData, prefix="adm_act"):
 class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
     page: int
 
-class InfoAction(CallbackData, prefix="info_act"):
-    action: str
 
 # --- Keyboard Generators ---
 
@@ -54,32 +55,43 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
-    # --- НОВАЯ КНОПКА ---
     builder.button(text="ℹ️ Инфо & Помощь", callback_data=InfoAction(action="main").pack())
-    builder.adjust(2, 2)  # Обновляем раскладку
+    builder.adjust(2, 2)
     return builder.as_markup()
 
 
-# --- НОВАЯ КЛАВИАТУРА ---
 def get_info_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для информационного раздела."""
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data=InfoAction(action="how_to_use").pack())
     builder.button(text="⭐ VIP-возможности", callback_data=InfoAction(action="vip_features").pack())
 
-    # Добавляем кнопки, только если ссылки есть в конфиге
     if config.NEWS_CHANNEL_URL:
         builder.button(text="📢 Новости бота", url=config.NEWS_CHANNEL_URL)
     if config.CHAT_URL:
         builder.button(text="💬 Чат для обсуждений", url=config.CHAT_URL)
 
-    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")  # Колбэк для возврата в главное меню
-    builder.adjust(2, 2, 1) if config.NEWS_CHANNEL_URL and config.CHAT_URL else builder.adjust(2, 1, 1)
+    if config.DONATION_URL:
+        builder.button(text="❤️ Поддержать проект", callback_data=InfoAction(action="donate").pack())
+
+    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
+
+    layout = [2]
+    if config.NEWS_CHANNEL_URL and config.CHAT_URL:
+        layout.append(2)
+    elif config.NEWS_CHANNEL_URL or config.CHAT_URL:
+        layout.append(1)
+
+    if config.DONATION_URL:
+        layout.append(1)
+
+    layout.append(1)
+    builder.adjust(*layout)
+
     return builder.as_markup()
 
 
 def get_settings_menu_keyboard() -> InlineKeyboardMarkup:
-    """Главная клавиатура раздела 'Настройки'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🕒 Часовой пояс", callback_data=SettingsAction(action="go_to_timezone").pack())
     builder.button(text="⏰ Время напоминаний", callback_data=SettingsAction(action="go_to_reminders").pack())
@@ -89,9 +101,7 @@ def get_settings_menu_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-# --- НОВАЯ КЛАВИАТУРА ---
 def get_request_vip_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с предложением получить VIP."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🚀 Отправить заявку на VIP", callback_data=SettingsAction(action="request_vip").pack())
     builder.button(text="⬅️ Назад в настройки", callback_data=SettingsAction(action="go_to_main").pack())
@@ -100,31 +110,24 @@ def get_request_vip_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_pre_reminder_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для выбора времени предварительного напоминания."""
-    builder = InlineKeyboardBuilder()
     options = {
-        "Не напоминать": 0,
-        "За 30 минут": 30,
-        "За 1 час": 60,
-        "За 3 часа": 180,
-        "За 24 часа": 1440,
+        "Не напоминать": 0, "За 30 минут": 30, "За 1 час": 60,
+        "За 3 часа": 180, "За 24 часа": 1440,
     }
+    builder = InlineKeyboardBuilder()
     for text, minutes in options.items():
         builder.button(text=text, callback_data=SettingsAction(action="set_pre_rem", value=str(minutes)).pack())
-
     builder.button(text="⬅️ Назад в настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
 def get_reminder_time_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для выбора времени напоминаний по умолчанию."""
     builder = InlineKeyboardBuilder()
     times = ["09:00", "10:00", "12:00", "18:00", "20:00", "21:00"]
     for t in times:
         safe_time_value = t.replace(':', '-')
         builder.button(text=t, callback_data=SettingsAction(action="set_rem_time", value=safe_time_value).pack())
-
     builder.button(text="⌨️ Ввести вручную", callback_data=SettingsAction(action="manual_rem_time").pack())
     builder.button(text="⬅️ Назад в настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.adjust(3, 3, 1, 1)
@@ -154,18 +157,11 @@ def get_category_selection_keyboard(note_id: int, page: int, target_list: str) -
     for category in NOTE_CATEGORIES:
         builder.button(
             text=category,
-            callback_data=NoteAction(
-                action="set_category",
-                note_id=note_id,
-                page=page,
-                target_list=target_list,
-                category=category
-            ).pack()
+            callback_data=NoteAction(action="set_category", note_id=note_id, page=page, target_list=target_list,
+                                     category=category).pack()
         )
-    builder.button(
-        text="⬅️ Отмена",
-        callback_data=NoteAction(action="view", note_id=note_id, page=page, target_list=target_list).pack()
-    )
+    builder.button(text="⬅️ Отмена",
+                   callback_data=NoteAction(action="view", note_id=note_id, page=page, target_list=target_list).pack())
     builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
 
@@ -189,9 +185,8 @@ def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived:
         builder.button(text="🗂️ Изменить категорию",
                        callback_data=NoteAction(action="change_category", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
-        builder.button(text="🗄️ В архив",
-                       callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
-                                                target_list=target_list_str).pack())
+        builder.button(text="🗄️ В архив", callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
+                                                                   target_list=target_list_str).pack())
     else:
         builder.button(text="↩️ Восстановить",
                        callback_data=NoteAction(action="unarchive", note_id=note_id, page=current_page,
@@ -221,42 +216,28 @@ def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived:
         if has_audio: layout.append(1)
         layout.append(1)
         builder.adjust(*layout)
-
     return builder.as_markup()
 
 
 def get_reminder_notification_keyboard(note_id: int, is_pre_reminder: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-
     if not is_pre_reminder:
-        builder.button(text="✅ Выполнено",
-                       callback_data=NoteAction(action="complete", note_id=note_id, page=1).pack())
+        builder.button(text="✅ Выполнено", callback_data=NoteAction(action="complete", note_id=note_id, page=1).pack())
         builder.button(text="Отложить на 1 час",
                        callback_data=NoteAction(action="snooze", note_id=note_id, snooze_minutes=60).pack())
         builder.button(text="Отложить на 3 часа",
                        callback_data=NoteAction(action="snooze", note_id=note_id, snooze_minutes=180).pack())
-
-    builder.button(
-        text="👀 Просмотреть заметку",
-        callback_data=NoteAction(action="view", note_id=note_id, page=1, target_list='active').pack()
-    )
-
-    if not is_pre_reminder:
-        builder.adjust(1, 2, 1)
-    else:
-        builder.adjust(1)
-
+    builder.button(text="👀 Просмотреть заметку",
+                   callback_data=NoteAction(action="view", note_id=note_id, page=1, target_list='active').pack())
+    builder.adjust(1, 2, 1) if not is_pre_reminder else builder.adjust(1)
     return builder.as_markup()
 
 
 def get_admin_user_panel_keyboard(target_user_id: int, is_vip: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     toggle_vip_text = "❌ Забрать VIP" if is_vip else "✅ Выдать VIP"
-    builder.button(
-        text=toggle_vip_text,
-        callback_data=AdminAction(action="toggle_vip", target_user_id=target_user_id,
-                                  current_vip_status=int(is_vip)).pack()
-    )
+    builder.button(text=toggle_vip_text, callback_data=AdminAction(action="toggle_vip", target_user_id=target_user_id,
+                                                                   current_vip_status=int(is_vip)).pack())
     builder.button(text="⬅️ К списку пользователей", callback_data=AdminUserNav(page=1).pack())
     builder.adjust(1)
     return builder.as_markup()
@@ -291,9 +272,8 @@ def get_note_confirmation_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_notes_list_display_keyboard(
-        notes: list[dict], current_page: int, total_pages: int, is_archive_list: bool
-) -> InlineKeyboardMarkup:
+def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_pages: int,
+                                    is_archive_list: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     target_list_str = 'archive' if is_archive_list else 'active'
     if not notes and current_page == 1:
@@ -303,14 +283,10 @@ def get_notes_list_display_keyboard(
             status_icon = "✅" if note.get('is_completed') else "📝"
             preview_text = f"{status_icon} #{note['note_id']} - {note['corrected_text'][:35]}"
             if len(note['corrected_text']) > 35: preview_text += "..."
-            builder.button(
-                text=preview_text,
-                callback_data=NoteAction(action="view", note_id=note['note_id'], page=current_page,
-                                         target_list=target_list_str).pack()
-            )
-
+            builder.button(text=preview_text,
+                           callback_data=NoteAction(action="view", note_id=note['note_id'], page=current_page,
+                                                    target_list=target_list_str).pack())
     builder.adjust(1)
-
     pagination_row_items = []
     if current_page > 1:
         pagination_row_items.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=PageNavigation(target="notes",
@@ -323,9 +299,7 @@ def get_notes_list_display_keyboard(
         pagination_row_items.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=PageNavigation(target="notes",
                                                                                                         page=current_page + 1,
                                                                                                         archived=is_archive_list).pack()))
-
     if pagination_row_items: builder.row(*pagination_row_items)
-
     builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu_from_notes"))
     return builder.as_markup()
 

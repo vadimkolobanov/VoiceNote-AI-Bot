@@ -17,7 +17,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await get_or_create_user(message.from_user)
 
-    # --- НОВЫЙ ТЕКСТ СТАРТОВОГО СООБЩЕНИЯ (ВАРИАНТ 2) ---
     start_text = (
         "🎙️ <b>Привет! Я — VoiceNote AI.</b>\n\n"
         "Я превращаю ваши голосовые мысли в идеально структурированные заметки. "

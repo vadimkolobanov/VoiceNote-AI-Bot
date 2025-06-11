@@ -40,11 +40,12 @@ NOTE_CATEGORIES = [
     "Общее", "Работа", "Личное", "Задачи", "Идеи", "Покупки"
 ]
 
-# --- НОВЫЕ ПЕРЕМЕННЫЕ: Ссылки на ресурсы ---
-# Укажите реальные ссылки на ваши канал и чат (или оставьте None)
-NEWS_CHANNEL_URL = os.environ.get("NEWS_CHANNEL_URL") # например, https://t.me/your_channel
-CHAT_URL = os.environ.get("CHAT_URL") # например, https://t.me/your_chat
-CREATOR_CONTACT = os.environ.get("CREATOR_CONTACT", "@useranybody") # Контакт создателя
+# --- Ссылки на ресурсы ---
+NEWS_CHANNEL_URL = os.environ.get("NEWS_CHANNEL_URL")
+CHAT_URL = os.environ.get("CHAT_URL")
+CREATOR_CONTACT = os.environ.get("CREATOR_CONTACT", "@useranybody")
+# --- ДОБАВЛЕНО ---
+DONATION_URL = os.environ.get("DONATION_URL") # Ссылка на ЮMoney
 
 
 # --- Feature Flags (based on API key presence) ---

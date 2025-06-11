@@ -2,10 +2,12 @@
 import logging
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.markdown import hbold, hitalic
+from aiogram.utils.markdown import hbold, hitalic, hcode
+# --- ИЗМЕНЕНИЕ: Добавляем нужный импорт ---
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from inline_keyboards import get_info_keyboard, InfoAction, get_main_menu_keyboard
-from config import CREATOR_CONTACT
+from config import CREATOR_CONTACT, DONATION_URL
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -46,7 +48,7 @@ VIP-статус открывает полный потенциал вашего
 {hitalic("У Free-пользователей в этом случае напоминание не создается.")}
 
 🔔 {hbold("Предварительные напоминания")}
-Настройте получение напоминаний заранее (например, за 1 час или за сутки до срока), чтобы подготовиться к событию.
+Настройте получение напоминаний заранее (например, за час до дедлайна), чтобы подготовиться к событию.
 
 ⏰ {hbold("Отложенные напоминания (Snooze)")}
 Не готовы выполнить задачу прямо сейчас? Нажмите кнопку "Отложить" в уведомлении, и я напомню вам позже.
@@ -66,6 +68,22 @@ INFO_MAIN_TEXT = f"""
 Для предложений или сообщений об ошибках, пожалуйста, свяжитесь с создателем: {CREATOR_CONTACT}
 """
 
+DONATE_TEXT = f"""
+{hbold("❤️ Поддержать проект")}
+
+Привет! Я — VoiceNote AI, и я существую благодаря труду одного независимого разработчика.
+
+Если бот оказался для вас полезным и вы хотите помочь проекту развиваться, вы можете поддержать его любой комфортной суммой. Собранные средства пойдут на оплату серверов и API.
+
+{hbold("Как сделать донат:")}
+1. Нажмите на кнопку ниже, чтобы перейти на страницу доната (ЮMoney).
+2. {hbold("ОЧЕНЬ ВАЖНО:")} В комментарии к платежу, пожалуйста, вставьте ваш Telegram ID, чтобы я мог вас поблагодарить и выдать VIP-статус.
+
+Ваш Telegram ID: {hcode('{user_id}')} (нажмите, чтобы скопировать)
+
+Спасибо вам за поддержку!
+"""
+
 
 @router.callback_query(InfoAction.filter(F.action == "main"))
 async def show_info_main(callback: types.CallbackQuery):
@@ -83,6 +101,26 @@ async def show_how_to_use(callback: types.CallbackQuery):
 @router.callback_query(InfoAction.filter(F.action == "vip_features"))
 async def show_vip_features(callback: types.CallbackQuery):
     await callback.message.edit_text(VIP_FEATURES_TEXT, parse_mode="HTML", reply_markup=get_info_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(InfoAction.filter(F.action == "donate"))
+async def show_donate_info(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    text = DONATE_TEXT.format(user_id=user_id)
+
+    if not DONATION_URL:
+        await callback.answer("К сожалению, функция поддержки временно недоступна.", show_alert=True)
+        return
+
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Убираем types. и используем импортированный InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Перейти к поддержке (ЮMoney)", url=DONATION_URL)
+    builder.button(text="⬅️ Назад", callback_data=InfoAction(action="main").pack())
+
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup(),
+                                     disable_web_page_preview=True)
     await callback.answer()
 
 
