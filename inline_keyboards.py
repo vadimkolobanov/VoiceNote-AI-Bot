@@ -4,7 +4,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
-from config import NOTE_CATEGORIES
+from config import NOTE_CATEGORIES, MAX_NOTES_MVP
 from services.tz_utils import COMMON_TIMEZONES
 
 
@@ -22,6 +22,7 @@ class PageNavigation(CallbackData, prefix="pg_nav"):
     target: str
     page: int
     archived: bool = False
+    user_id: int | None = None
 
 
 class SettingsAction(CallbackData, prefix="settings_act"):
@@ -38,6 +39,12 @@ class InfoAction(CallbackData, prefix="info_act"):
     action: str
 
 
+class BirthdayAction(CallbackData, prefix="bday_act"):
+    action: str
+    birthday_id: int | None = None
+    page: int = 1
+
+
 class AdminAction(CallbackData, prefix="adm_act"):
     action: str
     target_user_id: int
@@ -51,8 +58,10 @@ class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
 # --- Keyboard Generators ---
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню с кнопкой 'Архив'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
+    # --- ВОЗВРАЩАЕМ АРХИВ ---
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
     builder.button(text="ℹ️ Инфо & Помощь", callback_data=InfoAction(action="main").pack())
@@ -60,34 +69,37 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура профиля с кнопкой 'Дни рождения'."""
+    builder = InlineKeyboardBuilder()
+    # --- НОВАЯ КНОПКА ---
+    builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
+    builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
+    builder.button(text="🏠 Главное меню", callback_data="main_menu_from_notes")
+    builder.adjust(1)  # Каждая кнопка на новой строке для наглядности
+    return builder.as_markup()
+
+
+# --- Остальные клавиатуры без изменений ---
 def get_info_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для информационного раздела."""
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data=InfoAction(action="how_to_use").pack())
     builder.button(text="⭐ VIP-возможности", callback_data=InfoAction(action="vip_features").pack())
-
     if config.NEWS_CHANNEL_URL:
         builder.button(text="📢 Новости бота", url=config.NEWS_CHANNEL_URL)
     if config.CHAT_URL:
         builder.button(text="💬 Чат для обсуждений", url=config.CHAT_URL)
-
     if config.DONATION_URL:
         builder.button(text="❤️ Поддержать проект", callback_data=InfoAction(action="donate").pack())
-
     builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
-
     layout = [2]
     if config.NEWS_CHANNEL_URL and config.CHAT_URL:
         layout.append(2)
     elif config.NEWS_CHANNEL_URL or config.CHAT_URL:
         layout.append(1)
-
-    if config.DONATION_URL:
-        layout.append(1)
-
+    if config.DONATION_URL: layout.append(1)
     layout.append(1)
     builder.adjust(*layout)
-
     return builder.as_markup()
 
 
@@ -110,10 +122,7 @@ def get_request_vip_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_pre_reminder_keyboard() -> InlineKeyboardMarkup:
-    options = {
-        "Не напоминать": 0, "За 30 минут": 30, "За 1 час": 60,
-        "За 3 часа": 180, "За 24 часа": 1440,
-    }
+    options = {"Не напоминать": 0, "За 30 минут": 30, "За 1 час": 60, "За 3 часа": 180, "За 24 часа": 1440}
     builder = InlineKeyboardBuilder()
     for text, minutes in options.items():
         builder.button(text=text, callback_data=SettingsAction(action="set_pre_rem", value=str(minutes)).pack())
@@ -144,22 +153,11 @@ def get_timezone_selection_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
-    builder.button(text="🏠 Главное меню", callback_data="main_menu_from_notes")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
 def get_category_selection_keyboard(note_id: int, page: int, target_list: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for category in NOTE_CATEGORIES:
-        builder.button(
-            text=category,
-            callback_data=NoteAction(action="set_category", note_id=note_id, page=page, target_list=target_list,
-                                     category=category).pack()
-        )
+        builder.button(text=category, callback_data=NoteAction(action="set_category", note_id=note_id, page=page,
+                                                               target_list=target_list, category=category).pack())
     builder.button(text="⬅️ Отмена",
                    callback_data=NoteAction(action="view", note_id=note_id, page=page, target_list=target_list).pack())
     builder.adjust(2, 2, 2, 1)
@@ -170,7 +168,6 @@ def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived:
                                    has_audio: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     target_list_str = 'archive' if is_archived else 'active'
-
     if is_completed:
         builder.button(text="🗑️ Удалить навсегда",
                        callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
@@ -194,16 +191,13 @@ def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived:
         builder.button(text="🗑️ Удалить навсегда",
                        callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
-
     if has_audio and not is_completed:
         builder.button(text="🎧 Прослушать оригинал",
                        callback_data=NoteAction(action="listen_audio", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
-
     list_button_text = "⬅️ К архиву" if is_archived else "⬅️ К списку заметок"
     builder.button(text=list_button_text,
                    callback_data=PageNavigation(target="notes", page=current_page, archived=is_archived).pack())
-
     if is_completed:
         builder.adjust(1, 1)
     elif not is_archived:
@@ -312,4 +306,44 @@ def get_confirm_delete_keyboard(note_id: int, page: int, target_list: str) -> In
     builder.button(text="Отмена",
                    callback_data=NoteAction(action="view", note_id=note_id, page=page, target_list=target_list).pack())
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_birthdays_menu_keyboard(is_vip: bool, current_count: int) -> InlineKeyboardMarkup:
+    """Главное меню раздела 'Дни рождения'."""
+    builder = InlineKeyboardBuilder()
+    if is_vip or current_count < config.MAX_NOTES_MVP:
+        builder.button(text="➕ Добавить вручную", callback_data=BirthdayAction(action="add_manual").pack())
+    else:
+        builder.button(text="⭐ Увеличить лимит (VIP)", callback_data=SettingsAction(action="request_vip").pack())
+    if is_vip:
+        builder.button(text="📥 Импорт из файла", callback_data=BirthdayAction(action="import_file").pack())
+    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_birthdays_list_keyboard(birthdays: list[dict], page: int, total_pages: int,
+                                user_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for bday in birthdays:
+        year_str = f" ({bday['birth_year']})" if bday['birth_year'] else ""
+        date_str = f"{bday['birth_day']:02}.{bday['birth_month']:02}{year_str}"
+        builder.button(text=f"{bday['person_name']} - {date_str}", callback_data="ignore_bday_view")
+        builder.button(text="🗑️",
+                       callback_data=BirthdayAction(action="delete", birthday_id=bday['id'], page=page).pack())
+    pagination_row = []
+    if page > 1:
+        pagination_row.append(InlineKeyboardButton(text="⬅️",
+                                                         callback_data=PageNavigation(target="birthdays", page=page - 1,
+                                                                                      user_id=user_id).pack()))
+    if total_pages > 1:
+        pagination_row.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="ignore"))
+    if page < total_pages:
+        pagination_row.append(InlineKeyboardButton(text="➡️",
+                                                         callback_data=PageNavigation(target="birthdays", page=page + 1,
+                                                                                      user_id=user_id).pack()))
+    builder.adjust(2)
+    if pagination_row:
+        builder.row(*pagination_row)
     return builder.as_markup()

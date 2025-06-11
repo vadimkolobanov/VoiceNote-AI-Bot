@@ -26,10 +26,11 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
 
     # Получаем все нужные данные
     active_notes_count = await db.count_active_notes_for_user(telegram_id)
+    birthdays_count = await db.count_birthdays_for_user(telegram_id) # <-- Новая статистика
     user_timezone = user_profile_data.get('timezone', 'UTC')
     reg_date_utc = user_profile_data['created_at']
     reg_date_local_str = format_datetime_for_user(reg_date_utc, user_timezone)
-    is_vip = user_profile_data.get('is_vip', False)  # <--- Получаем VIP-статус
+    is_vip = user_profile_data.get('is_vip', False)
 
     # --- Формируем красивый текст профиля ---
     profile_header = f"👤 {hbold('Ваш профиль')}\n\n"
@@ -45,38 +46,43 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
     user_info_block = "\n".join(user_info_parts)
 
     # Блок "Статистика и лимиты"
-    # <--- НОВАЯ ЛОГИКА ОТОБРАЖЕНИЯ ЛИМИТОВ --->
     notes_limit_str = "Безлимитно" if is_vip else f"{MAX_NOTES_MVP}"
     stt_limit_str = "Безлимитно" if is_vip else f"{MAX_DAILY_STT_RECOGNITIONS_MVP}"
+    birthdays_limit_str = "Безлимитно" if is_vip else f"{MAX_NOTES_MVP}"
+
 
     stats_info_parts = [
         f"Активные заметки: {hbold(active_notes_count)} / {notes_limit_str}",
+        f"Дни рождения: {hbold(birthdays_count)} / {birthdays_limit_str}", # <-- Новая статистика
         f"Распознавания сегодня: {hbold(user_profile_data.get('daily_stt_recognitions_count', 0))} / {stt_limit_str}"
     ]
     stats_block = f"📊 {hbold('Статистика')}:\n" + "\n".join(stats_info_parts)
 
     # Блок "Настройки и подписка"
-    subscription_status = f"👑 VIP" if is_vip else "Free (MVP)"
+    subscription_status = f"👑 VIP" if is_vip else "Free"
     settings_info_parts = [
         f"Статус: {hitalic(subscription_status)}",
         f"Часовой пояс: {hcode(user_timezone)}",
         f"Зарегистрирован: {hitalic(reg_date_local_str)}"
     ]
-    settings_block = f"⚙️ {hbold('Настройки')}:\n" + "\n".join(settings_info_parts)
+    settings_block = f"⚙️ {hbold('Подписка и данные')}:\n" + "\n".join(settings_info_parts)
 
     response_text = "\n\n".join([profile_header, user_info_block, stats_block, settings_block])
 
-    await callback_query.answer()
+    # Используем правильную клавиатуру
+    keyboard = get_profile_actions_keyboard()
+
     try:
         await callback_query.message.edit_text(
             response_text,
             parse_mode="HTML",
-            reply_markup=get_profile_actions_keyboard()
+            reply_markup=keyboard
         )
     except Exception as e:
         logger.warning(f"Не удалось отредактировать сообщение профиля, отправляю новое: {e}")
         await callback_query.message.answer(
             response_text,
             parse_mode="HTML",
-            reply_markup=get_profile_actions_keyboard()
+            reply_markup=keyboard
         )
+    await callback_query.answer()

@@ -7,7 +7,7 @@ from aiogram.utils.markdown import hbold, hcode, hitalic
 
 from config import ADMIN_TELEGRAM_ID
 import database_setup as db
-from services.scheduler import scheduler
+from services.scheduler import scheduler, send_birthday_reminders
 from inline_keyboards import get_admin_user_panel_keyboard, AdminAction, get_admin_users_list_keyboard, AdminUserNav
 from services.tz_utils import format_datetime_for_user
 
@@ -211,3 +211,10 @@ async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: Admi
             await callback.message.edit_text(new_text, reply_markup=new_keyboard, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Не удалось обновить админ-панель: {e}")
+
+@router.message(Command("test_bday"))
+async def cmd_test_birthday_check(message: Message):
+    """Принудительно запускает проверку дней рождений."""
+    await message.answer("⏳ Принудительно запускаю проверку дней рождений...")
+    await send_birthday_reminders(message.bot)
+    await message.answer("✅ Проверка завершена. Смотрите логи и личные сообщения.")

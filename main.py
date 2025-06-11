@@ -9,20 +9,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import (
-    TG_BOT_TOKEN, DEEPSEEK_API_KEY_EXISTS, YANDEX_STT_CONFIGURED
+from config import TG_BOT_TOKEN, DEEPSEEK_API_KEY_EXISTS, YANDEX_STT_CONFIGURED
+from handlers import (
+    commands as cmd_router,
+    notes as notes_router,
+    voice as voice_router,
+    profile as profile_router,
+    settings as settings_router,
+    admin as admin_router,
+    info as info_router,
+    birthdays as birthdays_router
 )
-# Импортируем роутеры из handlers
-from handlers import commands as cmd_router
-from handlers import notes as notes_router
-from handlers import voice as voice_router
-from handlers import profile as profile_router
-from handlers import settings as settings_router
-from handlers import admin as admin_router
-from handlers import info as info_router # <-- НОВЫЙ ИМПОРТ
-
 import database_setup as db
-from services.scheduler import scheduler, load_reminders_on_startup
+from services.scheduler import scheduler, load_reminders_on_startup, setup_daily_jobs
 
 # --- Logging ---
 logging.basicConfig(
@@ -53,9 +52,15 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot):
 
     logger.info("Запуск планировщика задач (APScheduler)...")
     scheduler.configure(job_defaults={'kwargs': {'bot': bot}})
+
+    # 1. Загружаем разовые напоминания по заметкам
     await load_reminders_on_startup(bot)
+
+    # 2. Устанавливаем повторяющиеся ежедневные задачи
+    await setup_daily_jobs(bot)
+
     scheduler.start()
-    logger.info("Планировщик запущен, напоминания загружены.")
+    logger.info("Планировщик запущен, все задачи загружены.")
 
     logger.info("Бот запущен и готов к работе!")
     if not DEEPSEEK_API_KEY_EXISTS:
@@ -84,15 +89,14 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Подключаем роутеры из пакета handlers
-    # Важен порядок: сначала более специфичные, потом общие
     dp.include_router(admin_router.router)
-    dp.include_router(info_router.router) # <-- НОВЫЙ РОУТЕР
+    dp.include_router(info_router.router)
+    dp.include_router(birthdays_router.router)
     dp.include_router(settings_router.router)
     dp.include_router(profile_router.router)
     dp.include_router(notes_router.router)
     dp.include_router(voice_router.router)
-    dp.include_router(cmd_router.router) # Команды часто ставят в конце
+    dp.include_router(cmd_router.router)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
@@ -107,7 +111,7 @@ async def main():
     except Exception as e:
         logger.critical(f"Ошибка при запуске polling: {e}", exc_info=True)
     finally:
-        if bot_instance.session and not bot_instance.session.is_closed():
+        if bot_instance.session and not bot_instance.session.closed:
             await bot_instance.session.close()
         logger.info("Polling завершен.")
 
