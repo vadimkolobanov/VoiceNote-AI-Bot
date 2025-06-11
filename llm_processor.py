@@ -37,10 +37,10 @@ def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
 
 async def enhance_text_with_llm(
         raw_text: str,
-        user_timezone: str = 'UTC'  # <-- НОВЫЙ ПАРАМЕТР
+        user_timezone: str = 'UTC'
 ) -> dict:
     if not DEEPSEEK_API_KEY:
-        logger.error("DeepSeek API key is not configured. Set DEEPSEEK_API_KEY environment variable.")
+        logger.error("DeepSeek API key is not configured.")
         return {"error": "DeepSeek API key not configured", "corrected_text": raw_text}
     if not DEEPSEEK_API_URL or not DEEPSEEK_MODEL_NAME:
         logger.error("DeepSeek API URL or Model Name is not configured.")
@@ -48,14 +48,11 @@ async def enhance_text_with_llm(
 
     current_datetime_utc_str = _get_current_datetime_utc_iso()
 
-    # --- НОВЫЙ, УЛУЧШЕННЫЙ ПРОМПТ ---
+    # --- УПРОЩЕННЫЙ ПРОМПТ ---
     system_prompt = f"""You are an AI assistant specialized in processing transcribed voice notes in Russian.
-Your tasks are:
-1. Correct transcription errors, improve grammar, and punctuation of the provided Russian text.
-2. Analyze the corrected text and extract structured information.
-3. Return the output ONLY as a single, valid JSON object. Do NOT include any explanatory text before or after the JSON.
+Your task is to return a single, valid JSON object based on the user's text.
 
-The JSON object must strictly follow this structure:
+JSON Structure:
 {{
   "corrected_text": "...",
   "task_description": "...",
@@ -63,7 +60,7 @@ The JSON object must strictly follow this structure:
   "dates_times": [
     {{
       "original_mention": "How the date/time was mentioned in the text.",
-      "absolute_datetime_start": "The calculated absolute time in UTC, in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ). This field MUST be in UTC.",
+      "absolute_datetime_start": "The calculated absolute time in UTC, in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ).",
       "absolute_datetime_end": "..."
     }}
   ],
@@ -71,17 +68,12 @@ The JSON object must strictly follow this structure:
   "locations_mentioned": [...]
 }}
 
-**CRITICAL INSTRUCTIONS FOR DATE/TIME CALCULATION:**
-- **Current Time (UTC):** {current_datetime_utc_str}
-- **User's Timezone:** {user_timezone}
-
-- **Rule 1: Always output in UTC.** All absolute date/time values in the JSON MUST be calculated and returned in the UTC timezone, ending with 'Z'.
-- **Rule 2: Use user's timezone for context.** When a time is mentioned without a specific date (e.g., "at 8 o'clock", "at 7 PM"), you MUST determine if that time has already passed **for the user today** by considering their local timezone.
-- **Rule 3: Smart Day Logic.**
-  - If "at 8 o'clock" for the user in their `{user_timezone}` has **NOT yet passed today**, set the reminder for today.
-  - If "at 8 o'clock" for the user in their `{user_timezone}` has **ALREADY passed today**, set the reminder for **tomorrow**.
-- **Rule 4: Date without time.** If a date is mentioned without a time (e.g., "on Friday", "July 15th"), use T00:00:00Z for the time part.
-- **Rule 5: Intent.** If a date/time is mentioned, the "implied_intent" array should have included 'create_reminder' (this is for your internal logic, do not include 'implied_intent' in the final JSON output).
+**Date/Time Calculation Rules:**
+- **Current Time (for context):** {current_datetime_utc_str} (UTC)
+- **User's Local Timezone:** {user_timezone}
+- **Output Format:** All date/time values in the JSON MUST be in UTC timezone, ending with 'Z'.
+- **Ambiguous Time:** When a user says "at 8 o'clock", assume they mean "today at 8 o'clock". Use the user's timezone to correctly calculate the UTC time for that.
+- **Date without time:** If a date is mentioned without a time (e.g., "on Friday"), use T00:00:00Z for the time part.
 """
     user_prompt = f"Analyze the following voice note text (in Russian):\n\n\"{raw_text}\""
 
@@ -103,6 +95,7 @@ The JSON object must strictly follow this structure:
     logger.debug(f"Sending request to DeepSeek. Current UTC: {current_datetime_utc_str}, User TZ: {user_timezone}")
     try:
         async with aiohttp.ClientSession() as session:
+            # ... (остальная часть функции без изменений)
             async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload,
                                     timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 response_text = await resp.text()

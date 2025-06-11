@@ -1,12 +1,13 @@
 # handlers/voice.py
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hcode, hbold, hitalic
 
-import database_setup as db  # <-- Импортируем db
+import database_setup as db
 from config import (
     MIN_VOICE_DURATION_SEC, DEEPSEEK_API_KEY_EXISTS, YANDEX_STT_CONFIGURED,
     MIN_STT_TEXT_CHARS, MIN_STT_TEXT_WORDS
@@ -14,6 +15,8 @@ from config import (
 from inline_keyboards import get_note_confirmation_keyboard
 from llm_processor import enhance_text_with_llm
 from services.common import get_or_create_user, check_and_update_stt_limit, increment_stt_recognition_count
+# --- НОВЫЙ ИМПОРТ ---
+from services.tz_utils import format_datetime_for_user
 from states import NoteCreationStates
 from utills import download_audio_content, recognize_speech_yandex
 
@@ -97,9 +100,8 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     llm_info_for_user_display = ""
 
     if DEEPSEEK_API_KEY_EXISTS:
-        # --- ИЗМЕНЕНИЕ: Получаем таймзону и передаем в LLM ---
-        user_timezone = user_profile.get('timezone', 'UTC')
-        llm_result_dict = await enhance_text_with_llm(raw_text_stt, user_timezone=user_timezone)
+        user_timezone_str = user_profile.get('timezone', 'UTC')
+        llm_result_dict = await enhance_text_with_llm(raw_text_stt, user_timezone=user_timezone_str)
 
         if "error" in llm_result_dict:
             logger.error(f"LLM error for user {message.from_user.id}: {llm_result_dict['error']}")
@@ -108,6 +110,31 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             llm_analysis_result_json = llm_result_dict
             corrected_text_for_response = llm_result_dict.get("corrected_text", raw_text_stt)
 
+            if llm_result_dict.get("dates_times"):
+                try:
+                    due_date_str = llm_result_dict["dates_times"][0].get("absolute_datetime_start")
+                    if due_date_str:
+                        if due_date_str.endswith('Z'):
+                            due_date_str = due_date_str[:-1] + "+00:00"
+                        due_date_utc = datetime.fromisoformat(due_date_str)
+
+                        user_tz = pytz.timezone(user_timezone_str)
+                        now_in_user_tz = datetime.now(user_tz)
+
+                        if due_date_utc.astimezone(user_tz) < now_in_user_tz:
+                            corrected_due_date_utc = due_date_utc + timedelta(days=1)
+                            llm_result_dict["dates_times"][0][
+                                "absolute_datetime_start"] = corrected_due_date_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+                            llm_analysis_result_json = llm_result_dict
+
+                            logger.info(
+                                f"Коррекция даты для пользователя {user_tg.id}: "
+                                f"LLM вернул прошедшую дату {due_date_utc.isoformat()}. "
+                                f"Исправлено на {corrected_due_date_utc.isoformat()}."
+                            )
+                except (pytz.UnknownTimeZoneError, ValueError, KeyError, IndexError) as e:
+                    logger.error(f"Ошибка при коррекции даты от LLM: {e}")
+
             details_parts = [f"{hbold('✨ Улучшенный текст (AI):')}\n{hcode(corrected_text_for_response)}"]
             if llm_result_dict.get("task_description"):
                 details_parts.append(f"📝 {hbold('Задача:')} {hitalic(llm_result_dict['task_description'])}")
@@ -115,10 +142,27 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             dates_times_str_list = []
             for dt_entry in llm_result_dict.get("dates_times", []):
                 mention = dt_entry.get('original_mention', 'N/A')
-                start_dt = dt_entry.get('absolute_datetime_start', 'N/A')
-                dates_times_str_list.append(f"- {hitalic(mention)} -> {hcode(start_dt)}")
+                start_dt_str_utc = dt_entry.get('absolute_datetime_start')
+
+                # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                # Форматируем дату для отображения пользователю
+                if start_dt_str_utc:
+                    try:
+                        # Преобразуем строку в datetime объект
+                        if start_dt_str_utc.endswith('Z'):
+                            start_dt_str_utc = start_dt_str_utc[:-1] + "+00:00"
+                        dt_obj = datetime.fromisoformat(start_dt_str_utc)
+                        # Используем нашу утилиту для форматирования
+                        display_date = format_datetime_for_user(dt_obj, user_timezone_str)
+                    except ValueError:
+                        display_date = "Некорректная дата"  # Fallback
+                else:
+                    display_date = "Не определено"
+
+                dates_times_str_list.append(f"- {hitalic(mention)} -> {hbold(display_date)}")
+
             if dates_times_str_list:
-                details_parts.append(f"🗓️ {hbold('Даты/Время:')}\n" + "\n".join(dates_times_str_list))
+                details_parts.append(f"🗓️ {hbold('Распознанные даты/время:')}\n" + "\n".join(dates_times_str_list))
 
             if llm_result_dict.get("people_mentioned"):
                 details_parts.append(f"👥 {hbold('Люди:')} {hitalic(', '.join(llm_result_dict['people_mentioned']))}")
