@@ -2,16 +2,10 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
-import os
+from datetime import datetime, timezone
 
 import aiohttp
-from dotenv import load_dotenv
-
-load_dotenv()
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL_NAME = "deepseek-chat"
+from config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +16,15 @@ def _get_current_datetime_utc_iso() -> str:
 
 
 def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
-    # ... (эта функция без изменений) ...
     try:
         extracted_info = json.loads(response_text)
         if not isinstance(extracted_info, dict):
             logger.warning(f"LLM returned JSON, but it's not a dictionary: {extracted_info}")
-            return {"error": "LLM returned non-dict JSON", "corrected_text": extracted_info.get("corrected_text", original_text)}
+            return {"error": "LLM returned non-dict JSON",
+                    "corrected_text": extracted_info.get("corrected_text", original_text)}
         if "corrected_text" not in extracted_info or not extracted_info["corrected_text"]:
-            logger.warning(f"LLM did not return 'corrected_text' or it was empty. Using original text. Full LLM JSON: {extracted_info}")
+            logger.warning(
+                f"LLM did not return 'corrected_text' or it was empty. Using original text. Full LLM JSON: {extracted_info}")
             extracted_info["corrected_text"] = original_text
         return extracted_info
     except json.JSONDecodeError as e:
@@ -41,21 +36,19 @@ def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
 
 
 async def enhance_text_with_llm(
-    raw_text: str,
-    api_key: str = DEEPSEEK_API_KEY,
-    api_url: str = DEEPSEEK_API_URL,
-    model_name: str = DEEPSEEK_MODEL_NAME
+        raw_text: str,
+        user_timezone: str = 'UTC'  # <-- НОВЫЙ ПАРАМЕТР
 ) -> dict:
-    if not api_key:
-        # ... (проверки без изменений) ...
+    if not DEEPSEEK_API_KEY:
         logger.error("DeepSeek API key is not configured. Set DEEPSEEK_API_KEY environment variable.")
         return {"error": "DeepSeek API key not configured", "corrected_text": raw_text}
-    if not api_url or not model_name:
+    if not DEEPSEEK_API_URL or not DEEPSEEK_MODEL_NAME:
         logger.error("DeepSeek API URL or Model Name is not configured.")
         return {"error": "DeepSeek API URL or Model Name not configured", "corrected_text": raw_text}
 
-    # <--- ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ И ОБНОВЛЯЕМ ПРОМПТ --->
     current_datetime_utc_str = _get_current_datetime_utc_iso()
+
+    # --- НОВЫЙ, УЛУЧШЕННЫЙ ПРОМПТ ---
     system_prompt = f"""You are an AI assistant specialized in processing transcribed voice notes in Russian.
 Your tasks are:
 1. Correct transcription errors, improve grammar, and punctuation of the provided Russian text.
@@ -69,53 +62,57 @@ The JSON object must strictly follow this structure:
   "event_description": "...",
   "dates_times": [
     {{
-      "original_mention": "Как дата/время было упомянуто в тексте.",
-      "absolute_datetime_start": "Рассчитанное абсолютное время в UTC, в формате ISO 8601 (YYYY-MM-DDTHH:MM:SSZ). Это поле ОБЯЗАТЕЛЬНО должно быть в UTC.",
+      "original_mention": "How the date/time was mentioned in the text.",
+      "absolute_datetime_start": "The calculated absolute time in UTC, in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ). This field MUST be in UTC.",
       "absolute_datetime_end": "..."
     }}
   ],
   "people_mentioned": [...],
-  "locations_mentioned": [...],
-  "implied_intent": ["..."]
+  "locations_mentioned": [...]
 }}
 
-IMPORTANT:
-- Current date and time for reference is: {current_datetime_utc_str}. This is the point in time from which all relative times ('in 2 minutes', 'tomorrow at 5 PM') should be calculated.
-- All absolute date/time values in the output JSON ('absolute_datetime_start', 'absolute_datetime_end') MUST be calculated and returned in UTC timezone, ending with 'Z'.
-- If a time is mentioned without a date (e.g., 'at 7 PM'), assume it's for the current day or the next day if that time has already passed today in UTC.
-- If a date is mentioned without a time (e.g., 'on Friday'), use T00:00:00Z for the time part.
-- If no date or time is mentioned in the text, the "dates_times" array should be empty.
-- If a date/time is mentioned, the "implied_intent" array MUST include 'create_reminder'.
+**CRITICAL INSTRUCTIONS FOR DATE/TIME CALCULATION:**
+- **Current Time (UTC):** {current_datetime_utc_str}
+- **User's Timezone:** {user_timezone}
+
+- **Rule 1: Always output in UTC.** All absolute date/time values in the JSON MUST be calculated and returned in the UTC timezone, ending with 'Z'.
+- **Rule 2: Use user's timezone for context.** When a time is mentioned without a specific date (e.g., "at 8 o'clock", "at 7 PM"), you MUST determine if that time has already passed **for the user today** by considering their local timezone.
+- **Rule 3: Smart Day Logic.**
+  - If "at 8 o'clock" for the user in their `{user_timezone}` has **NOT yet passed today**, set the reminder for today.
+  - If "at 8 o'clock" for the user in their `{user_timezone}` has **ALREADY passed today**, set the reminder for **tomorrow**.
+- **Rule 4: Date without time.** If a date is mentioned without a time (e.g., "on Friday", "July 15th"), use T00:00:00Z for the time part.
+- **Rule 5: Intent.** If a date/time is mentioned, the "implied_intent" array should have included 'create_reminder' (this is for your internal logic, do not include 'implied_intent' in the final JSON output).
 """
-    user_prompt = f"Проанализируй следующий текст голосовой заметки (он на русском языке):\n\n\"{raw_text}\""
+    user_prompt = f"Analyze the following voice note text (in Russian):\n\n\"{raw_text}\""
 
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": model_name,
+        "model": DEEPSEEK_MODEL_NAME,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.2, # Снижаем температуру для большей точности в датах
+        "temperature": 0.1,
         "max_tokens": 2048,
     }
 
-    logger.debug(f"Sending request to DeepSeek. Current UTC time for prompt: {current_datetime_utc_str}")
+    logger.debug(f"Sending request to DeepSeek. Current UTC: {current_datetime_utc_str}, User TZ: {user_timezone}")
     try:
-        # ... (остальной код функции без изменений) ...
         async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=90)) as resp:
+            async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload,
+                                    timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 response_text = await resp.text()
                 if resp.status == 200:
                     try:
                         response_data = json.loads(response_text)
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to decode outer JSON from DeepSeek: {e}. Response: {response_text[:500]}")
-                        return {"error": f"DeepSeek outer JSON decode error: {e}", "corrected_text": raw_text, "raw_llm_response": response_text}
+                        return {"error": f"DeepSeek outer JSON decode error: {e}", "corrected_text": raw_text,
+                                "raw_llm_response": response_text}
 
                     if 'choices' in response_data and response_data['choices']:
                         message_content_str = response_data['choices'][0].get('message', {}).get('content')
@@ -139,10 +136,13 @@ IMPORTANT:
                     try:
                         error_details = json.loads(response_text)
                         if isinstance(error_details, dict) and "error" in error_details:
-                           err_obj = error_details["error"]
-                           if isinstance(err_obj, dict) and "message" in err_obj: error_message += f": {err_obj['message']}"
-                           elif isinstance(err_obj, str): error_message += f": {err_obj}"
-                    except json.JSONDecodeError: error_message += f" - {response_text[:200]}"
+                            err_obj = error_details["error"]
+                            if isinstance(err_obj, dict) and "message" in err_obj:
+                                error_message += f": {err_obj['message']}"
+                            elif isinstance(err_obj, str):
+                                error_message += f": {err_obj}"
+                    except json.JSONDecodeError:
+                        error_message += f" - {response_text[:200]}"
                     return {"error": error_message, "corrected_text": raw_text, "raw_llm_response": response_text}
     except aiohttp.ClientConnectorError as e:
         logger.error(f"DeepSeek API connection error: {e}")

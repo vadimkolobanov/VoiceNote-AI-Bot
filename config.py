@@ -14,6 +14,8 @@ ADMIN_TELEGRAM_ID = int(os.environ.get("ADMIN_TELEGRAM_ID")) if os.environ.get("
 
 # --- API Keys & IDs ---
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL_NAME = "deepseek-chat"
 YANDEX_SPEECHKIT_API_KEY = os.environ.get("YANDEX_SPEECHKIT_API_KEY")
 YANDEX_SPEECHKIT_FOLDER_ID = os.environ.get("YANDEX_SPEECHKIT_FOLDER_ID")
 

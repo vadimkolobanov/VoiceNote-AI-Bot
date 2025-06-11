@@ -6,6 +6,7 @@ from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hcode, hbold, hitalic
 
+import database_setup as db  # <-- Импортируем db
 from config import (
     MIN_VOICE_DURATION_SEC, DEEPSEEK_API_KEY_EXISTS, YANDEX_STT_CONFIGURED,
     MIN_STT_TEXT_CHARS, MIN_STT_TEXT_WORDS
@@ -23,8 +24,9 @@ router = Router()
 @router.message(F.voice)
 async def handle_voice_message(message: types.Message, state: FSMContext):
     """Обрабатывает входящие голосовые сообщения."""
-    await get_or_create_user(message.from_user)
+    user_profile = await get_or_create_user(message.from_user)
     user_tg = message.from_user
+
     can_recognize, remaining_recognitions = await check_and_update_stt_limit(user_tg.id)
     if not can_recognize:
         logger.info(f"User {user_tg.id} exceeded daily STT limit.")
@@ -33,8 +35,8 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             "Попробуйте снова завтра. Спасибо за понимание!"
         )
         return
-    voice = message.voice
 
+    voice = message.voice
     if voice.duration < MIN_VOICE_DURATION_SEC:
         logger.info(f"User {message.from_user.id} sent too short voice: {voice.duration}s")
         await message.reply(
@@ -45,7 +47,6 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
 
     file_id = voice.file_id
     voice_message_datetime = message.date
-
     status_msg = await message.reply("✔️ Запись получена. Скачиваю и начинаю распознавание...")
 
     try:
@@ -75,10 +76,11 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             "Попробуйте записать его четче или в более тихом месте."
         )
         return
+
     await increment_stt_recognition_count(user_tg.id)
     logger.info(f"STT successful for user {user_tg.id}. Remaining for today: {remaining_recognitions - 1}")
-    if len(raw_text_stt.strip()) < MIN_STT_TEXT_CHARS or \
-            len(raw_text_stt.strip().split()) < MIN_STT_TEXT_WORDS:
+
+    if len(raw_text_stt.strip()) < MIN_STT_TEXT_CHARS or len(raw_text_stt.strip().split()) < MIN_STT_TEXT_WORDS:
         logger.info(f"Yandex STT for user {message.from_user.id} returned too short text: '{raw_text_stt}'")
         await status_msg.edit_text(
             f"❌ Распознанный текст слишком короткий.\nРаспознано: {hcode(raw_text_stt)}\nПожалуйста, попробуйте еще раз."
@@ -86,7 +88,7 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
         return
 
     await status_msg.edit_text(
-        f"🗣️ Распознано:\n{raw_text_stt}\n\n"
+        f"🗣️ Распознано (Yandex STT):\n{hcode(raw_text_stt)}\n\n"
         "✨ Улучшаю текст и извлекаю детали с помощью LLM..."
     )
 
@@ -95,7 +97,10 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     llm_info_for_user_display = ""
 
     if DEEPSEEK_API_KEY_EXISTS:
-        llm_result_dict = await enhance_text_with_llm(raw_text_stt)
+        # --- ИЗМЕНЕНИЕ: Получаем таймзону и передаем в LLM ---
+        user_timezone = user_profile.get('timezone', 'UTC')
+        llm_result_dict = await enhance_text_with_llm(raw_text_stt, user_timezone=user_timezone)
+
         if "error" in llm_result_dict:
             logger.error(f"LLM error for user {message.from_user.id}: {llm_result_dict['error']}")
             llm_info_for_user_display = f"\n\n⚠️ {hbold('Ошибка при AI анализе:')} {hcode(llm_result_dict['error'])}"
@@ -120,11 +125,6 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             if llm_result_dict.get("locations_mentioned"):
                 details_parts.append(
                     f"📍 {hbold('Места:')} {hitalic(', '.join(llm_result_dict['locations_mentioned']))}")
-
-            # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-            # Мы больше не выводим 'implied_intent' пользователю.
-            # if llm_result_dict.get("implied_intent"):
-            #     details_parts.append(f"💡 {hbold('Намерения:')} {hcode(', '.join(llm_result_dict['implied_intent']))}")
 
             llm_info_for_user_display = "\n\n" + "\n\n".join(details_parts)
     else:
