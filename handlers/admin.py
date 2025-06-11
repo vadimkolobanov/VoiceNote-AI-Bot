@@ -7,6 +7,7 @@ from aiogram.utils.markdown import hbold, hcode, hitalic
 
 from config import ADMIN_TELEGRAM_ID
 import database_setup as db
+from services.scheduler import scheduler
 from inline_keyboards import get_admin_user_panel_keyboard, AdminAction, get_admin_users_list_keyboard, AdminUserNav
 from services.tz_utils import format_datetime_for_user
 
@@ -16,10 +17,6 @@ router = Router()
 
 # --- Кастомные фильтры для админа ---
 class IsAdmin(Filter):
-    """
-    Кастомный фильтр для проверки, является ли пользователь администратором.
-    """
-
     async def __call__(self, event: Message | CallbackQuery) -> bool:
         if not ADMIN_TELEGRAM_ID: return False
         return event.from_user.id == ADMIN_TELEGRAM_ID
@@ -27,6 +24,30 @@ class IsAdmin(Filter):
 
 router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
+
+
+@router.message(Command("jobs"))
+async def cmd_show_jobs(message: Message):
+    """Показывает все активные задачи в планировщике APScheduler."""
+    jobs = scheduler.get_jobs()
+
+    if not jobs:
+        await message.answer("В планировщике нет активных задач.")
+        return
+
+    response_lines = [f"{hbold('Активные задачи в планировщике:')}\n"]
+
+    for job in jobs:
+        run_date_local = job.next_run_time.astimezone(None)
+
+        job_info = (
+            f"▪️ {hbold('ID:')} {hcode(job.id)}\n"
+            f"  - {hbold('Сработает:')} {hitalic(run_date_local.strftime('%Y-%m-%d %H:%M:%S'))}\n"
+            f"  - {hbold('Функция:')} {hcode(job.func.__name__)}"
+        )
+        response_lines.append(job_info)
+
+    await message.answer("\n\n".join(response_lines), parse_mode="HTML")
 
 
 # --- Вспомогательные функции ---
@@ -127,7 +148,6 @@ async def show_user_info_handler(callback: CallbackQuery, callback_data: AdminAc
     await callback.answer()
 
 
-# <--- ЗДЕСЬ ИЗМЕНЕНИЯ --->
 @router.callback_query(AdminAction.filter(F.action == 'toggle_vip'))
 async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: AdminAction):
     """Обрабатывает переключение VIP-статуса и уведомляет пользователя."""
@@ -140,40 +160,43 @@ async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: Admi
         await callback.answer("❌ Произошла ошибка при обновлении статуса.", show_alert=True)
         return
 
-    # Отправляем уведомление пользователю
     try:
         if new_vip_status:
-            # Сообщение о выдаче VIP
+            # --- ОБНОВЛЕННОЕ СООБЩЕНИЕ О ВЫДАЧЕ VIP ---
             user_notification_text = (
                 f"🎉 {hbold('Поздравляем!')}\n\n"
                 "Вам присвоен статус 👑 **VIP**!\n\n"
-                "Теперь для вас сняты все лимиты:\n"
+                "Теперь для вас доступны все эксклюзивные возможности:\n"
                 "✅ Безлимитное количество заметок.\n"
-                "✅ Безлимитное количество распознаваний голосовых сообщений.\n\n"
-                "Спасибо, что вы с нами!"
+                "✅ Безлимитное количество распознаваний.\n"
+                "✅ Умные напоминания (если в заметке указана только дата).\n"
+                "✅ Предварительные напоминания (например, за час до срока).\n"
+                "✅ Возможность отложить напоминание.\n\n"
+                "Спасибо, что вы с нами! Изучите новые возможности в разделе `👤 Профиль` -> `⚙️ Настройки`."
             )
             await callback.bot.send_message(target_user_id, user_notification_text, parse_mode="HTML")
             logger.info(f"Пользователю {target_user_id} отправлено уведомление о получении VIP.")
         else:
-            # Сообщение о снятии VIP
+            # --- ОБНОВЛЕННАЯ ЛОГИКА ПРИ СНЯТИИ VIP ---
+            # Сбрасываем VIP-настройки пользователя
+            await db.reset_user_vip_settings(target_user_id)
+
             user_notification_text = (
                 f"ℹ️ {hbold('Изменение статуса')}\n\n"
                 "Ваш VIP-статус был изменен администратором. "
                 "Теперь для вашего аккаунта действуют стандартные лимиты.\n\n"
+                "Ваши персональные настройки напоминаний были сброшены к значениям по умолчанию.\n\n"
                 "Если у вас есть вопросы, обратитесь в поддержку."
             )
             await callback.bot.send_message(target_user_id, user_notification_text, parse_mode="HTML")
-            logger.info(f"Пользователю {target_user_id} отправлено уведомление о снятии VIP.")
+            logger.info(f"Пользователю {target_user_id} отправлено уведомление о снятии VIP и сброшены настройки.")
 
     except Exception as e:
-        # Если бот заблокирован пользователем, мы не сможем отправить сообщение.
-        # Это не критичная ошибка, просто логируем ее.
         logger.warning(
             f"Не удалось отправить уведомление о смене VIP-статуса пользователю {target_user_id}. "
             f"Возможно, бот заблокирован. Ошибка: {e}"
         )
 
-    # Отвечаем администратору
     status_text = "выдан" if new_vip_status else "забран"
     await callback.answer(f"✅ VIP-статус {status_text}! Пользователь уведомлен.", show_alert=False)
 
@@ -182,7 +205,6 @@ async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: Admi
         f"{target_user_id} на {new_vip_status}"
     )
 
-    # Обновляем сообщение с админ-панелью
     new_text, new_keyboard = await _get_user_info_text_and_keyboard(target_user_id)
     if new_text:
         try:

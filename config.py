@@ -34,10 +34,15 @@ MIN_STT_TEXT_CHARS = 5
 MIN_STT_TEXT_WORDS = 1
 MAX_DAILY_STT_RECOGNITIONS_MVP = 15
 
-# <--- НОВЫЙ СПИСОК --->
 NOTE_CATEGORIES = [
     "Общее", "Работа", "Личное", "Задачи", "Идеи", "Покупки"
 ]
+
+# --- НОВЫЕ ПЕРЕМЕННЫЕ: Ссылки на ресурсы ---
+# Укажите реальные ссылки на ваши канал и чат (или оставьте None)
+NEWS_CHANNEL_URL = os.environ.get("NEWS_CHANNEL_URL") # например, https://t.me/your_channel
+CHAT_URL = os.environ.get("CHAT_URL") # например, https://t.me/your_chat
+CREATOR_CONTACT = os.environ.get("CREATOR_CONTACT", "@useranybody") # Контакт создателя
 
 
 # --- Feature Flags (based on API key presence) ---

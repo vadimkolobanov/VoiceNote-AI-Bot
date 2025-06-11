@@ -5,24 +5,34 @@ from datetime import time, datetime
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
-from aiogram.utils.markdown import hbold, hcode
+from aiogram.utils.markdown import hbold, hcode, hitalic
 
 import database_setup as db
+from config import ADMIN_TELEGRAM_ID
 from inline_keyboards import (
     get_settings_menu_keyboard,
     get_timezone_selection_keyboard,
     get_reminder_time_keyboard,
+    get_pre_reminder_keyboard,
+    get_request_vip_keyboard,
     SettingsAction,
     TimezoneAction
 )
 from services.tz_utils import ALL_PYTZ_TIMEZONES
 from states import ProfileSettingsStates
 
-# handlers.profile больше не нужен здесь
-# from handlers.profile import user_profile_display_handler
-
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def format_pre_reminder_minutes(minutes: int) -> str:
+    """Форматирует минуты в человекочитаемый текст."""
+    if minutes == 0:
+        return "Отключены"
+    if minutes < 60:
+        return f"За {minutes} мин."
+    hours = minutes // 60
+    return f"За {hours} ч."
 
 
 # --- Вспомогательная функция, чтобы не дублировать код ---
@@ -35,16 +45,19 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
 
     current_tz = user_profile.get('timezone', 'UTC')
     current_rem_time = user_profile.get('default_reminder_time')
+    current_pre_rem_minutes = user_profile.get('pre_reminder_minutes', 60)
+
     if isinstance(current_rem_time, time):
         current_rem_time_str = current_rem_time.strftime('%H:%M')
     else:
-        current_rem_time_str = "09:00"  # Fallback
+        current_rem_time_str = "09:00"
 
     text = (
         f"{hbold('⚙️ Ваши настройки')}\n\n"
         f"Здесь вы можете персонализировать работу бота.\n\n"
         f"▪️ Текущий часовой пояс: {hcode(current_tz)}\n"
-        f"▪️ Время напоминаний по умолчанию: {hcode(current_rem_time_str)}\n"
+        f"▪️ Время напоминаний по умолчанию: {hcode(current_rem_time_str)} (⭐ VIP)\n"
+        f"▪️ Предварительные напоминания: {hbold(format_pre_reminder_minutes(current_pre_rem_minutes))} (⭐ VIP)"
     )
     keyboard = get_settings_menu_keyboard()
     return text, keyboard
@@ -68,9 +81,7 @@ async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMCo
             parse_mode="HTML",
             reply_markup=keyboard
         )
-    except Exception as e:
-        logger.warning(f"Could not edit settings message, sending new one: {e}")
-        # Если редактирование не удалось, отправляем новое сообщение
+    except Exception:
         await callback_query.message.answer(
             text,
             parse_mode="HTML",
@@ -80,11 +91,9 @@ async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMCo
     await callback_query.answer()
 
 
-# --- Раздел "Часовой пояс" ---
-
+# --- Раздел "Часовой пояс" (доступен всем) ---
 @router.callback_query(SettingsAction.filter(F.action == "go_to_timezone"))
 async def show_timezone_selection_handler(callback_query: CallbackQuery, state: FSMContext):
-    """Отображает экран выбора часового пояса."""
     await state.clear()
     text = (
         f"{hbold('🕒 Настройка часового пояса')}\n\n"
@@ -99,10 +108,10 @@ async def show_timezone_selection_handler(callback_query: CallbackQuery, state: 
     await callback_query.answer()
 
 
+# ... (остальная логика таймзоны без изменений) ...
 @router.callback_query(TimezoneAction.filter(F.action == 'set'))
 async def set_timezone_from_button_handler(callback_query: CallbackQuery, callback_data: TimezoneAction,
                                            state: FSMContext):
-    """Обрабатывает установку часового пояса по кнопке."""
     telegram_id = callback_query.from_user.id
 
     success = await db.set_user_timezone(telegram_id, callback_data.tz_name)
@@ -111,13 +120,11 @@ async def set_timezone_from_button_handler(callback_query: CallbackQuery, callba
     else:
         await callback_query.answer("❌ Ошибка при установке часового пояса.", show_alert=True)
 
-    # Возвращаемся в главное меню настроек
     await show_main_settings_handler(callback_query, state)
 
 
 @router.callback_query(TimezoneAction.filter(F.action == 'manual_input'))
 async def manual_timezone_input_handler(callback_query: CallbackQuery, state: FSMContext):
-    """Запрашивает ручной ввод часового пояса."""
     await state.set_state(ProfileSettingsStates.awaiting_timezone)
     text = (
         f"{hbold('⌨️ Ручной ввод часового пояса')}\n\n"
@@ -130,7 +137,6 @@ async def manual_timezone_input_handler(callback_query: CallbackQuery, state: FS
 
 @router.message(ProfileSettingsStates.awaiting_timezone, F.text)
 async def process_manual_timezone_handler(message: types.Message, state: FSMContext):
-    """Обрабатывает ручной ввод часового пояса."""
     timezone_name = message.text.strip()
 
     if timezone_name not in ALL_PYTZ_TIMEZONES:
@@ -146,21 +152,33 @@ async def process_manual_timezone_handler(message: types.Message, state: FSMCont
 
     await message.answer(f"✅ Часовой пояс установлен: {timezone_name}")
 
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Не используем фейковый колбэк, а просто отправляем новое сообщение с меню настроек
     text, keyboard = await get_settings_text_and_keyboard(telegram_id)
     if text:
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-# --- Раздел "Время напоминаний" ---
+# --- Раздел "Время напоминаний" (VIP) ---
 
 @router.callback_query(SettingsAction.filter(F.action == "go_to_reminders"))
 async def show_reminder_time_handler(callback_query: CallbackQuery):
-    """Отображает экран выбора времени напоминаний по умолчанию."""
+    user_profile = await db.get_user_profile(callback_query.from_user.id)
+    # --- ПРОВЕРКА VIP ---
+    if not user_profile.get('is_vip'):
+        text = (
+            f"⭐ {hbold('Настройка времени напоминаний')}\n\n"
+            "Эта функция доступна только для **VIP-пользователей**.\n\n"
+            "Она позволяет боту автоматически устанавливать напоминания на удобное вам время, "
+            "даже если вы сказали только дату (например, 'завтра').\n\n"
+            "Хотите получить тестовый VIP-доступ?"
+        )
+        await callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=get_request_vip_keyboard())
+        await callback_query.answer()
+        return
+
+    # Логика для VIP-пользователей
     text = (
         f"{hbold('⏰ Время напоминаний по умолчанию')}\n\n"
-        "Это время будет использоваться для напоминаний, у которых в тексте была указана только дата (например, 'завтра' или '15 июля')."
+        "Это время будет использоваться для напоминаний, у которых в тексте была указана только дата."
     )
     await callback_query.message.edit_text(
         text,
@@ -170,17 +188,17 @@ async def show_reminder_time_handler(callback_query: CallbackQuery):
     await callback_query.answer()
 
 
+# ... (хендлеры set_reminder_time_from_button_handler, manual_reminder_time_handler, process_manual_reminder_time_handler без изменений)
 @router.callback_query(SettingsAction.filter(F.action == "set_rem_time"))
 async def set_reminder_time_from_button_handler(callback: CallbackQuery, callback_data: SettingsAction,
                                                 state: FSMContext):
-    """Устанавливает время напоминания по кнопке."""
     time_str = callback_data.value.replace('-', ':')
 
     try:
         time_obj = datetime.strptime(time_str, '%H:%M').time()
         success = await db.set_user_default_reminder_time(callback.from_user.id, time_obj)
         if success:
-            await callback.answer(f"✅ Время напоминаний установлено на {time_str}", show_alert=True)
+            await callback.answer(f"✅ Время напоминаний установлено на {time_str}", show_alert=False)
         else:
             await callback.answer("❌ Ошибка при установке времени.", show_alert=True)
     except ValueError:
@@ -191,7 +209,6 @@ async def set_reminder_time_from_button_handler(callback: CallbackQuery, callbac
 
 @router.callback_query(SettingsAction.filter(F.action == "manual_rem_time"))
 async def manual_reminder_time_handler(callback: CallbackQuery, state: FSMContext):
-    """Запрашивает ручной ввод времени напоминания."""
     await state.set_state(ProfileSettingsStates.awaiting_reminder_time)
     text = (
         f"{hbold('⌨️ Ручной ввод времени')}\n\n"
@@ -204,7 +221,6 @@ async def manual_reminder_time_handler(callback: CallbackQuery, state: FSMContex
 
 @router.message(ProfileSettingsStates.awaiting_reminder_time, F.text)
 async def process_manual_reminder_time_handler(message: types.Message, state: FSMContext):
-    """Обрабатывает ручной ввод времени напоминания."""
     try:
         time_obj = datetime.strptime(message.text.strip(), '%H:%M').time()
         telegram_id = message.from_user.id
@@ -212,8 +228,6 @@ async def process_manual_reminder_time_handler(message: types.Message, state: FS
         await state.clear()
         await message.answer(f"✅ Время напоминаний установлено на {message.text.strip()}.")
 
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Не используем фейковый колбэк, а просто отправляем новое сообщение с меню настроек
         text, keyboard = await get_settings_text_and_keyboard(telegram_id)
         if text:
             await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
@@ -222,3 +236,85 @@ async def process_manual_reminder_time_handler(message: types.Message, state: FS
         await message.reply(
             "❌ Неверный формат времени. Пожалуйста, введите время в формате `ЧЧ:ММ`, например, `09:30`.")
         return
+
+
+# --- Раздел "Предварительные напоминания" (VIP) ---
+
+@router.callback_query(SettingsAction.filter(F.action == "go_to_pre_reminders"))
+async def show_pre_reminder_handler(callback: CallbackQuery):
+    user_profile = await db.get_user_profile(callback.from_user.id)
+    # --- ПРОВЕРКА VIP ---
+    if not user_profile.get('is_vip'):
+        text = (
+            f"⭐ {hbold('Предварительные напоминания')}\n\n"
+            "Эта функция доступна только для **VIP-пользователей**.\n\n"
+            "Она позволяет получать напоминания заранее (например, за час до дедлайна), чтобы вы точно ничего не забыли.\n\n"
+            "Хотите получить тестовый VIP-доступ?"
+        )
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_request_vip_keyboard())
+        await callback.answer()
+        return
+
+    # Логика для VIP
+    current_minutes = user_profile.get('pre_reminder_minutes', 60)
+    text = (
+        f"{hbold('🔔 Пред-напоминания')}\n\n"
+        "Выберите, за какое время до основного срока вы хотите получать дополнительное напоминание.\n\n"
+        f"Текущая настройка: {hbold(format_pre_reminder_minutes(current_minutes))}"
+    )
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_pre_reminder_keyboard()
+    )
+    await callback.answer()
+
+
+# ... (хендлер set_pre_reminder_handler без изменений) ...
+@router.callback_query(SettingsAction.filter(F.action == "set_pre_rem"))
+async def set_pre_reminder_handler(callback: CallbackQuery, callback_data: SettingsAction, state: FSMContext):
+    try:
+        minutes = int(callback_data.value)
+        success = await db.set_user_pre_reminder_minutes(callback.from_user.id, minutes)
+        if success:
+            await callback.answer(f"✅ Настройка сохранена: {format_pre_reminder_minutes(minutes)}", show_alert=False)
+        else:
+            await callback.answer("❌ Ошибка при сохранении.", show_alert=True)
+    except (ValueError, TypeError):
+        await callback.answer("❌ Неверное значение.", show_alert=True)
+
+    await show_main_settings_handler(callback, state)
+
+
+# --- НОВЫЙ ХЕНДЛЕР: Обработка заявки на VIP ---
+
+@router.callback_query(SettingsAction.filter(F.action == "request_vip"))
+async def request_vip_handler(callback: CallbackQuery):
+    """Отправляет заявку администратору и уведомляет пользователя."""
+    if not ADMIN_TELEGRAM_ID:
+        await callback.answer("К сожалению, эта функция временно недоступна.", show_alert=True)
+        return
+
+    user = callback.from_user
+    username = f"@{user.username}" if user.username else "N/A"
+
+    # Сообщение для администратора
+    admin_text = (
+        f"‼️ {hbold('Новая заявка на VIP-доступ!')}\n\n"
+        f"Пользователь: {hbold(user.full_name)}\n"
+        f"Username: {hitalic(username)}\n"
+        f"ID: {hcode(user.id)}\n\n"
+        f"Чтобы выдать VIP, ответьте на это сообщение командой `/admin` или используйте команду `{hcode(f'/admin {user.id}')}`."
+    )
+
+    try:
+        await callback.bot.send_message(ADMIN_TELEGRAM_ID, admin_text, parse_mode="HTML")
+        await callback.answer("✅ Ваша заявка отправлена администратору! Он рассмотрит ее в ближайшее время.",
+                              show_alert=True)
+
+        # Можно вернуть пользователя в меню настроек
+        await show_main_settings_handler(callback, FSMContext(storage=router.fsm.storage, key=callback.fsm_key))
+
+    except Exception as e:
+        logger.error(f"Не удалось отправить заявку на VIP от {user.id} администратору {ADMIN_TELEGRAM_ID}: {e}")
+        await callback.answer("❌ Произошла ошибка при отправке заявки. Пожалуйста, попробуйте позже.", show_alert=True)

@@ -5,7 +5,6 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,10 +17,9 @@ from handlers import commands as cmd_router
 from handlers import notes as notes_router
 from handlers import voice as voice_router
 from handlers import profile as profile_router
-# --- ИЗМЕНЕНИЯ ---
-# from handlers import timezone_selector as tz_router # <-- УДАЛЯЕМ
-from handlers import settings as settings_router # <-- ДОБАВЛЯЕМ
+from handlers import settings as settings_router
 from handlers import admin as admin_router
+from handlers import info as info_router # <-- НОВЫЙ ИМПОРТ
 
 import database_setup as db
 from services.scheduler import scheduler, load_reminders_on_startup
@@ -87,14 +85,14 @@ async def main():
     dp = Dispatcher(storage=storage)
 
     # Подключаем роутеры из пакета handlers
+    # Важен порядок: сначала более специфичные, потом общие
     dp.include_router(admin_router.router)
-    dp.include_router(cmd_router.router)
+    dp.include_router(info_router.router) # <-- НОВЫЙ РОУТЕР
+    dp.include_router(settings_router.router)
+    dp.include_router(profile_router.router)
     dp.include_router(notes_router.router)
     dp.include_router(voice_router.router)
-    dp.include_router(profile_router.router)
-    # --- ИЗМЕНЕНИЯ ---
-    dp.include_router(settings_router.router) # <-- ДОБАВЛЯЕМ НОВЫЙ РОУТЕР
-    # dp.include_router(tz_router.router) # <-- УДАЛЯЕМ СТАРЫЙ
+    dp.include_router(cmd_router.router) # Команды часто ставят в конце
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

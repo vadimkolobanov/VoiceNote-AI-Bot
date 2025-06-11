@@ -1,6 +1,6 @@
 # handlers/notes.py
 import logging
-from datetime import datetime, timedelta  # <-- Добавляем timedelta
+from datetime import datetime, timedelta
 
 from aiogram import Router, types, F
 from aiogram.filters import Command
@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# --- Вспомогательная функция для возврата в меню ---
+async def return_to_main_menu(message: types.Message):
+    """Отправляет сообщение с главным меню."""
+    await message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard())
+
+
 # --- FSM HANDLERS FOR NOTE CREATION (Confirm/Cancel) ---
 @router.callback_query(NoteCreationStates.awaiting_confirmation, F.data == "confirm_save_note")
 async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FSMContext):
@@ -47,7 +53,7 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
             )
             await callback_query.answer("Лимит заметок достигнут", show_alert=True)
             await state.clear()
-            await callback_query.message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard())
+            await return_to_main_menu(callback_query.message)
             return
 
     original_stt_text = user_data.get("original_stt_text")
@@ -80,15 +86,13 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
 
     if note_id:
         if due_date_obj:
-            # Получаем полный профиль пользователя, чтобы передать настройки в планировщик
             full_user_profile = await db.get_user_profile(telegram_id)
             note_data_for_scheduler = {
-                'note_id': note_id,
-                'telegram_id': telegram_id,
-                'corrected_text': corrected_text_to_save,
-                'due_date': due_date_obj,
-                'default_reminder_time': full_user_profile.get('default_reminder_time'),
-                'timezone': full_user_profile.get('timezone')
+                'note_id': note_id, 'telegram_id': telegram_id, 'corrected_text': corrected_text_to_save,
+                'due_date': due_date_obj, 'default_reminder_time': full_user_profile.get('default_reminder_time'),
+                'timezone': full_user_profile.get('timezone'),
+                'pre_reminder_minutes': full_user_profile.get('pre_reminder_minutes'),
+                'is_vip': full_user_profile.get('is_vip', False)
             }
             add_reminder_to_scheduler(bot, note_data_for_scheduler)
 
@@ -97,13 +101,11 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
             parse_mode="HTML", reply_markup=None
         )
     else:
-        await callback_query.message.edit_text(
-            "❌ Произошла ошибка при сохранении заметки.", reply_markup=None
-        )
+        await callback_query.message.edit_text("❌ Произошла ошибка при сохранении заметки.", reply_markup=None)
 
     await callback_query.answer()
     await state.clear()
-    await callback_query.message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard())
+    await return_to_main_menu(callback_query.message)
 
 
 @router.callback_query(NoteCreationStates.awaiting_confirmation, F.data == "cancel_save_note")
@@ -111,7 +113,7 @@ async def cancel_save_note_fsm_handler(callback_query: CallbackQuery, state: FSM
     await callback_query.message.edit_text("🚫 Сохранение отменено.", reply_markup=None)
     await callback_query.answer()
     await state.clear()
-    await callback_query.message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard())
+    await return_to_main_menu(callback_query.message)
 
 
 # --- NOTES LIST, PAGINATION, VIEW, ACTIONS ---
@@ -210,7 +212,6 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
     has_audio = bool(note.get('original_audio_telegram_file_id'))
     is_completed = note.get('is_completed', False)
 
-    # --- ИЗМЕНЕНИЕ: Формируем заголовок и статус в зависимости от состояния заметки ---
     status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else "📌")
     status_text = "Выполнена" if is_completed else ("В архиве" if note['is_archived'] else "Активна")
 
@@ -224,17 +225,25 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
         text += f"Срок до: {hitalic(due_date_local)}\n"
     text += f"\n{hbold('Текст заметки:')}\n{hcode(note['corrected_text'])}\n"
 
-    await callback_query.message.edit_text(
-        text, parse_mode="HTML",
-        reply_markup=get_note_view_actions_keyboard(note['note_id'], current_page, note['is_archived'], is_completed,
-                                                    has_audio)
-    )
+    try:
+        await callback_query.message.edit_text(
+            text, parse_mode="HTML",
+            reply_markup=get_note_view_actions_keyboard(note['note_id'], current_page, note['is_archived'],
+                                                        is_completed, has_audio)
+        )
+    except Exception as e:
+        logger.warning(f"Could not edit note view, sending new message: {e}")
+        await callback_query.message.answer(
+            text, parse_mode="HTML",
+            reply_markup=get_note_view_actions_keyboard(note['note_id'], current_page, note['is_archived'],
+                                                        is_completed, has_audio)
+        )
+
     await callback_query.answer()
 
 
 @router.callback_query(NoteAction.filter(F.action == "listen_audio"))
 async def listen_audio_handler(callback_query: CallbackQuery, callback_data: NoteAction):
-    """Отправляет оригинальное аудио заметки."""
     note = await db.get_note_by_id(callback_data.note_id, callback_query.from_user.id)
     if note and note.get('original_audio_telegram_file_id'):
         audio_file_id = note['original_audio_telegram_file_id']
@@ -250,7 +259,6 @@ async def listen_audio_handler(callback_query: CallbackQuery, callback_data: Not
 
 @router.callback_query(NoteAction.filter(F.action == "change_category"))
 async def change_category_handler(callback_query: CallbackQuery, callback_data: NoteAction):
-    """Показывает экран выбора категории."""
     await callback_query.message.edit_text(
         "🗂️ Выберите новую категорию для заметки:",
         reply_markup=get_category_selection_keyboard(
@@ -264,7 +272,6 @@ async def change_category_handler(callback_query: CallbackQuery, callback_data: 
 
 @router.callback_query(NoteAction.filter(F.action == "set_category"))
 async def set_category_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    """Устанавливает новую категорию и возвращает к просмотру заметки."""
     new_category = callback_data.category
     success = await db.update_note_category(callback_data.note_id, new_category, callback_query.from_user.id)
 
@@ -305,14 +312,14 @@ async def unarchive_note_handler(callback_query: CallbackQuery, callback_data: N
 
     success = await db.set_note_archived_status(callback_data.note_id, telegram_id, archived=False)
     if success:
-        # Восстанавливаем напоминание, если оно было
         note = await db.get_note_by_id(callback_data.note_id, telegram_id)
         if note and note.get('due_date'):
-            # Передаем полный профиль для корректного расчета времени
             full_user_profile = await db.get_user_profile(telegram_id)
             note.update({
                 'default_reminder_time': full_user_profile.get('default_reminder_time'),
-                'timezone': full_user_profile.get('timezone')
+                'timezone': full_user_profile.get('timezone'),
+                'pre_reminder_minutes': full_user_profile.get('pre_reminder_minutes'),
+                'is_vip': full_user_profile.get('is_vip', False)
             })
             add_reminder_to_scheduler(bot, note)
         await callback_query.answer("↩️ Заметка восстановлена из архива")
@@ -353,7 +360,7 @@ async def start_note_edit_handler(callback_query: CallbackQuery, callback_data: 
     await state.update_data(note_id_to_edit=callback_data.note_id, page_to_return_to=callback_data.page,
                             original_message_id=callback_query.message.message_id)
     await callback_query.message.edit_text(
-        f"✏️ {hbold('Редактирование заметки #{callback_data.note_id}')}\n\n"
+        f"✏️ {hbold('Редактирование заметки')}\n\n"
         "Пришлите мне новый текст для этой заметки. "
         "Чтобы отменить, просто отправьте /cancel.",
         parse_mode="HTML",
@@ -366,7 +373,6 @@ async def start_note_edit_handler(callback_query: CallbackQuery, callback_data: 
 async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     note_id = user_data.get("note_id_to_edit")
-    # Восстанавливаем просмотр заметки после отмены
     await state.clear()
     await message.answer("🚫 Редактирование отменено.")
 
@@ -381,7 +387,8 @@ async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
             page=user_data.get("page_to_return_to", 1)
         ).pack()
     )
-    await view_note_detail_handler(fake_callback_query, NoteAction.unpack(fake_callback_query.data), state)
+    fake_callback_data = NoteAction(action="view", note_id=note_id, page=user_data.get("page_to_return_to", 1))
+    await view_note_detail_handler(fake_callback_query, fake_callback_data, state)
 
 
 @router.message(NoteEditingStates.awaiting_new_text, F.text)
@@ -400,14 +407,13 @@ async def process_note_edit_handler(message: types.Message, state: FSMContext):
         await _display_notes_list_page(message, message.from_user.id, page_to_return_to, state, is_archive_list=False)
     else:
         await message.reply("❌ Произошла ошибка при обновлении заметки. Попробуйте еще раз.")
-        await message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard())
+        await return_to_main_menu(message)
 
 
-# --- НОВЫЕ ХЕНДЛЕРЫ для Feature #29 ---
+# --- Хендлеры для интерактивных уведомлений ---
 
 @router.callback_query(NoteAction.filter(F.action == "complete"))
-async def complete_note_handler(callback: CallbackQuery, callback_data: NoteAction):
-    """Обрабатывает нажатие на кнопку 'Выполнено'."""
+async def complete_note_handler(callback: CallbackQuery, callback_data: NoteAction, state: FSMContext):
     note_id = callback_data.note_id
     telegram_id = callback.from_user.id
 
@@ -416,25 +422,28 @@ async def complete_note_handler(callback: CallbackQuery, callback_data: NoteActi
         remove_reminder_from_scheduler(note_id)
         await callback.answer("✅ Отлично! Задача выполнена и перенесена в архив.", show_alert=False)
 
-        # Обновляем сообщение-напоминание, убирая клавиатуру
         try:
             await callback.message.edit_text(
                 f"{callback.message.text}\n\n{hbold('Статус: ✅ Выполнено')}",
-                parse_mode="HTML",
-                reply_markup=None
+                parse_mode="HTML", reply_markup=None
             )
         except Exception:
-            # Если не получилось отредактировать (например, прошло много времени), ничего страшного
             pass
+        await _display_notes_list_page(callback.message, telegram_id, page_num=1, state=state, is_archive_list=False)
     else:
         await callback.answer("❌ Не удалось отметить задачу как выполненную.", show_alert=True)
 
 
 @router.callback_query(NoteAction.filter(F.action == "snooze"))
 async def snooze_reminder_handler(callback: CallbackQuery, callback_data: NoteAction):
-    """Обрабатывает нажатие на кнопку 'Отложить'."""
-    note_id = callback_data.note_id
     telegram_id = callback.from_user.id
+
+    user_profile = await db.get_user_profile(telegram_id)
+    if not user_profile.get('is_vip', False):
+        await callback.answer("⭐ Отложенные напоминания доступны только для VIP-пользователей.", show_alert=True)
+        return
+
+    note_id = callback_data.note_id
     snooze_minutes = callback_data.snooze_minutes
 
     note = await db.get_note_by_id(note_id, telegram_id)
@@ -442,28 +451,35 @@ async def snooze_reminder_handler(callback: CallbackQuery, callback_data: NoteAc
         await callback.answer("❌ Не удалось отложить: заметка или дата не найдены.", show_alert=True)
         return
 
-    # Переносим напоминание
     new_due_date = datetime.now(datetime.now().astimezone().tzinfo) + timedelta(minutes=snooze_minutes)
 
-    # Создаем новый объект для планировщика
+    await db.update_note_due_date(note_id, new_due_date)
+
     full_user_profile = await db.get_user_profile(telegram_id)
-    new_note_data = note.copy()
-    new_note_data.update({
+    note_data_for_scheduler = note.copy()
+    note_data_for_scheduler.update({
         'due_date': new_due_date,
         'default_reminder_time': full_user_profile.get('default_reminder_time'),
-        'timezone': full_user_profile.get('timezone')
+        'timezone': full_user_profile.get('timezone'),
+        'pre_reminder_minutes': full_user_profile.get('pre_reminder_minutes'),
+        'is_vip': full_user_profile.get('is_vip', False)
     })
 
-    add_reminder_to_scheduler(callback.bot, new_note_data)
+    add_reminder_to_scheduler(callback.bot, note_data_for_scheduler)
 
-    await callback.answer(f"👌 Понял! Напомню через {snooze_minutes // 60} ч.", show_alert=False)
+    if snooze_minutes < 60:
+        snooze_text = f"{snooze_minutes} мин."
+    else:
+        snooze_text = f"{snooze_minutes // 60} ч."
 
-    # Обновляем сообщение-напоминание
+    await callback.answer(f"👌 Понял! Напомню через {snooze_text}", show_alert=False)
+
     try:
         await callback.message.edit_text(
-            f"{callback.message.text}\n\n{hbold(f'Статус: ⏰ Отложено до {new_due_date.strftime('%H:%M')}')}",
-            parse_mode="HTML",
-            reply_markup=None
+            f"{callback.message.text}\n\n{hbold(f'Статус: ⏰ Отложено до {new_due_date.astimezone().strftime('%H:%M')}')}",
+            parse_mode="HTML", reply_markup=None
         )
     except Exception:
         pass
+
+    await return_to_main_menu(callback.message)

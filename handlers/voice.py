@@ -15,7 +15,6 @@ from llm_processor import enhance_text_with_llm
 from services.common import get_or_create_user, check_and_update_stt_limit, increment_stt_recognition_count
 from states import NoteCreationStates
 from utills import download_audio_content, recognize_speech_yandex
-# Экземпляр бота больше не импортируется отсюда
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -50,9 +49,7 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     status_msg = await message.reply("✔️ Запись получена. Скачиваю и начинаю распознавание...")
 
     try:
-        # Используем message.bot вместо импортированного экземпляра
         file_info = await message.bot.get_file(file_id)
-        # И здесь тоже используем токен из message.bot
         file_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file_info.file_path}"
     except Exception as e:
         logger.exception(f"Error getting file info for user {message.from_user.id}")
@@ -89,7 +86,7 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
         return
 
     await status_msg.edit_text(
-        f"🗣️ Распознано (Yandex STT):\n{hcode(raw_text_stt)}\n\n"
+        f"🗣️ Распознано:\n{raw_text_stt}\n\n"
         "✨ Улучшаю текст и извлекаю детали с помощью LLM..."
     )
 
@@ -123,8 +120,11 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             if llm_result_dict.get("locations_mentioned"):
                 details_parts.append(
                     f"📍 {hbold('Места:')} {hitalic(', '.join(llm_result_dict['locations_mentioned']))}")
-            if llm_result_dict.get("implied_intent"):
-                details_parts.append(f"💡 {hbold('Намерения:')} {hcode(', '.join(llm_result_dict['implied_intent']))}")
+
+            # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+            # Мы больше не выводим 'implied_intent' пользователю.
+            # if llm_result_dict.get("implied_intent"):
+            #     details_parts.append(f"💡 {hbold('Намерения:')} {hcode(', '.join(llm_result_dict['implied_intent']))}")
 
             llm_info_for_user_display = "\n\n" + "\n\n".join(details_parts)
     else:

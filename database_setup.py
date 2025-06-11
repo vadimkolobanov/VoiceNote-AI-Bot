@@ -33,6 +33,8 @@ CREATE_TABLE_STATEMENTS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip BOOLEAN DEFAULT FALSE;",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_reminder_time TIME DEFAULT '09:00:00';",
+    # --- НОВОЕ ПОЛЕ для Feature #30 ---
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_reminder_minutes INTEGER DEFAULT 60;", # По умолчанию - за 1 час
     """
     CREATE TABLE IF NOT EXISTS subscriptions
     (
@@ -212,11 +214,21 @@ async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) 
         return updated_count > 0
 
 
+async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
+    """Устанавливает время предварительного напоминания в минутах."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2",
+            minutes, telegram_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Для пользователя {telegram_id} установлено время пред-напоминаний: {minutes} минут.")
+        return updated_count > 0
+
+
 async def get_all_users_paginated(page: int = 1, per_page: int = 10) -> tuple[list[dict], int]:
-    """
-    Получает список всех пользователей с пагинацией.
-    Возвращает список пользователей на странице и общее количество пользователей.
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         total_items = await conn.fetchval("SELECT COUNT(*) FROM users")
@@ -231,9 +243,26 @@ async def get_all_users_paginated(page: int = 1, per_page: int = 10) -> tuple[li
         users_records = await conn.fetch(users_query, per_page, offset)
         return [dict(record) for record in users_records], total_items
 
+async def reset_user_vip_settings(telegram_id: int) -> bool:
+    """Сбрасывает VIP-настройки пользователя к значениям по умолчанию."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Сбрасываем на значения, определенные в схеме по умолчанию
+        query = """
+            UPDATE users 
+            SET 
+                default_reminder_time = DEFAULT,
+                pre_reminder_minutes = DEFAULT,
+                updated_at = NOW()
+            WHERE telegram_id = $1
+        """
+        result = await conn.execute(query, telegram_id)
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Для пользователя {telegram_id} сброшены VIP-настройки к значениям по умолчанию.")
+        return updated_count > 0
 
 async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
-    """Устанавливает VIP-статус для пользователя."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -381,7 +410,6 @@ async def set_note_completed_status(note_id: int, telegram_id: int, completed: b
 
 
 async def update_note_category(note_id: int, new_category: str, telegram_id: int) -> bool:
-    """Обновляет категорию заметки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
@@ -393,6 +421,18 @@ async def update_note_category(note_id: int, new_category: str, telegram_id: int
             logger.info(f"Категория заметки #{note_id} обновлена на '{new_category}'.")
         return updated_count > 0
 
+async def update_note_due_date(note_id: int, new_due_date: datetime) -> bool:
+    """Обновляет только due_date для заметки."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET due_date = $1, updated_at = NOW() WHERE note_id = $2",
+            new_due_date, note_id
+        )
+        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
+        if updated_count > 0:
+            logger.info(f"Для заметки #{note_id} обновлена дата due_date на {new_due_date.isoformat()}")
+        return updated_count > 0
 
 async def get_notes_with_reminders() -> list[dict]:
     """Получает все активные, неархивированные и невыполненные заметки с due_date в будущем."""
@@ -400,7 +440,9 @@ async def get_notes_with_reminders() -> list[dict]:
     async with pool.acquire() as conn:
         now = datetime.now(timezone.utc)
         query = """
-            SELECT n.note_id, n.telegram_id, n.corrected_text, n.due_date, u.default_reminder_time, u.timezone
+            SELECT 
+                n.note_id, n.telegram_id, n.corrected_text, n.due_date, 
+                u.default_reminder_time, u.timezone, u.pre_reminder_minutes
             FROM notes n
             JOIN users u ON n.telegram_id = u.telegram_id
             WHERE n.is_archived = FALSE 
