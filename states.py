@@ -16,3 +16,5 @@ class NoteEditingStates(StatesGroup):
 class ProfileSettingsStates(StatesGroup):
     """Состояния для настройки профиля пользователя."""
     awaiting_timezone = State()
+    # --- НОВОЕ СОСТОЯНИЕ ---
+    awaiting_reminder_time = State()
