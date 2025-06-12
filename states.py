@@ -16,5 +16,11 @@ class NoteEditingStates(StatesGroup):
 class ProfileSettingsStates(StatesGroup):
     """Состояния для настройки профиля пользователя."""
     awaiting_timezone = State()
-    # --- НОВОЕ СОСТОЯНИЕ ---
     awaiting_reminder_time = State()
+
+# --- НОВАЯ ГРУППА ---
+class BirthdayStates(StatesGroup):
+    """Состояния для управления днями рождения."""
+    awaiting_person_name = State()
+    awaiting_birth_date = State()
+    awaiting_import_file = State()
