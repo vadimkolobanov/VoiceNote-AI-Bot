@@ -2,6 +2,9 @@
 import asyncio
 import logging
 import os
+# --- НОВЫЕ ИМПОРТЫ ---
+from logging.handlers import RotatingFileHandler
+from logtail import LogtailHandler
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -23,14 +26,51 @@ from handlers import (
 import database_setup as db
 from services.scheduler import scheduler, load_reminders_on_startup, setup_daily_jobs
 
-# --- Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s [%(levelname)s] - %(message)s (%(filename)s:%(lineno)d)'
+# --- НОВЫЙ БЛОК КОНФИГУРАЦИИ ---
+# Загружаем переменные для Logtail из окружения
+LOGTAIL_SOURCE_TOKEN = os.environ.get("LOGTAIL_SOURCE_TOKEN")
+LOGTAIL_HOST = os.environ.get("LOGTAIL_HOST")
+
+# --- ПРОФЕССИОНАЛЬНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ---
+# 1. Создаем "корневой" логгер. Не используем basicConfig, чтобы иметь полный контроль.
+logger = logging.getLogger()
+logger.setLevel(logging.INFO) # Устанавливаем минимальный уровень для ВСЕХ обработчиков.
+
+# 2. Убираем все стандартные обработчики, чтобы избежать дублирования
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+# 3. Настраиваем обработчик для вывода в консоль (удобно для локальной разработки)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s [%(levelname)s] - %(message)s'))
+logger.addHandler(console_handler)
+
+# 4. Настраиваем обработчик для записи в файл (надежный бэкап)
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+file_handler = RotatingFileHandler(
+    os.path.join(log_dir, 'bot.log'),
+    maxBytes=5*1024*1024,
+    backupCount=5,
+    encoding='utf-8'
 )
-logger = logging.getLogger(__name__)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s [%(levelname)s] - %(message)s (%(filename)s:%(lineno)d)'))
+logger.addHandler(file_handler)
+
+# 5. Настраиваем обработчик для отправки логов в Logtail
+if LOGTAIL_SOURCE_TOKEN and LOGTAIL_HOST:
+    logtail_handler = LogtailHandler(source_token=LOGTAIL_SOURCE_TOKEN, host=LOGTAIL_HOST)
+    logger.addHandler(logtail_handler)
+    logger.info("Logtail handler configured successfully.")
+else:
+    logger.warning("Logtail configuration not found. Logs will not be sent to Logtail.")
+
+# 6. Уменьшаем "шум" от сторонних библиотек
 logging.getLogger("aiogram").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 # --- Bot Instance ---
 if not TG_BOT_TOKEN:
@@ -52,13 +92,8 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot):
 
     logger.info("Запуск планировщика задач (APScheduler)...")
     scheduler.configure(job_defaults={'kwargs': {'bot': bot}})
-
-    # 1. Загружаем разовые напоминания по заметкам
     await load_reminders_on_startup(bot)
-
-    # 2. Устанавливаем повторяющиеся ежедневные задачи
     await setup_daily_jobs(bot)
-
     scheduler.start()
     logger.info("Планировщик запущен, все задачи загружены.")
 
