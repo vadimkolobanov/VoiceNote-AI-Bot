@@ -76,8 +76,8 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
 
     note_id = await db.create_note(
         telegram_id=telegram_id,
-        original_stt_text=original_stt_text,
         corrected_text=corrected_text_to_save,
+        original_stt_text=original_stt_text,
         llm_analysis_json=llm_analysis_data,
         original_audio_telegram_file_id=audio_file_id,
         note_taken_at=note_creation_time,
@@ -85,6 +85,11 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
     )
 
     if note_id:
+        # --- ЛОГИРОВАНИЕ ДЕЙСТВИЯ ---
+        action_type = 'create_note_voice' if audio_file_id else 'create_note_text'
+        await db.log_user_action(telegram_id, action_type, metadata={'note_id': note_id})
+        # --- КОНЕЦ БЛОКА ЛОГИРОВАНИЯ ---
+
         if due_date_obj:
             full_user_profile = await db.get_user_profile(telegram_id)
             note_data_for_scheduler = {

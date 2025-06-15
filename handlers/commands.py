@@ -10,6 +10,7 @@ from config import (
 )
 from services.common import get_or_create_user
 from inline_keyboards import get_main_menu_keyboard, SettingsAction
+import database_setup as db
 
 router = Router()
 
@@ -18,7 +19,15 @@ router = Router()
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start с улучшенным приветствием."""
     await state.clear()
+
+    # Проверяем, был ли пользователь в базе до этого
+    was_new_user = await db.get_user_profile(message.from_user.id) is None
+
     user_profile = await get_or_create_user(message.from_user)
+
+    # Логируем действие, если это была первая активация
+    if was_new_user:
+        await db.log_user_action(message.from_user.id, 'user_registered')
 
     user_timezone = user_profile.get('timezone', 'UTC')
     timezone_warning = ""
@@ -39,7 +48,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     if community_links:
         community_block = "\n\n" + " | ".join(community_links)
 
-    # --- ИЗМЕНЕНИЕ В ТЕКСТЕ ---
     start_text = (
         f"👋 Привет, {hbold(message.from_user.first_name)}!\n\n"
         f"Я — <b>VoiceNote AI</b>, ваш личный помощник для создания умных заметок.\n\n"
@@ -77,7 +85,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     """Обработчик команды /help."""
-    # --- ИЗМЕНЕНИЕ В ТЕКСТЕ ---
     help_text = f"""
 👋 Привет! Я <b>VoiceNote AI</b> – твой умный помощник для заметок.
 

@@ -7,7 +7,7 @@ import io
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, BufferedInputFile
+from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hbold, hitalic, hcode
 
@@ -91,7 +91,7 @@ async def add_birthday_manual_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(BirthdayStates.awaiting_person_name, F.text, Command("cancel"))
+@router.message(BirthdayStates.awaiting_person_name, Command("cancel"))
 async def cancel_birthday_add(message: types.Message, state: FSMContext):
     await message.answer("🚫 Добавление отменено.")
     await show_birthdays_list(message, state)
@@ -102,7 +102,6 @@ async def process_person_name(message: types.Message, state: FSMContext):
     """Обрабатывает введенное имя и запрашивает дату."""
     await state.update_data(person_name=message.text)
     await state.set_state(BirthdayStates.awaiting_birth_date)
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     await message.answer(
         f"Отлично! Теперь введите дату рождения для {hbold(message.text)}.\n\n"
         "Используйте формат <code>ДД.ММ.ГГГГ</code> (например, <code>25.12.1980</code>) или <code>ДД.ММ</code>, если год не важен.",
@@ -148,8 +147,12 @@ async def process_birth_date(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     person_name = user_data.get("person_name")
 
-    await db.add_birthday(message.from_user.id, person_name, day, month, year)
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    bday_record = await db.add_birthday(message.from_user.id, person_name, day, month, year)
+
+    if bday_record:
+        await db.log_user_action(message.from_user.id, 'add_birthday_manual',
+                                 metadata={'birthday_id': bday_record['id']})
+
     await message.answer(f"✅ Готово! Напоминание о дне рождения для {hbold(person_name)} успешно добавлено.",
                          parse_mode="HTML")
 
@@ -188,9 +191,17 @@ async def import_file_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.message(BirthdayStates.awaiting_import_file, Command("cancel"))
+async def cancel_import(message: types.Message, state: FSMContext):
+    """Отменяет процесс импорта."""
+    await state.clear()
+    await message.answer("🚫 Импорт из файла отменен.")
+    await show_birthdays_list(message, state)
+
+
 @router.message(BirthdayStates.awaiting_import_file, F.document)
 async def process_import_file(message: types.Message, state: FSMContext):
-    if message.document.mime_type != "text/plain":
+    if not message.document or message.document.mime_type != "text/plain":
         await message.reply("Пожалуйста, отправьте текстовый файл с расширением .txt")
         return
 
@@ -230,6 +241,10 @@ async def process_import_file(message: types.Message, state: FSMContext):
         return
 
     added_count = await db.add_birthdays_bulk(message.from_user.id, birthdays_to_add)
+
+    if added_count > 0:
+        await db.log_user_action(message.from_user.id, 'import_birthdays_file',
+                                 metadata={'imported_count': added_count})
 
     report_text = (
         f"✅ {hbold('Импорт завершен!')}\n\n"

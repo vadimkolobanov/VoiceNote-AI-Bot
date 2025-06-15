@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timezone, date, time
 
-from config import DATABASE_URL, MAX_NOTES_MVP, NOTES_PER_PAGE
+from config import DATABASE_URL, NOTES_PER_PAGE
 
 logger = logging.getLogger(__name__)
 
@@ -14,106 +14,121 @@ CREATE_TABLE_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS users
     (
-        telegram_id BIGINT PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        language_code TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        custom_profile_data JSONB,
-        subscription_status TEXT DEFAULT 'free',
-        subscription_expires_at TIMESTAMPTZ
-    );
-    """,
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_stt_recognitions_count INTEGER DEFAULT 0;",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_stt_reset_date DATE;",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'UTC';",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_vip BOOLEAN DEFAULT FALSE;",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_reminder_time TIME DEFAULT '09:00:00';",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_reminder_minutes INTEGER DEFAULT 60;",
-    """
-    CREATE TABLE IF NOT EXISTS subscriptions
+        telegram_id
+        BIGINT
+        PRIMARY
+        KEY,
+        username
+        TEXT,
+        first_name
+        TEXT,
+        last_name
+        TEXT,
+        language_code
+        TEXT,
+        created_at
+        TIMESTAMPTZ
+        DEFAULT
+        NOW
     (
-        subscription_id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL,
-        description TEXT,
-        price_cents INTEGER NOT NULL,
-        currency TEXT NOT NULL DEFAULT 'RUB',
-        duration_days INTEGER NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE
-    );
+    ),
+        updated_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
+        is_vip BOOLEAN DEFAULT FALSE,
+        timezone TEXT DEFAULT 'UTC',
+        default_reminder_time TIME DEFAULT '09:00:00',
+        pre_reminder_minutes INTEGER DEFAULT 60,
+        daily_stt_recognitions_count INTEGER DEFAULT 0,
+        last_stt_reset_date DATE
+        );
     """,
     """
     CREATE TABLE IF NOT EXISTS notes
     (
-        note_id SERIAL PRIMARY KEY,
-        telegram_id BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        note_id
+        SERIAL
+        PRIMARY
+        KEY,
+        telegram_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        users
+    (
+        telegram_id
+    ) ON DELETE CASCADE,
         original_stt_text TEXT,
         corrected_text TEXT NOT NULL,
         category TEXT DEFAULT 'Общее',
-        tags TEXT[],
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
+        updated_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
         note_taken_at TIMESTAMPTZ,
         original_audio_telegram_file_id TEXT,
         llm_analysis_json JSONB,
         due_date TIMESTAMPTZ,
-        location_info JSONB,
         is_archived BOOLEAN DEFAULT FALSE,
-        is_pinned BOOLEAN DEFAULT FALSE
-    );
+        is_completed BOOLEAN DEFAULT FALSE
+        );
     """,
-    "ALTER TABLE notes ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT FALSE;",
-    # --- НОВАЯ ТАБЛИЦА ---
     """
-    CREATE TABLE IF NOT EXISTS birthdays (
-        id SERIAL PRIMARY KEY,
-        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    CREATE TABLE IF NOT EXISTS birthdays
+    (
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        user_telegram_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        users
+    (
+        telegram_id
+    ) ON DELETE CASCADE,
         person_name TEXT NOT NULL,
         birth_day INTEGER NOT NULL,
         birth_month INTEGER NOT NULL,
         birth_year INTEGER,
-        remind_in_days INTEGER DEFAULT 0,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    )
+        );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_actions
+    (
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        user_telegram_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        users
+    (
+        telegram_id
+    ) ON DELETE CASCADE,
+        action_type TEXT NOT NULL, -- 'user_registered', 'create_note_voice', 'create_note_text', 'add_birthday_manual', etc.
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
+        metadata JSONB
+        );
     """,
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
-    "CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes (created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",
-    """
-    CREATE TABLE IF NOT EXISTS payments
-    (
-        payment_id SERIAL PRIMARY KEY,
-        telegram_id BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
-        subscription_id INTEGER REFERENCES subscriptions (subscription_id),
-        amount_cents INTEGER NOT NULL,
-        currency TEXT NOT NULL,
-        payment_system TEXT,
-        external_payment_id TEXT UNIQUE,
-        status TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        paid_at TIMESTAMPTZ,
-        payment_metadata JSONB
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS user_subscriptions
-    (
-        user_subscription_id SERIAL PRIMARY KEY,
-        telegram_id BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
-        subscription_id INTEGER NOT NULL REFERENCES subscriptions (subscription_id) ON DELETE CASCADE,
-        start_date TIMESTAMPTZ NOT NULL,
-        end_date TIMESTAMPTZ NOT NULL,
-        payment_id INTEGER REFERENCES payments (payment_id) ON DELETE SET NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        auto_renew BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_user_subscriptions_telegram_id ON user_subscriptions (telegram_id);",
-    "CREATE INDEX IF NOT EXISTS idx_user_subscriptions_end_date ON user_subscriptions (end_date);"
+    "CREATE INDEX IF NOT EXISTS idx_user_actions_user_id ON user_actions (user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_user_actions_action_type ON user_actions (action_type);",
 ]
 
 # --- DATABASE POOL ---
@@ -122,7 +137,7 @@ db_pool: asyncpg.Pool | None = None
 
 async def get_db_pool() -> asyncpg.Pool:
     global db_pool
-    if db_pool is None:
+    if db_pool is None or db_pool.is_closing():
         try:
             db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=2, max_size=10)
             logger.info("Пул соединений к PostgreSQL успешно создан.")
@@ -150,38 +165,21 @@ async def init_db():
                 except Exception as e:
                     logger.error(f"Ошибка при выполнении SQL: {statement}\n{e}")
             logger.info("Инициализация таблиц БД завершена.")
-    await add_default_subscription_type()
-
-
-async def add_default_subscription_type():
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        existing = await conn.fetchrow("SELECT subscription_id FROM subscriptions WHERE name = $1", "Full Месячная")
-        if not existing:
-            await conn.execute(
-                """
-                INSERT INTO subscriptions (name, description, price_cents, currency, duration_days, is_active)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                """, "Full Месячная", "Полный доступ ко всем функциям на 1 месяц", 29900, "RUB", 30, True
-            )
-            logger.info("Тип подписки 'Full Месячная' добавлен.")
 
 
 # --- USER OPERATIONS ---
-async def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None,
-                             last_name: str = None, language_code: str = None) -> dict | None:
+async def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None, last_name: str = None,
+                             language_code: str = None) -> dict | None:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         now = datetime.now(timezone.utc)
         query = """
                 INSERT INTO users (telegram_id, username, first_name, last_name, language_code, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT (telegram_id) DO \
+                VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT (telegram_id) DO
                 UPDATE SET
-                    username = EXCLUDED.username, \
-                    first_name = EXCLUDED.first_name, \
-                    last_name = EXCLUDED.last_name, \
-                    language_code = EXCLUDED.language_code, \
-                    updated_at = $6 \
+                    username = EXCLUDED.username, first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
+                    updated_at = $6
                     RETURNING *; \
                 """
         user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
@@ -195,146 +193,79 @@ async def get_user_profile(telegram_id: int) -> dict | None:
         return dict(user_record) if user_record else None
 
 
-async def set_user_timezone(telegram_id: int, timezone_str: str) -> bool:
+async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2",
-            timezone_str, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(f"Для пользователя {telegram_id} установлен часовой пояс: {timezone_str}")
-        return updated_count > 0
-
-
-async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE users SET default_reminder_time = $1, updated_at = NOW() WHERE telegram_id = $2",
-            reminder_time, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(
-                f"Для пользователя {telegram_id} установлено время напоминаний по умолчанию: {reminder_time.strftime('%H:%M')}")
-        return updated_count > 0
-
-
-async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2",
-            minutes, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(f"Для пользователя {telegram_id} установлено время пред-напоминаний: {minutes} минут.")
-        return updated_count > 0
+        result = await conn.execute("UPDATE users SET is_vip = $1, updated_at = NOW() WHERE telegram_id = $2", is_vip,
+                                    telegram_id)
+        return int(result.split(" ")[1]) > 0
 
 
 async def reset_user_vip_settings(telegram_id: int) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        query = """
-            UPDATE users 
-            SET 
-                default_reminder_time = DEFAULT,
-                pre_reminder_minutes = DEFAULT,
-                updated_at = NOW()
-            WHERE telegram_id = $1
-        """
+        query = "UPDATE users SET default_reminder_time = DEFAULT, pre_reminder_minutes = DEFAULT, updated_at = NOW() WHERE telegram_id = $1"
         result = await conn.execute(query, telegram_id)
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(f"Для пользователя {telegram_id} сброшены VIP-настройки к значениям по умолчанию.")
-        return updated_count > 0
+        return int(result.split(" ")[1]) > 0
 
 
-async def get_all_users_paginated(page: int = 1, per_page: int = 10) -> tuple[list[dict], int]:
+async def get_all_users_paginated(page: int = 1, per_page: int = 5) -> tuple[list[dict], int]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        total_items = await conn.fetchval("SELECT COUNT(*) FROM users")
-        total_items = total_items or 0
+        total_items = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
         offset = (page - 1) * per_page
-        users_query = """
-            SELECT telegram_id, username, first_name, is_vip, created_at
-            FROM users
-            ORDER BY created_at DESC
-            LIMIT $1 OFFSET $2;
-        """
-        users_records = await conn.fetch(users_query, per_page, offset)
+        users_records = await conn.fetch(
+            "SELECT telegram_id, username, first_name, is_vip FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            per_page, offset)
         return [dict(record) for record in users_records], total_items
 
 
-async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
+async def update_user_stt_counters(telegram_id: int, new_count: int, reset_date: date) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "UPDATE users SET is_vip = $1, updated_at = NOW() WHERE telegram_id = $2",
-            is_vip, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            status = "активирован" if is_vip else "деактивирован"
-            logger.info(f"VIP-статус для пользователя {telegram_id} был {status}.")
-        return updated_count > 0
+            "UPDATE users SET daily_stt_recognitions_count = $1, last_stt_reset_date = $2, updated_at = NOW() WHERE telegram_id = $3",
+            new_count, reset_date, telegram_id)
+        return int(result.split(" ")[1]) > 0
 
 
 # --- NOTE OPERATIONS ---
 async def count_active_notes_for_user(telegram_id: int) -> int:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        count = await conn.fetchval(
+        return await conn.fetchval(
             "SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND is_archived = FALSE AND is_completed = FALSE",
-            telegram_id
-        )
-        return count or 0
+            telegram_id) or 0
 
 
-async def get_paginated_notes_for_user(
-        telegram_id: int, page: int = 1, per_page: int = NOTES_PER_PAGE, archived: bool = False
-) -> tuple[list[dict], int]:
+async def get_paginated_notes_for_user(telegram_id: int, page: int = 1, per_page: int = NOTES_PER_PAGE,
+                                       archived: bool = False) -> tuple[list[dict], int]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        extra_filter = "" if archived else "AND is_completed = FALSE"
-        archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE"
-        total_query = f"SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND {archived_filter_sql} {extra_filter}"
-        total_items = await conn.fetchval(total_query, telegram_id) or 0
+        archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE AND is_completed = FALSE"
+        total_items = await conn.fetchval(
+            f"SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND {archived_filter_sql}", telegram_id) or 0
         offset = (page - 1) * per_page
-        notes_query = f"""
-            SELECT * FROM notes
-            WHERE telegram_id = $1 AND {archived_filter_sql} {extra_filter}
-            ORDER BY is_pinned DESC, due_date ASC, created_at DESC
-            LIMIT $2 OFFSET $3;
-        """
-        notes_records = await conn.fetch(notes_query, telegram_id, per_page, offset)
+        notes_records = await conn.fetch(
+            f"SELECT * FROM notes WHERE telegram_id = $1 AND {archived_filter_sql} ORDER BY due_date ASC NULLS LAST, created_at DESC LIMIT $2 OFFSET $3;",
+            telegram_id, per_page, offset)
         return [dict(record) for record in notes_records], total_items
 
 
-async def create_note(
-        telegram_id: int, corrected_text: str, original_stt_text: str = None, category: str = 'Общее',
-        tags: list[str] = None, note_taken_at: datetime = None, original_audio_telegram_file_id: str = None,
-        llm_analysis_json: dict = None, due_date: datetime = None, location_info: dict = None
-) -> int | None:
+async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | None:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        now = datetime.now(timezone.utc)
-        llm_json_str = json.dumps(llm_analysis_json) if llm_analysis_json else None
-        loc_json_str = json.dumps(location_info) if location_info else None
         query = """
-            INSERT INTO notes (telegram_id, original_stt_text, corrected_text, category, tags, created_at, updated_at, 
-                               note_taken_at, original_audio_telegram_file_id, llm_analysis_json, due_date, location_info)
-            VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11) RETURNING note_id;
-        """
+                INSERT INTO notes (telegram_id, corrected_text, original_stt_text, llm_analysis_json, \
+                                   original_audio_telegram_file_id, note_taken_at, due_date)
+                VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING note_id; \
+                """
         try:
+            llm_json_str = json.dumps(kwargs.get("llm_analysis_json")) if kwargs.get("llm_analysis_json") else None
             note_id = await conn.fetchval(
-                query, telegram_id, original_stt_text, corrected_text, category, tags, now,
-                note_taken_at, original_audio_telegram_file_id, llm_json_str, due_date, loc_json_str
+                query, telegram_id, corrected_text, kwargs.get("original_stt_text"), llm_json_str,
+                kwargs.get("original_audio_telegram_file_id"), kwargs.get("note_taken_at"), kwargs.get("due_date")
             )
-            logger.info(f"Создана заметка #{note_id} для пользователя {telegram_id}.")
             return note_id
         except Exception as e:
             logger.error(f"Ошибка при создании заметки для {telegram_id}: {e}", exc_info=True)
@@ -344,175 +275,123 @@ async def create_note(
 async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        note_record = await conn.fetchrow(
-            "SELECT * FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id, telegram_id
-        )
-        return dict(note_record) if note_record else None
+        record = await conn.fetchrow("SELECT * FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id,
+                                     telegram_id)
+        return dict(record) if record else None
 
 
 async def delete_note(note_id: int, telegram_id: int) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        result = await conn.execute(
-            "DELETE FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id, telegram_id
-        )
-        deleted_count = int(result.split(" ")[1]) if result.startswith("DELETE ") else 0
-        if deleted_count > 0:
-            logger.info(f"Удалена (навсегда) заметка #{note_id} пользователя {telegram_id}.")
-        return deleted_count > 0
-
-
-async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE notes SET corrected_text = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
-            new_text, note_id, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(f"Текст заметки #{note_id} обновлен пользователем {telegram_id}.")
-        return updated_count > 0
-
-
-async def set_note_archived_status(note_id: int, telegram_id: int, archived: bool) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
-            archived, note_id, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            status = "архивирована" if archived else "восстановлена из архива"
-            logger.info(f"Заметка #{note_id} была {status} пользователем {telegram_id}.")
-        return updated_count > 0
+        result = await conn.execute("DELETE FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
 
 
 async def set_note_completed_status(note_id: int, telegram_id: int, completed: bool) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        is_archived = True if completed else False
         result = await conn.execute(
-            "UPDATE notes SET is_completed = $1, is_archived = $2, updated_at = NOW() WHERE note_id = $3 AND telegram_id = $4",
-            completed, is_archived, note_id, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            status = "выполнена и архивирована" if completed else "возвращена в активные"
-            logger.info(f"Заметка #{note_id} была помечена как '{status}' пользователем {telegram_id}.")
-        return updated_count > 0
+            "UPDATE notes SET is_completed = $1, is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
+            completed, note_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
 
-
-async def update_note_category(note_id: int, new_category: str, telegram_id: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
-            new_category, note_id, telegram_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(f"Категория заметки #{note_id} обновлена на '{new_category}'.")
-        return updated_count > 0
 
 async def update_note_due_date(note_id: int, new_due_date: datetime) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        result = await conn.execute(
-            "UPDATE notes SET due_date = $1, updated_at = NOW() WHERE note_id = $2",
-            new_due_date, note_id
-        )
-        updated_count = int(result.split(" ")[1]) if result.startswith("UPDATE ") else 0
-        if updated_count > 0:
-            logger.info(f"Для заметки #{note_id} обновлена дата due_date на {new_due_date.isoformat()}")
-        return updated_count > 0
+        result = await conn.execute("UPDATE notes SET due_date = $1, updated_at = NOW() WHERE note_id = $2",
+                                    new_due_date, note_id)
+        return int(result.split(" ")[1]) > 0
 
 
 async def get_notes_with_reminders() -> list[dict]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        now = datetime.now(timezone.utc)
         query = """
-            SELECT n.note_id, n.telegram_id, n.corrected_text, n.due_date, 
-                   u.default_reminder_time, u.timezone, u.pre_reminder_minutes, u.is_vip
-            FROM notes n JOIN users u ON n.telegram_id = u.telegram_id
-            WHERE n.is_archived = FALSE AND n.is_completed = FALSE AND n.due_date IS NOT NULL AND n.due_date > $1;
-        """
-        notes_records = await conn.fetch(query, now)
-        return [dict(record) for record in notes_records]
+                SELECT n.*, u.default_reminder_time, u.timezone, u.pre_reminder_minutes, u.is_vip
+                FROM notes n \
+                         JOIN users u ON n.telegram_id = u.telegram_id
+                WHERE n.is_archived = FALSE \
+                  AND n.is_completed = FALSE \
+                  AND n.due_date IS NOT NULL \
+                  AND n.due_date > NOW(); \
+                """
+        return [dict(rec) for rec in await conn.fetch(query)]
 
-
-async def update_user_stt_counters(telegram_id: int, new_count: int, reset_date: date):
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE users SET daily_stt_recognitions_count = $1, last_stt_reset_date = $2, updated_at = NOW() WHERE telegram_id = $3",
-            new_count, reset_date, telegram_id
-        )
 
 # --- BIRTHDAY OPERATIONS ---
+async def count_birthdays_for_user(telegram_id: int) -> int:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT COUNT(*) FROM birthdays WHERE user_telegram_id = $1", telegram_id) or 0
+
+
+async def get_birthdays_for_user(telegram_id: int, page: int = 1, per_page: int = 5) -> tuple[list[dict], int]:
+    pool = await get_db_pool()
+    offset = (page - 1) * per_page
+    async with pool.acquire() as conn:
+        total = await conn.fetchval("SELECT COUNT(*) FROM birthdays WHERE user_telegram_id = $1", telegram_id) or 0
+        query = """
+                SELECT * \
+                FROM birthdays \
+                WHERE user_telegram_id = $1
+                ORDER BY CASE \
+                             WHEN (birth_month, birth_day) < (EXTRACT(MONTH FROM NOW()), EXTRACT(DAY FROM NOW())) THEN 1 \
+                             ELSE 0 END, \
+                         birth_month, birth_day
+                    LIMIT $2 \
+                OFFSET $3; \
+                """
+        records = await conn.fetch(query, telegram_id, per_page, offset)
+    return [dict(rec) for rec in records], total
+
+
 async def add_birthday(user_telegram_id: int, person_name: str, day: int, month: int, year: int | None) -> dict | None:
     pool = await get_db_pool()
-    query = """
-        INSERT INTO birthdays (user_telegram_id, person_name, birth_day, birth_month, birth_year)
-        VALUES ($1, $2, $3, $4, $5) RETURNING *;
-    """
+    query = "INSERT INTO birthdays (user_telegram_id, person_name, birth_day, birth_month, birth_year) VALUES ($1, $2, $3, $4, $5) RETURNING *;"
     async with pool.acquire() as conn:
-        record = await conn.fetchrow(query, user_telegram_id, person_name, day, month, year)
-        return dict(record) if record else None
+        return await conn.fetchrow(query, user_telegram_id, person_name, day, month, year)
+
+
+async def delete_birthday(birthday_id: int, user_telegram_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM birthdays WHERE id = $1 AND user_telegram_id = $2", birthday_id,
+                                    user_telegram_id)
+        return int(result.split(" ")[1]) > 0
+
 
 async def add_birthdays_bulk(user_telegram_id: int, birthdays_data: list[tuple]) -> int:
     pool = await get_db_pool()
     query = "INSERT INTO birthdays (user_telegram_id, person_name, birth_day, birth_month, birth_year) VALUES ($1, $2, $3, $4, $5);"
     data_to_insert = [(user_telegram_id, *b) for b in birthdays_data]
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.executemany(query, data_to_insert)
-    logger.info(f"Массово добавлено {len(data_to_insert)} дней рождений для пользователя {user_telegram_id}.")
+        await conn.executemany(query, data_to_insert)
     return len(data_to_insert)
 
-async def get_birthdays_for_user(user_telegram_id: int, page: int = 1, per_page: int = 5) -> tuple[list[dict], int]:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        total_items = await conn.fetchval("SELECT COUNT(*) FROM birthdays WHERE user_telegram_id = $1", user_telegram_id) or 0
-        offset = (page - 1) * per_page
-        query = "SELECT * FROM birthdays WHERE user_telegram_id = $1 ORDER BY birth_month, birth_day LIMIT $2 OFFSET $3;"
-        records = await conn.fetch(query, user_telegram_id, per_page, offset)
-        return [dict(rec) for rec in records], total_items
-
-async def count_birthdays_for_user(user_telegram_id: int) -> int:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        count = await conn.fetchval("SELECT COUNT(*) FROM birthdays WHERE user_telegram_id = $1", user_telegram_id)
-        return count or 0
-
-async def delete_birthday(birthday_id: int, user_telegram_id: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM birthdays WHERE id = $1 AND user_telegram_id = $2", birthday_id, user_telegram_id)
-        deleted_count = int(result.split(" ")[1]) if result.startswith("DELETE ") else 0
-        return deleted_count > 0
 
 async def get_all_birthdays_for_reminders() -> list[dict]:
     pool = await get_db_pool()
-    query = """
-        SELECT b.id, b.user_telegram_id, b.person_name, b.birth_day, b.birth_month, b.birth_year, b.remind_in_days,
-               u.timezone, u.default_reminder_time, u.is_vip
-        FROM birthdays b JOIN users u ON b.user_telegram_id = u.telegram_id;
-    """
     async with pool.acquire() as conn:
-        records = await conn.fetch(query)
-        return [dict(rec) for rec in records]
+        return [dict(rec) for rec in await conn.fetch("SELECT * FROM birthdays")]
+
+
+# --- USER ACTIONS (ANALYTICS) ---
+async def log_user_action(user_telegram_id: int, action_type: str, metadata: dict = None):
+    pool = await get_db_pool()
+    metadata_json = json.dumps(metadata) if metadata else None
+    query = "INSERT INTO user_actions (user_telegram_id, action_type, metadata) VALUES ($1, $2, $3);"
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(query, user_telegram_id, action_type, metadata_json)
+    except Exception as e:
+        logger.error(f"Ошибка логирования действия '{action_type}' для {user_telegram_id}: {e}")
 
 
 # --- LIFECYCLE FUNCTIONS ---
 async def setup_database_on_startup():
-    try:
-        await init_db()
-    except Exception as e:
-        logger.critical(f"Не удалось инициализировать базу данных: {e}", exc_info=True)
-        raise
+    await init_db()
+
 
 async def shutdown_database_on_shutdown():
     await close_db_pool()
