@@ -21,7 +21,8 @@ from handlers import (
     settings as settings_router,
     admin as admin_router,
     info as info_router,
-    birthdays as birthdays_router
+    birthdays as birthdays_router,
+    text_processor as text_router
 )
 import database_setup as db
 from services.scheduler import scheduler, load_reminders_on_startup, setup_daily_jobs
@@ -131,6 +132,7 @@ async def main():
     dp.include_router(profile_router.router)
     dp.include_router(notes_router.router)
     dp.include_router(voice_router.router)
+    dp.include_router(text_router.router)
     dp.include_router(cmd_router.router)
 
     dp.startup.register(on_startup)
