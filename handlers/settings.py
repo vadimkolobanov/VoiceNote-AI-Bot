@@ -108,7 +108,6 @@ async def show_timezone_selection_handler(callback_query: CallbackQuery, state: 
     await callback_query.answer()
 
 
-# ... (остальная логика таймзоны без изменений) ...
 @router.callback_query(TimezoneAction.filter(F.action == 'set'))
 async def set_timezone_from_button_handler(callback_query: CallbackQuery, callback_data: TimezoneAction,
                                            state: FSMContext):
@@ -162,7 +161,6 @@ async def process_manual_timezone_handler(message: types.Message, state: FSMCont
 @router.callback_query(SettingsAction.filter(F.action == "go_to_reminders"))
 async def show_reminder_time_handler(callback_query: CallbackQuery):
     user_profile = await db.get_user_profile(callback_query.from_user.id)
-    # --- ПРОВЕРКА VIP ---
     if not user_profile.get('is_vip'):
         text = (
             f"⭐ {hbold('Настройка времени напоминаний')}\n\n"
@@ -175,7 +173,6 @@ async def show_reminder_time_handler(callback_query: CallbackQuery):
         await callback_query.answer()
         return
 
-    # Логика для VIP-пользователей
     text = (
         f"{hbold('⏰ Время напоминаний по умолчанию')}\n\n"
         "Это время будет использоваться для напоминаний, у которых в тексте была указана только дата."
@@ -188,7 +185,6 @@ async def show_reminder_time_handler(callback_query: CallbackQuery):
     await callback_query.answer()
 
 
-# ... (хендлеры set_reminder_time_from_button_handler, manual_reminder_time_handler, process_manual_reminder_time_handler без изменений)
 @router.callback_query(SettingsAction.filter(F.action == "set_rem_time"))
 async def set_reminder_time_from_button_handler(callback: CallbackQuery, callback_data: SettingsAction,
                                                 state: FSMContext):
@@ -243,7 +239,6 @@ async def process_manual_reminder_time_handler(message: types.Message, state: FS
 @router.callback_query(SettingsAction.filter(F.action == "go_to_pre_reminders"))
 async def show_pre_reminder_handler(callback: CallbackQuery):
     user_profile = await db.get_user_profile(callback.from_user.id)
-    # --- ПРОВЕРКА VIP ---
     if not user_profile.get('is_vip'):
         text = (
             f"⭐ {hbold('Предварительные напоминания')}\n\n"
@@ -255,7 +250,6 @@ async def show_pre_reminder_handler(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Логика для VIP
     current_minutes = user_profile.get('pre_reminder_minutes', 60)
     text = (
         f"{hbold('🔔 Пред-напоминания')}\n\n"
@@ -270,7 +264,6 @@ async def show_pre_reminder_handler(callback: CallbackQuery):
     await callback.answer()
 
 
-# ... (хендлер set_pre_reminder_handler без изменений) ...
 @router.callback_query(SettingsAction.filter(F.action == "set_pre_rem"))
 async def set_pre_reminder_handler(callback: CallbackQuery, callback_data: SettingsAction, state: FSMContext):
     try:
@@ -289,7 +282,7 @@ async def set_pre_reminder_handler(callback: CallbackQuery, callback_data: Setti
 # --- НОВЫЙ ХЕНДЛЕР: Обработка заявки на VIP ---
 
 @router.callback_query(SettingsAction.filter(F.action == "request_vip"))
-async def request_vip_handler(callback: CallbackQuery):
+async def request_vip_handler(callback: CallbackQuery, state: FSMContext):
     """Отправляет заявку администратору и уведомляет пользователя."""
     if not ADMIN_TELEGRAM_ID:
         await callback.answer("К сожалению, эта функция временно недоступна.", show_alert=True)
@@ -298,7 +291,6 @@ async def request_vip_handler(callback: CallbackQuery):
     user = callback.from_user
     username = f"@{user.username}" if user.username else "N/A"
 
-    # Сообщение для администратора
     admin_text = (
         f"‼️ {hbold('Новая заявка на VIP-доступ!')}\n\n"
         f"Пользователь: {hbold(user.full_name)}\n"
@@ -309,11 +301,11 @@ async def request_vip_handler(callback: CallbackQuery):
 
     try:
         await callback.bot.send_message(ADMIN_TELEGRAM_ID, admin_text, parse_mode="HTML")
+        await db.log_user_action(user.id, 'request_vip')
         await callback.answer("✅ Ваша заявка отправлена администратору! Он рассмотрит ее в ближайшее время.",
                               show_alert=True)
 
-        # Можно вернуть пользователя в меню настроек
-        await show_main_settings_handler(callback, FSMContext(storage=router.fsm.storage, key=callback.fsm_key))
+        await show_main_settings_handler(callback, state)
 
     except Exception as e:
         logger.error(f"Не удалось отправить заявку на VIP от {user.id} администратору {ADMIN_TELEGRAM_ID}: {e}")
