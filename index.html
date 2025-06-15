@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-
+    <!-- SEO-теги -->
     <title>VoiceNote AI — Ваш умный ассистент для голосовых заметок в Telegram</title>
-    <meta name="description" content="Превратите ваши голосовые сообщения в структурированные заметки, задачи и напоминания с помощью ИИ. VoiceNote AI распознает речь, поймет суть и напомнит о важном. Попробуйте бесплатно!">
+    <meta name="description" content="Превратите ваши голосовые и текстовые сообщения в структурированные заметки, задачи и напоминания с помощью ИИ. VoiceNote AI распознает речь, поймет суть и напомнит о важном. Попробуйте бесплатно!">
     <meta name="keywords" content="голосовые заметки, telegram бот, искусственный интеллект, распознавание речи, планировщик, задачи, напоминания, продуктивность, VoiceNote AI, ai ассистент">
+
     <!-- Yandex.Metrika counter -->
     <script type="text/javascript" >
    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
@@ -24,22 +25,25 @@
    });
     </script>
     <noscript><div><img src="https://mc.yandex.ru/watch/102611972" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
-<!-- /Yandex.Metrika counter -->
+    <!-- /Yandex.Metrika counter -->
+
     <!-- Open Graph для красивых ссылок в соцсетях -->
     <meta property="og:title" content="VoiceNote AI — Преврати голос в порядок">
     <meta property="og:description" content="Просто надиктуйте идею, задачу или дату. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.">
-    <meta property="og:image" content="https://voicenote-ai.ru/og-image.png">
-    <meta property="og:url" content="https://voicenote.ru">
+    <meta property="og:image" content="https://voicenote-ai.ru/og-image.png"> <!-- ЗАМЕНИТЕ НА ССЫЛКУ НА ВАШУ КАРТИНКУ -->
+    <meta property="og:url" content="https://voicenote.ru"> <!-- ЗАМЕНИТЕ НА ВАШ ДОМЕН -->
     <meta property="og:type" content="website">
     <meta property="og:locale" content="ru_RU">
     <meta property="og:site_name" content="VoiceNote AI">
+
+    <!-- Верификация для Яндекса -->
     <meta name="yandex-verification" content="3fe0e82967b8a016" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="VoiceNote AI — Преврати голос в порядок">
     <meta name="twitter:description" content="Просто надиктуйте идею, задачу или дату. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.">
-    <meta name="twitter:image" content="https://voicenote-ai.ru/og-image.png"> >
+    <meta name="twitter:image" content="https://voicenote-ai.ru/og-image.png"> <!-- ЗАМЕНИТЕ НА ССЫЛКУ НА ВАШУ КАРТИНКУ -->
 
     <!-- Favicon -->
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
@@ -77,24 +81,15 @@
         .feature-card:hover .feature-icon { transform: scale(1.15) rotate(-10deg); box-shadow: 0 10px 20px rgba(59, 130, 246, 0.4); }
         .pricing-card { transition: all 0.3s ease-in-out; }
         .pricing-card:hover { transform: scale(1.03); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
-
-        /* Стили для "Вау-эффекта" анимации при прокрутке */
-        .reveal {
-            opacity: 0;
-            transform: translateY(30px);
-            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
-        }
-        .reveal.visible {
-            opacity: 1;
-            transform: translateY(0);
-        }
+        .reveal { opacity: 0; transform: translateY(30px); transition: opacity 0.6s ease-out, transform 0.6s ease-out; }
+        .reveal.visible { opacity: 1; transform: translateY(0); }
     </style>
 
     <script type="application/ld+json">
     {
       "@context": "https://schema.org", "@type": "SoftwareApplication", "name": "VoiceNote AI",
       "applicationCategory": "ProductivityApplication", "operatingSystem": "Telegram",
-      "description": "VoiceNote AI — это умный Telegram-бот, который превращает голосовые сообщения в структурированные заметки, задачи и напоминания с помощью искусственного интеллекта.",
+      "description": "VoiceNote AI — это умный Telegram-бот, который превращает голосовые и текстовые сообщения в структурированные заметки, задачи и напоминания с помощью искусственного интеллекта.",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" },
       "aggregateRating": { "@type": "AggregateRating", "ratingValue": "4.9", "reviewCount": "125" },
       "mainEntityOfPage": { "@type": "WebPage", "@id": "https://voicenote-ai.ru" }
@@ -139,8 +134,8 @@
             <div class="container mx-auto px-6">
                 <div class="flex flex-col md:flex-row items-center gap-12">
                     <div class="md:w-1/2 text-center md:text-left">
-                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight mb-4">Преврати голос в порядок. Мгновенно.</h1>
-                        <p class="text-xl md:text-2xl text-blue-100 mb-8">Надиктовывайте идеи, ставьте задачи и планируйте встречи. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.</p>
+                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight mb-4">Преврати голос и текст в порядок.</h1>
+                        <p class="text-xl md:text-2xl text-blue-100 mb-8">Надиктовывайте идеи, пересылайте сообщения от коллег, ставьте задачи. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.</p>
                         <div class="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
                             <a href="https://t.me/tgnote_by_bot" target="_blank" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-8 rounded-full text-center transition duration-300 transform hover:scale-105 shadow-lg">
                                 Попробовать бесплатно
@@ -197,10 +192,10 @@
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div class="bg-white rounded-2xl p-8 shadow-lg feature-card text-center reveal">
                         <div class="bg-blue-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-6 feature-icon">
-                            <i class="fas fa-microphone-alt text-blue-600 text-2xl"></i>
+                            <i class="fas fa-paper-plane text-blue-600 text-2xl"></i>
                         </div>
-                        <h3 class="text-xl font-bold mb-3">1. Говорите свободно</h3>
-                        <p class="text-gray-600">На ходу или за рулем? Просто надиктуйте любую мысль в Telegram, как будто общаетесь с коллегой.</p>
+                        <h3 class="text-xl font-bold mb-3">1. Отправляйте что угодно</h3>
+                        <p class="text-gray-600">Надиктуйте голосовое сообщение или просто перешлите боту текст из любого чата — он поймет и то, и другое.</p>
                     </div>
                     <div class="bg-white rounded-2xl p-8 shadow-lg feature-card text-center reveal" style="transition-delay: 200ms;">
                         <div class="bg-purple-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-6 feature-icon">

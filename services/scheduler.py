@@ -60,7 +60,9 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
 
 
 def add_reminder_to_scheduler(bot: Bot, note: dict):
-    """Добавляет задачи в планировщик с учетом VIP-статуса пользователя."""
+    """
+    Добавляет задачи в планировщик с учетом VIP-статуса пользователя.
+    """
     note_id = note.get('note_id')
     due_date_utc = note.get('due_date')
     is_vip = note.get('is_vip', False)
@@ -74,34 +76,42 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
         due_date_utc = pytz.utc.localize(due_date_utc)
 
     is_time_ambiguous = (due_date_utc.time() == time(0, 0, 0))
+    final_due_date_utc = due_date_utc
 
-    if is_time_ambiguous and is_vip:
-        user_reminder_time = note.get('default_reminder_time', time(9, 0))
+    # --- НОВАЯ УЛУЧШЕННАЯ ЛОГИКА ---
+    if is_time_ambiguous:
+        # Устанавливаем время по умолчанию в зависимости от статуса
+        default_time = note.get('default_reminder_time', time(9, 0)) if is_vip else time(12, 0)
+
         user_timezone_str = note.get('timezone', 'UTC')
         try:
             user_tz = pytz.timezone(user_timezone_str)
         except pytz.UnknownTimeZoneError:
             user_tz = pytz.utc
 
-        local_due_date = datetime.combine(due_date_utc.date(), user_reminder_time)
+        # Создаем корректную дату и время в часовом поясе пользователя
+        local_due_date = datetime.combine(due_date_utc.date(), default_time)
         aware_local_due_date = user_tz.localize(local_due_date)
+
+        # Конвертируем в UTC для планировщика
         final_due_date_utc = aware_local_due_date.astimezone(pytz.utc)
 
+        # Обновляем due_date в базе, чтобы пользователь видел корректное время
         asyncio.create_task(db.update_note_due_date(note_id, final_due_date_utc))
 
-    elif is_time_ambiguous and not is_vip:
-        logger.info(f"Напоминание для заметки #{note_id} (Free User) не будет установлено: время не указано явно.")
-        return
-    else:
-        final_due_date_utc = due_date_utc
+        log_msg_time = f"{default_time.strftime('%H:%M')} (Free-user default)" if not is_vip else f"{default_time.strftime('%H:%M')} (VIP-user setting)"
+        logger.info(f"Для заметки #{note_id} установлено время напоминания на {log_msg_time}")
 
     now_utc = datetime.now(pytz.utc)
 
+    # Планируем ОСНОВНОЕ напоминание (если дата в будущем)
     if final_due_date_utc > now_utc:
         job_id_main = f"note_reminder_{note_id}_main"
         scheduler.add_job(
             send_reminder_notification,
-            trigger='date', run_date=final_due_date_utc, id=job_id_main,
+            trigger='date',
+            run_date=final_due_date_utc,
+            id=job_id_main,
             kwargs={
                 'bot': bot, 'telegram_id': note['telegram_id'], 'note_id': note_id,
                 'note_text': note['corrected_text'], 'due_date': final_due_date_utc,
@@ -111,6 +121,7 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
         )
         logger.info(f"Основное напоминание для заметки #{note_id} запланировано на {final_due_date_utc.isoformat()}")
 
+    # Планируем ПРЕДВАРИТЕЛЬНОЕ напоминание (только для VIP)
     if is_vip:
         pre_reminder_minutes = note.get('pre_reminder_minutes', 0)
         if pre_reminder_minutes > 0:
@@ -119,7 +130,9 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
                 job_id_pre = f"note_reminder_{note_id}_pre_{pre_reminder_minutes}"
                 scheduler.add_job(
                     send_reminder_notification,
-                    trigger='date', run_date=pre_reminder_time_utc, id=job_id_pre,
+                    trigger='date',
+                    run_date=pre_reminder_time_utc,
+                    id=job_id_pre,
                     kwargs={
                         'bot': bot, 'telegram_id': note['telegram_id'], 'note_id': note_id,
                         'note_text': note['corrected_text'], 'due_date': final_due_date_utc,
