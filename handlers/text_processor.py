@@ -52,9 +52,13 @@ async def handle_forwarded_text_message(message: types.Message, state: FSMContex
         return
 
     user_timezone_str = user_profile.get('timezone', 'UTC')
+    user_tz = pytz.timezone(user_timezone_str)
+    current_user_dt = datetime.now(user_tz)
+    current_user_dt_iso = current_user_dt.isoformat()
+
     is_vip = user_profile.get('is_vip', False)
 
-    llm_result_dict = await enhance_text_with_llm(forwarded_text, user_timezone=user_timezone_str)
+    llm_result_dict = await enhance_text_with_llm(forwarded_text, current_user_datetime_iso=current_user_dt_iso)
     llm_info_for_user_display = ""
     llm_analysis_result_json = None
     corrected_text_for_response = forwarded_text
@@ -71,11 +75,6 @@ async def handle_forwarded_text_message(message: types.Message, state: FSMContex
                 due_date_str_utc = llm_result_dict["dates_times"][0].get("absolute_datetime_start")
                 if due_date_str_utc:
                     dt_obj_utc = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
-
-                    user_tz = pytz.timezone(user_timezone_str)
-                    now_in_user_tz = datetime.now(user_tz)
-                    if dt_obj_utc.astimezone(user_tz) < now_in_user_tz:
-                        dt_obj_utc += timedelta(days=1)
 
                     is_time_ambiguous = (dt_obj_utc.time() == time(0, 0, 0))
                     if is_time_ambiguous:

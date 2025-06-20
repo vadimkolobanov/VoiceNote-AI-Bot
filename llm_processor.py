@@ -2,17 +2,12 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 import aiohttp
 from config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
 
 logger = logging.getLogger(__name__)
-
-
-def _get_current_datetime_utc_iso() -> str:
-    """Возвращает текущую дату и время в UTC в формате ISO 8601."""
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
@@ -37,7 +32,7 @@ def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
 
 async def enhance_text_with_llm(
         raw_text: str,
-        user_timezone: str = 'UTC'
+        current_user_datetime_iso: str
 ) -> dict:
     if not DEEPSEEK_API_KEY:
         logger.error("DeepSeek API key is not configured.")
@@ -46,7 +41,6 @@ async def enhance_text_with_llm(
         logger.error("DeepSeek API URL or Model Name is not configured.")
         return {"error": "DeepSeek API URL or Model Name not configured", "corrected_text": raw_text}
 
-    current_datetime_utc_str = _get_current_datetime_utc_iso()
 
     system_prompt = f"""You are an AI assistant specialized in processing transcribed voice notes in Russian.
 Your task is to return a single, valid JSON object based on the user's text.
@@ -69,10 +63,9 @@ JSON Structure:
 }}
 
 **Date/Time Calculation Rules:**
-- **Current Time (for context):** {current_datetime_utc_str} (UTC)
-- **User's Local Timezone:** {user_timezone}
+- **Current Time (for context):** {current_user_datetime_iso} (This is the user's local time).
 - **Output Format:** All date/time values in the JSON MUST be in UTC timezone, ending with 'Z'.
-- **Ambiguous Time:** When a user says "at 8 o'clock", assume they mean "today at 8 o'clock". Use the user's timezone to correctly calculate the UTC time for that.
+- **Ambiguous Time:** When a user says "at 8 o'clock", assume they mean "today at 8 o'clock".
 - **Date without time:** If a date is mentioned without a time (e.g., "on Friday"), use T00:00:00Z for the time part.
 
 **Recurrence Rule (RRULE) Generation:**
@@ -99,7 +92,7 @@ JSON Structure:
         "max_tokens": 2048,
     }
 
-    logger.debug(f"Sending request to DeepSeek. Current UTC: {current_datetime_utc_str}, User TZ: {user_timezone}")
+    logger.debug(f"Sending request to DeepSeek. Current User Time: {current_user_datetime_iso}")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload,

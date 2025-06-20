@@ -108,9 +108,13 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
 
     if DEEPSEEK_API_KEY_EXISTS:
         user_timezone_str = user_profile.get('timezone', 'UTC')
+        user_tz = pytz.timezone(user_timezone_str)
+        current_user_dt = datetime.now(user_tz)
+        current_user_dt_iso = current_user_dt.isoformat()
+
         is_vip = user_profile.get('is_vip', False)
 
-        llm_result_dict = await enhance_text_with_llm(raw_text_stt, user_timezone=user_timezone_str)
+        llm_result_dict = await enhance_text_with_llm(raw_text_stt, current_user_datetime_iso=current_user_dt_iso)
 
         if "error" in llm_result_dict:
             logger.error(f"LLM error for user {message.from_user.id}: {llm_result_dict['error']}")
@@ -125,23 +129,16 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
                     if due_date_str_utc:
                         dt_obj_utc = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
 
-                        user_tz = pytz.timezone(user_timezone_str)
-                        now_in_user_tz = datetime.now(user_tz)
-                        if dt_obj_utc.astimezone(user_tz) < now_in_user_tz:
-                            dt_obj_utc += timedelta(days=1)
-
                         is_time_ambiguous = (dt_obj_utc.time() == time(0, 0, 0))
                         if is_time_ambiguous:
-                            default_time = user_profile.get('default_reminder_time', time(9, 0)) if is_vip else time(12,
-                                                                                                                     0)
+                            default_time = user_profile.get('default_reminder_time', time(9, 0)) if is_vip else time(12, 0)
                             local_due_date = datetime.combine(dt_obj_utc.date(), default_time)
                             aware_local_due_date = user_tz.localize(local_due_date)
                             final_utc_date_to_show = aware_local_due_date.astimezone(pytz.utc)
                         else:
                             final_utc_date_to_show = dt_obj_utc
 
-                        llm_result_dict["dates_times"][0]["absolute_datetime_start"] = final_utc_date_to_show.strftime(
-                            '%Y-%m-%dT%H:%M:%SZ')
+                        llm_result_dict["dates_times"][0]["absolute_datetime_start"] = final_utc_date_to_show.strftime('%Y-%m-%dT%H:%M:%SZ')
                         llm_analysis_result_json = llm_result_dict
                         display_date = format_datetime_for_user(final_utc_date_to_show, user_timezone_str)
                         logger.info(f"Дата для предпросмотра: {display_date} (исходная UTC: {due_date_str_utc})")
@@ -162,8 +159,7 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             if llm_result_dict.get("people_mentioned"):
                 details_parts.append(f"👥 {hbold('Люди:')} {hitalic(', '.join(llm_result_dict['people_mentioned']))}")
             if llm_result_dict.get("locations_mentioned"):
-                details_parts.append(
-                    f"📍 {hbold('Места:')} {hitalic(', '.join(llm_result_dict['locations_mentioned']))}")
+                details_parts.append(f"📍 {hbold('Места:')} {hitalic(', '.join(llm_result_dict['locations_mentioned']))}")
 
             llm_info_for_user_display = "\n\n" + "\n\n".join(details_parts)
     else:
