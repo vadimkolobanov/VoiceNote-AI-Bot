@@ -35,6 +35,7 @@ NOTES_PER_PAGE = 3
 MIN_STT_TEXT_CHARS = 5
 MIN_STT_TEXT_WORDS = 1
 MAX_DAILY_STT_RECOGNITIONS_MVP = 15
+MAX_VOICE_DURATION_SEC = 30
 
 NOTE_CATEGORIES = [
     "Общее", "Работа", "Личное", "Задачи", "Идеи", "Покупки"

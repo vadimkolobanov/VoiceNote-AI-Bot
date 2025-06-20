@@ -24,3 +24,7 @@ class BirthdayStates(StatesGroup):
     awaiting_person_name = State()
     awaiting_birth_date = State()
     awaiting_import_file = State()
+
+class AdminStates(StatesGroup):
+    """Состояния для админ-функций, таких как рассылка."""
+    awaiting_broadcast_message = State()

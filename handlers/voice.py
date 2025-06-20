@@ -10,7 +10,7 @@ from aiogram.utils.markdown import hcode, hbold, hitalic
 import database_setup as db
 from config import (
     MIN_VOICE_DURATION_SEC, DEEPSEEK_API_KEY_EXISTS, YANDEX_STT_CONFIGURED,
-    MIN_STT_TEXT_CHARS, MIN_STT_TEXT_WORDS
+    MIN_STT_TEXT_CHARS, MIN_STT_TEXT_WORDS, MAX_VOICE_DURATION_SEC
 )
 from inline_keyboards import get_note_confirmation_keyboard
 from llm_processor import enhance_text_with_llm
@@ -44,6 +44,14 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
         await message.reply(
             f"🎤 Ваше голосовое сообщение слишком короткое ({voice.duration} сек.).\n"
             f"Пожалуйста, запишите сообщение длительностью не менее {MIN_VOICE_DURATION_SEC} сек."
+        )
+        return
+
+    if voice.duration > MAX_VOICE_DURATION_SEC:
+        logger.info(f"User {message.from_user.id} sent too long voice: {voice.duration}s")
+        await message.reply(
+            f"🎤 Ваше голосовое сообщение слишком длинное ({voice.duration} сек.).\n"
+            f"Пожалуйста, держите свои мысли в рамках {MAX_VOICE_DURATION_SEC} секунд для лучшего результата."
         )
         return
 

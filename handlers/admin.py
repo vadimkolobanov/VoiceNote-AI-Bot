@@ -1,7 +1,9 @@
 # handlers/admin.py
+import asyncio
 import logging
 from aiogram import Router, F, types
 from aiogram.filters import Command, Filter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
@@ -10,6 +12,7 @@ import database_setup as db
 from services.scheduler import scheduler, send_birthday_reminders
 from inline_keyboards import get_admin_user_panel_keyboard, AdminAction, get_admin_users_list_keyboard, AdminUserNav
 from services.tz_utils import format_datetime_for_user
+from states import AdminStates
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -218,3 +221,86 @@ async def cmd_test_birthday_check(message: Message):
     await message.answer("⏳ Принудительно запускаю проверку дней рождений...")
     await send_birthday_reminders(message.bot)
     await message.answer("✅ Проверка завершена. Смотрите логи и личные сообщения.")
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast_start(message: Message, state: FSMContext):
+    """Начинает сценарий массовой рассылки."""
+    await state.set_state(AdminStates.awaiting_broadcast_message)
+    await message.answer(
+        "Введите сообщение, которое хотите разослать всем пользователям.\n"
+        "Сообщение будет отправлено 'как есть', включая форматирование (HTML), фото, стикеры и т.д.\n\n"
+        "Для отмены введите /cancel"
+    )
+
+
+@router.message(AdminStates.awaiting_broadcast_message, Command("cancel"))
+async def cmd_broadcast_cancel(message: Message, state: FSMContext):
+    """Отменяет процесс рассылки."""
+    await state.clear()
+    await message.answer("Рассылка отменена.")
+
+
+@router.message(AdminStates.awaiting_broadcast_message)
+async def process_broadcast_message(message: Message, state: FSMContext):
+    """Запускает процесс рассылки сообщения всем пользователям."""
+    await state.clear()
+
+    # Получаем ID всех пользователей
+    all_users = await db.get_all_users_paginated(page=1, per_page=1_000_000)  # Получаем всех пользователей
+    user_ids = [user['telegram_id'] for user in all_users[0]]
+
+    if not user_ids:
+        await message.answer("В базе данных нет пользователей для рассылки.")
+        return
+
+    # Запускаем рассылку в фоновом режиме
+    import asyncio
+    asyncio.create_task(broadcast_to_users(message, user_ids))
+
+    await message.answer(f"✅ Рассылка запущена для {len(user_ids)} пользователей.")
+
+
+async def broadcast_to_users(source_message: Message, user_ids: list[int]):
+    """
+    Асинхронная функция для отправки сообщения пользователям с учетом лимитов Telegram.
+    """
+    total_users = len(user_ids)
+    sent_count = 0
+    failed_count = 0
+
+    status_message = await source_message.bot.send_message(
+        chat_id=source_message.from_user.id,
+        text=f"⏳ Рассылка началась... (0/{total_users})"
+    )
+
+    # Telegram API имеет лимит ~30 сообщений в секунду.
+    # Делаем паузу после каждых 25 сообщений, чтобы не превышать лимит.
+    for i, user_id in enumerate(user_ids):
+        try:
+            # message.copy_to() - это самый надежный способ переслать сообщение
+            # со всем его контентом (фото, видео, стикеры, форматирование)
+            await source_message.copy_to(chat_id=user_id)
+            sent_count += 1
+            logger.info(f"Рассылка: сообщение успешно отправлено пользователю {user_id}")
+        except Exception as e:
+            failed_count += 1
+            logger.warning(f"Рассылка: не удалось отправить сообщение пользователю {user_id}. Ошибка: {e}")
+
+        # Пауза для избежания бана от Telegram
+        if (i + 1) % 25 == 0:
+            await asyncio.sleep(1)
+            # Обновляем статус для админа
+            try:
+                await status_message.edit_text(f"⏳ В процессе... ({i + 1}/{total_users})")
+            except Exception:
+                pass  # Если админ удалил сообщение, ничего страшного
+
+    # Финальный отчет для админа
+    final_report = (
+        f"🏁 Рассылка завершена!\n\n"
+        f"✅ Успешно отправлено: {sent_count}\n"
+        f"❌ Не удалось отправить: {failed_count}\n"
+        f"👥 Всего пользователей: {total_users}"
+    )
+    await status_message.edit_text(final_report)

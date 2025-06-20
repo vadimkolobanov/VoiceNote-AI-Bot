@@ -369,6 +369,21 @@ async def add_birthdays_bulk(user_telegram_id: int, birthdays_data: list[tuple])
         await conn.executemany(query, data_to_insert)
     return len(data_to_insert)
 
+async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) -> bool:
+    """Устанавливает время напоминаний по умолчанию для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET default_reminder_time = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, reminder_time, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
+    """Устанавливает время пред-напоминаний в минутах."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, minutes, telegram_id)
+        return int(result.split(" ")[1]) > 0
 
 async def get_all_birthdays_for_reminders() -> list[dict]:
     pool = await get_db_pool()
@@ -387,6 +402,14 @@ async def log_user_action(user_telegram_id: int, action_type: str, metadata: dic
     except Exception as e:
         logger.error(f"Ошибка логирования действия '{action_type}' для {user_telegram_id}: {e}")
 
+async def set_user_timezone(telegram_id: int, timezone_name: str) -> bool:
+    """Устанавливает часовой пояс для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, timezone_name, telegram_id)
+        # result содержит строку вида "UPDATE 1", нам нужно проверить, что обновилась 1 запись
+        return int(result.split(" ")[1]) > 0
 
 # --- LIFECYCLE FUNCTIONS ---
 async def setup_database_on_startup():
