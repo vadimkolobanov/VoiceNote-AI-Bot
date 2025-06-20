@@ -9,7 +9,7 @@ from aiogram.utils.markdown import hbold, hcode, hitalic
 
 from config import ADMIN_TELEGRAM_ID
 import database_setup as db
-from services.scheduler import scheduler, send_birthday_reminders
+from services.scheduler import scheduler, send_birthday_reminders, generate_and_send_daily_digest
 from inline_keyboards import get_admin_user_panel_keyboard, AdminAction, get_admin_users_list_keyboard, AdminUserNav
 from services.tz_utils import format_datetime_for_user
 from states import AdminStates
@@ -165,7 +165,6 @@ async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: Admi
 
     try:
         if new_vip_status:
-            # --- ОБНОВЛЕННОЕ СООБЩЕНИЕ О ВЫДАЧЕ VIP ---
             user_notification_text = (
                 f"🎉 {hbold('Поздравляем!')}\n\n"
                 "Вам присвоен статус 👑 **VIP**!\n\n"
@@ -180,8 +179,6 @@ async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: Admi
             await callback.bot.send_message(target_user_id, user_notification_text, parse_mode="HTML")
             logger.info(f"Пользователю {target_user_id} отправлено уведомление о получении VIP.")
         else:
-            # --- ОБНОВЛЕННАЯ ЛОГИКА ПРИ СНЯТИИ VIP ---
-            # Сбрасываем VIP-настройки пользователя
             await db.reset_user_vip_settings(target_user_id)
 
             user_notification_text = (
@@ -246,16 +243,13 @@ async def process_broadcast_message(message: Message, state: FSMContext):
     """Запускает процесс рассылки сообщения всем пользователям."""
     await state.clear()
 
-    # Получаем ID всех пользователей
-    all_users = await db.get_all_users_paginated(page=1, per_page=1_000_000)  # Получаем всех пользователей
+    all_users = await db.get_all_users_paginated(page=1, per_page=1_000_000)
     user_ids = [user['telegram_id'] for user in all_users[0]]
 
     if not user_ids:
         await message.answer("В базе данных нет пользователей для рассылки.")
         return
 
-    # Запускаем рассылку в фоновом режиме
-    import asyncio
     asyncio.create_task(broadcast_to_users(message, user_ids))
 
     await message.answer(f"✅ Рассылка запущена для {len(user_ids)} пользователей.")
@@ -274,12 +268,8 @@ async def broadcast_to_users(source_message: Message, user_ids: list[int]):
         text=f"⏳ Рассылка началась... (0/{total_users})"
     )
 
-    # Telegram API имеет лимит ~30 сообщений в секунду.
-    # Делаем паузу после каждых 25 сообщений, чтобы не превышать лимит.
     for i, user_id in enumerate(user_ids):
         try:
-            # message.copy_to() - это самый надежный способ переслать сообщение
-            # со всем его контентом (фото, видео, стикеры, форматирование)
             await source_message.copy_to(chat_id=user_id)
             sent_count += 1
             logger.info(f"Рассылка: сообщение успешно отправлено пользователю {user_id}")
@@ -287,16 +277,13 @@ async def broadcast_to_users(source_message: Message, user_ids: list[int]):
             failed_count += 1
             logger.warning(f"Рассылка: не удалось отправить сообщение пользователю {user_id}. Ошибка: {e}")
 
-        # Пауза для избежания бана от Telegram
         if (i + 1) % 25 == 0:
             await asyncio.sleep(1)
-            # Обновляем статус для админа
             try:
                 await status_message.edit_text(f"⏳ В процессе... ({i + 1}/{total_users})")
             except Exception:
-                pass  # Если админ удалил сообщение, ничего страшного
+                pass
 
-    # Финальный отчет для админа
     final_report = (
         f"🏁 Рассылка завершена!\n\n"
         f"✅ Успешно отправлено: {sent_count}\n"
@@ -304,3 +291,15 @@ async def broadcast_to_users(source_message: Message, user_ids: list[int]):
         f"👥 Всего пользователей: {total_users}"
     )
     await status_message.edit_text(final_report)
+
+
+@router.message(Command("test_digest"))
+async def cmd_test_digest(message: Message):
+    """Принудительно запускает генерацию и отправку утренней сводки для себя."""
+    await message.answer("⏳ Готовлю утреннюю сводку для вас...")
+    user_profile = await db.get_user_profile(message.from_user.id)
+    if not user_profile or not user_profile.get('is_vip'):
+        await message.answer("❌ Эта команда только для VIP-пользователей.")
+        return
+    await generate_and_send_daily_digest(message.bot, user_profile)
+    await message.answer("✅ Задача выполнена. Проверьте личные сообщения.")

@@ -1,6 +1,8 @@
 # handlers/notes.py
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+from dateutil.rrule import rrulestr
+import pytz
 
 from aiogram import Router, types, F
 from aiogram.filters import Command
@@ -16,7 +18,8 @@ from inline_keyboards import (
     get_main_menu_keyboard,
     get_note_view_actions_keyboard,
     get_confirm_delete_keyboard,
-    get_category_selection_keyboard
+    get_category_selection_keyboard,
+    get_request_vip_keyboard
 )
 import database_setup as db
 from services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler
@@ -25,6 +28,19 @@ from states import NoteCreationStates, NoteNavigationStates, NoteEditingStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def humanize_rrule(rule_str: str) -> str:
+    """Превращает RRULE в человекочитаемую строку."""
+    try:
+        # Это очень упрощенная версия, но для начала сойдет
+        if "FREQ=DAILY" in rule_str: return "Каждый день"
+        if "FREQ=WEEKLY" in rule_str: return "Каждую неделю"
+        if "FREQ=MONTHLY" in rule_str: return "Каждый месяц"
+        if "FREQ=YEARLY" in rule_str: return "Каждый год"
+        return "Повторяющаяся"
+    except Exception:
+        return "Повторяющаяся"
 
 
 # --- Вспомогательная функция для возврата в меню ---
@@ -43,6 +59,23 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
     user_profile = await db.get_user_profile(telegram_id)
     is_vip = user_profile.get('is_vip', False) if user_profile else False
 
+    # --- ПРОВЕРКА НА VIP ДЛЯ ПОВТОРЯЮЩИХСЯ ЗАДАЧ ---
+    llm_analysis_data = user_data.get("llm_analysis_json")
+    recurrence_rule = llm_analysis_data.get("recurrence_rule") if llm_analysis_data else None
+
+    if recurrence_rule and not is_vip:
+        await callback_query.message.edit_text(
+            f"⭐ {hbold('Повторяющиеся напоминания — это VIP-функция.')}\n\n"
+            "Вы можете сохранить эту заметку как разовую или получить VIP-статус для доступа ко всем возможностям.\n\n"
+            "Чтобы получить тестовый VIP-доступ, перейдите в `👤 Профиль` -> `⚙️ Настройки` и выберите любой пункт с пометкой ⭐ VIP.",
+            parse_mode="HTML",
+            reply_markup=get_request_vip_keyboard()
+        )
+        await callback_query.answer("Это VIP-функция", show_alert=True)
+        await state.clear()
+        return
+    # --- КОНЕЦ ПРОВЕРКИ ---
+
     if not is_vip:
         active_notes_count = await db.count_active_notes_for_user(telegram_id)
         if active_notes_count >= MAX_NOTES_MVP:
@@ -58,7 +91,6 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
 
     original_stt_text = user_data.get("original_stt_text")
     corrected_text_to_save = user_data.get("corrected_text_for_save")
-    llm_analysis_data = user_data.get("llm_analysis_json")
     audio_file_id = user_data.get("original_audio_telegram_file_id")
     note_creation_time = user_data.get("voice_message_date")
 
@@ -74,6 +106,15 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
             except (ValueError, TypeError) as e:
                 logger.warning(f"Could not parse due_date '{first_date_entry['absolute_datetime_start']}': {e}")
 
+    if recurrence_rule and not due_date_obj:
+        logger.info(f"Задача #{corrected_text_to_save[:20]}... повторяющаяся, но без даты начала. Устанавливаем по умолчанию.")
+        user_timezone_str = user_profile.get('timezone', 'UTC')
+        user_tz = pytz.timezone(user_timezone_str)
+        tomorrow_local = datetime.now(user_tz) + timedelta(days=1)
+        default_time = user_profile.get('default_reminder_time', time(9, 0))
+        due_date_obj = tomorrow_local.replace(hour=default_time.hour, minute=default_time.minute, second=0, microsecond=0)
+        logger.info(f"Установлена дата начала по умолчанию: {due_date_obj.isoformat()} для пользователя {telegram_id}")
+
     note_id = await db.create_note(
         telegram_id=telegram_id,
         corrected_text=corrected_text_to_save,
@@ -81,23 +122,22 @@ async def confirm_save_note_fsm_handler(callback_query: CallbackQuery, state: FS
         llm_analysis_json=llm_analysis_data,
         original_audio_telegram_file_id=audio_file_id,
         note_taken_at=note_creation_time,
-        due_date=due_date_obj
+        due_date=due_date_obj,
+        recurrence_rule=recurrence_rule
     )
 
     if note_id:
-        # --- ЛОГИРОВАНИЕ ДЕЙСТВИЯ ---
         action_type = 'create_note_voice' if audio_file_id else 'create_note_text'
         await db.log_user_action(telegram_id, action_type, metadata={'note_id': note_id})
-        # --- КОНЕЦ БЛОКА ЛОГИРОВАНИЯ ---
 
         if due_date_obj:
-            full_user_profile = await db.get_user_profile(telegram_id)
             note_data_for_scheduler = {
                 'note_id': note_id, 'telegram_id': telegram_id, 'corrected_text': corrected_text_to_save,
-                'due_date': due_date_obj, 'default_reminder_time': full_user_profile.get('default_reminder_time'),
-                'timezone': full_user_profile.get('timezone'),
-                'pre_reminder_minutes': full_user_profile.get('pre_reminder_minutes'),
-                'is_vip': full_user_profile.get('is_vip', False)
+                'due_date': due_date_obj, 'default_reminder_time': user_profile.get('default_reminder_time'),
+                'timezone': user_profile.get('timezone'),
+                'pre_reminder_minutes': user_profile.get('pre_reminder_minutes'),
+                'is_vip': is_vip,
+                'recurrence_rule': recurrence_rule
             }
             add_reminder_to_scheduler(bot, note_data_for_scheduler)
 
@@ -209,18 +249,20 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
         await _display_notes_list_page(callback_query.message, telegram_id, current_page, state, is_archived_view)
         return
 
-    note_taken_at_local = format_datetime_for_user(note.get('note_taken_at') or note['created_at'], user_timezone)
     updated_at_local = format_datetime_for_user(note.get('updated_at'), user_timezone)
     due_date_local = format_datetime_for_user(note.get('due_date'), user_timezone)
+    recurrence_rule = note.get('recurrence_rule')
+    is_vip = user_profile.get('is_vip', False)
 
     category = note.get('category', 'Общее')
-    has_audio = bool(note.get('original_audio_telegram_file_id'))
     is_completed = note.get('is_completed', False)
 
     status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else "📌")
     status_text = "Выполнена" if is_completed else ("В архиве" if note['is_archived'] else "Активна")
 
-    text = f"{status_icon} {hbold(f'Заметка #{note['note_id']}')}\n\n"
+    text = f"{status_icon} {hbold(f'Заметка #{note["note_id"]}')}\n\n"
+    if recurrence_rule and is_vip:
+        text += f"⭐ 🔁 Повторение: {hitalic(humanize_rrule(recurrence_rule))}\n"
     text += f"Статус: {hitalic(status_text)}\n"
     text += f"🗂️ Категория: {hitalic(category)}\n"
     if note.get('updated_at') and note['updated_at'].strftime('%Y%m%d%H%M') != note['created_at'].strftime(
@@ -230,18 +272,19 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
         text += f"Срок до: {hitalic(due_date_local)}\n"
     text += f"\n{hbold('Текст заметки:')}\n{hcode(note['corrected_text'])}\n"
 
+    # Добавляем в словарь `note` флаг `is_vip` для клавиатуры
+    note['is_vip'] = is_vip
+
     try:
         await callback_query.message.edit_text(
             text, parse_mode="HTML",
-            reply_markup=get_note_view_actions_keyboard(note['note_id'], current_page, note['is_archived'],
-                                                        is_completed, has_audio)
+            reply_markup=get_note_view_actions_keyboard(note, current_page)
         )
     except Exception as e:
         logger.warning(f"Could not edit note view, sending new message: {e}")
         await callback_query.message.answer(
             text, parse_mode="HTML",
-            reply_markup=get_note_view_actions_keyboard(note['note_id'], current_page, note['is_archived'],
-                                                        is_completed, has_audio)
+            reply_markup=get_note_view_actions_keyboard(note, current_page)
         )
 
     await callback_query.answer()
@@ -288,7 +331,17 @@ async def set_category_handler(callback_query: CallbackQuery, callback_data: Not
     await view_note_detail_handler(callback_query, callback_data, state)
 
 
-# --- NOTE ACTIONS: ARCHIVE, UNARCHIVE, DELETE ---
+# --- NOTE ACTIONS: RECURRENCE, ARCHIVE, UNARCHIVE, DELETE ---
+@router.callback_query(NoteAction.filter(F.action == "stop_recurrence"))
+async def stop_recurrence_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
+    success = await db.set_note_recurrence_rule(callback_data.note_id, callback_query.from_user.id, rule=None)
+    if success:
+        await callback_query.answer("✅ Повторение для этой заметки отключено.")
+    else:
+        await callback_query.answer("❌ Ошибка при отключении повторения.", show_alert=True)
+    await view_note_detail_handler(callback_query, callback_data, state)
+
+
 @router.callback_query(NoteAction.filter(F.action == "archive"))
 async def archive_note_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
     success = await db.set_note_archived_status(callback_data.note_id, callback_query.from_user.id, archived=True)
@@ -319,12 +372,11 @@ async def unarchive_note_handler(callback_query: CallbackQuery, callback_data: N
     if success:
         note = await db.get_note_by_id(callback_data.note_id, telegram_id)
         if note and note.get('due_date'):
-            full_user_profile = await db.get_user_profile(telegram_id)
             note.update({
-                'default_reminder_time': full_user_profile.get('default_reminder_time'),
-                'timezone': full_user_profile.get('timezone'),
-                'pre_reminder_minutes': full_user_profile.get('pre_reminder_minutes'),
-                'is_vip': full_user_profile.get('is_vip', False)
+                'default_reminder_time': user_profile.get('default_reminder_time'),
+                'timezone': user_profile.get('timezone'),
+                'pre_reminder_minutes': user_profile.get('pre_reminder_minutes'),
+                'is_vip': is_vip
             })
             add_reminder_to_scheduler(bot, note)
         await callback_query.answer("↩️ Заметка восстановлена из архива")
@@ -335,10 +387,17 @@ async def unarchive_note_handler(callback_query: CallbackQuery, callback_data: N
 
 @router.callback_query(NoteAction.filter(F.action == "confirm_delete"))
 async def confirm_delete_note_handler(callback_query: CallbackQuery, callback_data: NoteAction):
+    note = await db.get_note_by_id(callback_data.note_id, callback_query.from_user.id)
+    is_recurring = note and note.get('recurrence_rule')
+
+    warning_text = (f"Вы собираетесь {hbold('НАВСЕГДА')} удалить заметку #{callback_data.note_id}.\n"
+                    "Это действие необратимо.")
+    if is_recurring:
+        warning_text = (f"Вы собираетесь {hbold('НАВСЕГДА')} удалить повторяющуюся заметку #{callback_data.note_id} "
+                        f"и {hbold('ВСЕ')} её будущие повторения.\nЭто действие необратимо.")
+
     await callback_query.message.edit_text(
-        f"‼️ {hbold('ВЫ УВЕРЕНЫ?')}\n\n"
-        f"Вы собираетесь {hbold('НАВСЕГДА')} удалить заметку #{callback_data.note_id}.\n"
-        "Это действие необратимо.",
+        f"‼️ {hbold('ВЫ УВЕРЕНЫ?')}\n\n{warning_text}",
         parse_mode="HTML",
         reply_markup=get_confirm_delete_keyboard(note_id=callback_data.note_id, page=callback_data.page,
                                                  target_list=callback_data.target_list)
@@ -422,6 +481,23 @@ async def complete_note_handler(callback: CallbackQuery, callback_data: NoteActi
     note_id = callback_data.note_id
     telegram_id = callback.from_user.id
 
+    note = await db.get_note_by_id(note_id, telegram_id)
+    user_profile = await db.get_user_profile(telegram_id)
+    is_recurring = note and note.get('recurrence_rule') and user_profile.get('is_vip')
+
+    if is_recurring:
+        await callback.answer("✅ Отлично! Это событие отмечено, ждем следующего.", show_alert=False)
+        from services.scheduler import reschedule_recurring_note
+        await reschedule_recurring_note(callback.bot, note)
+        try:
+            await callback.message.edit_text(
+                f"{callback.message.text}\n\n{hbold('Статус: ✅ Пропущено, ждем следующего повторения')}",
+                parse_mode="HTML", reply_markup=None
+            )
+        except Exception:
+            pass
+        return
+
     success = await db.set_note_completed_status(note_id, telegram_id, completed=True)
     if success:
         remove_reminder_from_scheduler(note_id)
@@ -460,14 +536,13 @@ async def snooze_reminder_handler(callback: CallbackQuery, callback_data: NoteAc
 
     await db.update_note_due_date(note_id, new_due_date)
 
-    full_user_profile = await db.get_user_profile(telegram_id)
     note_data_for_scheduler = note.copy()
     note_data_for_scheduler.update({
         'due_date': new_due_date,
-        'default_reminder_time': full_user_profile.get('default_reminder_time'),
-        'timezone': full_user_profile.get('timezone'),
-        'pre_reminder_minutes': full_user_profile.get('pre_reminder_minutes'),
-        'is_vip': full_user_profile.get('is_vip', False)
+        'default_reminder_time': user_profile.get('default_reminder_time'),
+        'timezone': user_profile.get('timezone'),
+        'pre_reminder_minutes': user_profile.get('pre_reminder_minutes'),
+        'is_vip': user_profile.get('is_vip', False)
     })
 
     add_reminder_to_scheduler(callback.bot, note_data_for_scheduler)

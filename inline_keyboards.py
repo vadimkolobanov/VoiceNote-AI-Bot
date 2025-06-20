@@ -61,7 +61,6 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Главное меню с кнопкой 'Архив'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
-    # --- ВОЗВРАЩАЕМ АРХИВ ---
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
     builder.button(text="ℹ️ Инфо & Помощь", callback_data=InfoAction(action="main").pack())
@@ -72,15 +71,13 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
 def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура профиля с кнопкой 'Дни рождения'."""
     builder = InlineKeyboardBuilder()
-    # --- НОВАЯ КНОПКА ---
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
     builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.button(text="🏠 Главное меню", callback_data="main_menu_from_notes")
-    builder.adjust(1)  # Каждая кнопка на новой строке для наглядности
+    builder.adjust(1)
     return builder.as_markup()
 
 
-# --- Остальные клавиатуры без изменений ---
 def get_info_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data=InfoAction(action="how_to_use").pack())
@@ -103,13 +100,18 @@ def get_info_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_settings_menu_keyboard() -> InlineKeyboardMarkup:
+def get_settings_menu_keyboard(daily_digest_enabled: bool = True) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🕒 Часовой пояс", callback_data=SettingsAction(action="go_to_timezone").pack())
-    builder.button(text="⏰ Время напоминаний", callback_data=SettingsAction(action="go_to_reminders").pack())
-    builder.button(text="🔔 Пред-напоминания", callback_data=SettingsAction(action="go_to_pre_reminders").pack())
+
+    # Кнопка для дайджеста
+    digest_btn_text = "끄 Выключить утреннюю сводку" if daily_digest_enabled else " включить утреннюю сводку"
+    builder.button(text=digest_btn_text, callback_data=SettingsAction(action="toggle_digest").pack())
+
+    builder.button(text="⏰ Время напоминаний (⭐VIP)", callback_data=SettingsAction(action="go_to_reminders").pack())
+    builder.button(text="🔔 Пред-напоминания (⭐VIP)", callback_data=SettingsAction(action="go_to_pre_reminders").pack())
     builder.button(text="⬅️ Назад в профиль", callback_data="user_profile")
-    builder.adjust(2, 1, 1)
+    builder.adjust(1, 1, 2, 1) # Обновим компоновку
     return builder.as_markup()
 
 
@@ -164,10 +166,16 @@ def get_category_selection_keyboard(note_id: int, page: int, target_list: str) -
     return builder.as_markup()
 
 
-def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived: bool, is_completed: bool,
-                                   has_audio: bool) -> InlineKeyboardMarkup:
+def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    note_id = note['note_id']
+    is_archived = note.get('is_archived', False)
+    is_completed = note.get('is_completed', False)
+    has_audio = bool(note.get('original_audio_telegram_file_id'))
+    is_recurring = bool(note.get('recurrence_rule'))
+    is_vip = note.get('is_vip', False)
     target_list_str = 'archive' if is_archived else 'active'
+
     if is_completed:
         builder.button(text="🗑️ Удалить навсегда",
                        callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
@@ -182,9 +190,13 @@ def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived:
         builder.button(text="🗂️ Изменить категорию",
                        callback_data=NoteAction(action="change_category", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
+        if is_recurring and is_vip:
+            builder.button(text="⭐ 🔁 Сделать разовой",
+                           callback_data=NoteAction(action="stop_recurrence", note_id=note_id, page=current_page,
+                                                    target_list=target_list_str).pack())
         builder.button(text="🗄️ В архив", callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
                                                                    target_list=target_list_str).pack())
-    else:
+    else: # is_archived
         builder.button(text="↩️ Восстановить",
                        callback_data=NoteAction(action="unarchive", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
@@ -195,21 +207,27 @@ def get_note_view_actions_keyboard(note_id: int, current_page: int, is_archived:
         builder.button(text="🎧 Прослушать оригинал",
                        callback_data=NoteAction(action="listen_audio", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
+
     list_button_text = "⬅️ К архиву" if is_archived else "⬅️ К списку заметок"
     builder.button(text=list_button_text,
                    callback_data=PageNavigation(target="notes", page=current_page, archived=is_archived).pack())
+
+    # Adjust layout dynamically
     if is_completed:
         builder.adjust(1, 1)
     elif not is_archived:
-        layout = [2, 1, 1]
+        layout = [2, 1]
+        if is_recurring and is_vip: layout.append(1)
+        layout.append(1)
         if has_audio: layout.append(1)
         layout.append(1)
         builder.adjust(*layout)
-    else:
+    else: # is_archived and not completed
         layout = [1, 1]
         if has_audio: layout.append(1)
         layout.append(1)
         builder.adjust(*layout)
+
     return builder.as_markup()
 
 

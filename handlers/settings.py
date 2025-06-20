@@ -46,20 +46,27 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
     current_tz = user_profile.get('timezone', 'UTC')
     current_rem_time = user_profile.get('default_reminder_time')
     current_pre_rem_minutes = user_profile.get('pre_reminder_minutes', 60)
+    is_vip = user_profile.get('is_vip', False)
+    digest_enabled = user_profile.get('daily_digest_enabled', True)
 
     if isinstance(current_rem_time, time):
         current_rem_time_str = current_rem_time.strftime('%H:%M')
     else:
         current_rem_time_str = "09:00"
 
-    text = (
-        f"{hbold('⚙️ Ваши настройки')}\n\n"
-        f"Здесь вы можете персонализировать работу бота.\n\n"
-        f"▪️ Текущий часовой пояс: {hcode(current_tz)}\n"
-        f"▪️ Время напоминаний по умолчанию: {hcode(current_rem_time_str)} (⭐ VIP)\n"
-        f"▪️ Предварительные напоминания: {hbold(format_pre_reminder_minutes(current_pre_rem_minutes))} (⭐ VIP)"
-    )
-    keyboard = get_settings_menu_keyboard()
+    text_parts = [
+        f"{hbold('⚙️ Ваши настройки')}\n",
+        "Здесь вы можете персонализировать работу бота.\n",
+        f"▪️ Текущий часовой пояс: {hcode(current_tz)}",
+        f"▪️ Время напоминаний по умолчанию: {hcode(current_rem_time_str)} (⭐ VIP)",
+        f"▪️ Предварительные напоминания: {hbold(format_pre_reminder_minutes(current_pre_rem_minutes))} (⭐ VIP)",
+    ]
+    if is_vip:
+        digest_status = "Включена" if digest_enabled else "Выключена"
+        text_parts.append(f"▪️ Утренняя сводка: {hbold(digest_status)} (⭐ VIP)")
+
+    text = "\n".join(text_parts)
+    keyboard = get_settings_menu_keyboard(daily_digest_enabled=digest_enabled if is_vip else False)
     return text, keyboard
 
 
@@ -89,6 +96,22 @@ async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMCo
         )
 
     await callback_query.answer()
+
+# --- Раздел "Утренняя сводка" (VIP) ---
+@router.callback_query(SettingsAction.filter(F.action == "toggle_digest"))
+async def toggle_daily_digest_handler(callback: CallbackQuery, state: FSMContext):
+    user_profile = await db.get_user_profile(callback.from_user.id)
+    if not user_profile.get('is_vip'):
+        await callback.answer("⭐ Эта функция доступна только для VIP-пользователей.", show_alert=True)
+        return
+
+    current_status = user_profile.get('daily_digest_enabled', True)
+    new_status = not current_status
+    await db.set_user_daily_digest_status(callback.from_user.id, new_status)
+
+    status_text = "включена" if new_status else "выключена"
+    await callback.answer(f"✅ Утренняя сводка {status_text}", show_alert=False)
+    await show_main_settings_handler(callback, state)
 
 
 # --- Раздел "Часовой пояс" (доступен всем) ---
@@ -279,7 +302,7 @@ async def set_pre_reminder_handler(callback: CallbackQuery, callback_data: Setti
     await show_main_settings_handler(callback, state)
 
 
-# --- НОВЫЙ ХЕНДЛЕР: Обработка заявки на VIP ---
+# --- ХЕНДЛЕР: Обработка заявки на VIP ---
 
 @router.callback_query(SettingsAction.filter(F.action == "request_vip"))
 async def request_vip_handler(callback: CallbackQuery, state: FSMContext):
