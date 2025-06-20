@@ -242,12 +242,12 @@ async def set_user_daily_digest_status(telegram_id: int, enabled: bool) -> bool:
 async def get_vip_users_for_digest(current_utc_hour: int) -> list[dict]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Этот запрос выбирает пользователей, у которых сейчас 9 утра в их часовом поясе
         query = """
         SELECT telegram_id, first_name, timezone
         FROM users
         WHERE is_vip = TRUE
           AND daily_digest_enabled = TRUE
+          AND timezone != 'UTC' 
           AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9
           AND EXTRACT(HOUR FROM NOW()) = $1;
         """
@@ -401,8 +401,6 @@ async def get_birthdays_for_user(telegram_id: int, page: int = 1, per_page: int 
 async def get_birthdays_for_upcoming_digest(telegram_id: int) -> list[dict]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Сложный запрос, который правильно выбирает дни рождения в ближайшие 7 дней,
-        # даже если они переходят через границу года.
         query = """
         SELECT person_name, birth_day, birth_month, birth_year
         FROM birthdays
