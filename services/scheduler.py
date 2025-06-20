@@ -1,8 +1,10 @@
 # services/scheduler.py
 import logging
 import asyncio
+import re
 from datetime import datetime, time, timedelta, date
 import pytz
+from dateutil.rrule import rrulestr
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -21,11 +23,52 @@ executors = {'default': AsyncIOExecutor()}
 scheduler = AsyncIOScheduler(jobstores=jobstores, executors=executors, timezone=pytz.utc)
 
 
-# --- Напоминания для Заметок ---
+async def reschedule_recurring_note(bot: Bot, note: dict):
+    rule_str = note.get('recurrence_rule')
+    last_due_date = note.get('due_date')
+    telegram_id = note.get('telegram_id')
+
+    if not rule_str or not last_due_date or not telegram_id:
+        return
+
+    user_profile = await db.get_user_profile(telegram_id)
+    if not user_profile or not user_profile.get('is_vip'):
+        logger.info(f"Повторение для заметки #{note['note_id']} остановлено, т.к. пользователь {telegram_id} не VIP.")
+        await db.set_note_recurrence_rule(note['note_id'], telegram_id, rule=None)
+        return
+
+    try:
+        if last_due_date.tzinfo is None:
+            last_due_date = pytz.utc.localize(last_due_date)
+
+        rule = rrulestr(rule_str, dtstart=last_due_date)
+        next_occurrence = rule.after(last_due_date)
+
+        if next_occurrence:
+            logger.info(
+                f"Пересоздание задачи #{note['note_id']}. Старая дата: {last_due_date}, Новая дата: {next_occurrence}")
+
+            await db.update_note_due_date(note['note_id'], next_occurrence)
+
+            note_data_for_scheduler = note.copy()
+            note_data_for_scheduler.update({
+                'due_date': next_occurrence,
+                'default_reminder_time': user_profile.get('default_reminder_time'),
+                'timezone': user_profile.get('timezone'),
+                'pre_reminder_minutes': user_profile.get('pre_reminder_minutes'),
+                'is_vip': user_profile.get('is_vip', False)
+            })
+
+            add_reminder_to_scheduler(bot, note_data_for_scheduler)
+        else:
+            logger.info(f"Повторяющаяся задача #{note['note_id']} завершила свой цикл.")
+
+    except Exception as e:
+        logger.error(f"Ошибка при пересоздании повторяющейся задачи #{note['note_id']}: {e}", exc_info=True)
+
 
 async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, note_text: str, due_date: datetime,
                                      is_pre_reminder: bool):
-    """Асинхронная функция для отправки напоминания по ЗАМЕТКЕ."""
     logger.info(
         f"Отправка {'предварительного ' if is_pre_reminder else 'основного'}напоминания по заметке #{note_id} пользователю {telegram_id}")
     try:
@@ -54,15 +97,17 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         keyboard = get_reminder_notification_keyboard(note_id, is_pre_reminder=is_pre_reminder)
         await bot.send_message(chat_id=telegram_id, text=text, parse_mode="HTML", reply_markup=keyboard)
 
+        if not is_pre_reminder:
+            if note and note.get('recurrence_rule'):
+                await reschedule_recurring_note(bot, note)
+
+
     except Exception as e:
         logger.error(f"Не удалось отправить напоминание по заметке #{note_id} пользователю {telegram_id}: {e}",
                      exc_info=True)
 
 
 def add_reminder_to_scheduler(bot: Bot, note: dict):
-    """
-    Добавляет задачи в планировщик с учетом VIP-статуса пользователя.
-    """
     note_id = note.get('note_id')
     due_date_utc = note.get('due_date')
     is_vip = note.get('is_vip', False)
@@ -78,33 +123,22 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
     is_time_ambiguous = (due_date_utc.time() == time(0, 0, 0))
     final_due_date_utc = due_date_utc
 
-    # --- НОВАЯ УЛУЧШЕННАЯ ЛОГИКА ---
     if is_time_ambiguous:
-        # Устанавливаем время по умолчанию в зависимости от статуса
         default_time = note.get('default_reminder_time', time(9, 0)) if is_vip else time(12, 0)
-
         user_timezone_str = note.get('timezone', 'UTC')
         try:
             user_tz = pytz.timezone(user_timezone_str)
         except pytz.UnknownTimeZoneError:
             user_tz = pytz.utc
-
-        # Создаем корректную дату и время в часовом поясе пользователя
         local_due_date = datetime.combine(due_date_utc.date(), default_time)
         aware_local_due_date = user_tz.localize(local_due_date)
-
-        # Конвертируем в UTC для планировщика
         final_due_date_utc = aware_local_due_date.astimezone(pytz.utc)
-
-        # Обновляем due_date в базе, чтобы пользователь видел корректное время
         asyncio.create_task(db.update_note_due_date(note_id, final_due_date_utc))
-
         log_msg_time = f"{default_time.strftime('%H:%M')} (Free-user default)" if not is_vip else f"{default_time.strftime('%H:%M')} (VIP-user setting)"
         logger.info(f"Для заметки #{note_id} установлено время напоминания на {log_msg_time}")
 
     now_utc = datetime.now(pytz.utc)
 
-    # Планируем ОСНОВНОЕ напоминание (если дата в будущем)
     if final_due_date_utc > now_utc:
         job_id_main = f"note_reminder_{note_id}_main"
         scheduler.add_job(
@@ -121,7 +155,6 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
         )
         logger.info(f"Основное напоминание для заметки #{note_id} запланировано на {final_due_date_utc.isoformat()}")
 
-    # Планируем ПРЕДВАРИТЕЛЬНОЕ напоминание (только для VIP)
     if is_vip:
         pre_reminder_minutes = note.get('pre_reminder_minutes', 0)
         if pre_reminder_minutes > 0:
@@ -164,25 +197,120 @@ async def load_reminders_on_startup(bot: Bot):
     notes_with_reminders = await db.get_notes_with_reminders()
     count = 0
     for note in notes_with_reminders:
-        # VIP-статус уже включен в результат get_notes_with_reminders
         add_reminder_to_scheduler(bot, note)
         count += 1
     logger.info(f"Загружено и обработано {count} заметок с напоминаниями.")
 
 
-# --- НОВЫЙ БЛОК: Напоминания о Днях Рождения ---
+# --- БЛОК ДАЙДЖЕСТА ---
+def clean_llm_response(text: str) -> str:
+    """Очищает ответ LLM от внешних оберток типа ```html ... ``` или кавычек."""
+    # Удаляем ```html ... ``` или ``` ... ```
+    cleaned_text = re.sub(r'^```(html|)\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
+    # Удаляем внешние кавычки, если они есть
+    if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
+        cleaned_text = cleaned_text[1:-1]
+    return cleaned_text.strip()
 
+
+async def generate_and_send_daily_digest(bot: Bot, user: dict):
+    telegram_id = user['telegram_id']
+    user_timezone = user['timezone']
+    user_name = user['first_name']
+
+    logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone})")
+
+    notes_today = await db.get_notes_for_today_digest(telegram_id, user_timezone)
+    birthdays_soon = await db.get_birthdays_for_upcoming_digest(telegram_id)
+
+    if not notes_today and not birthdays_soon:
+        logger.info(f"Для пользователя {telegram_id} нет данных для сводки, пропуск.")
+        return
+
+    notes_text_parts = []
+    for note in notes_today:
+        time_str = note['due_date'].astimezone(pytz.timezone(user_timezone)).strftime('%H:%M')
+        notes_text_parts.append(f"- {time_str}: {note['corrected_text']}")
+    notes_for_prompt = "\n".join(notes_text_parts) if notes_text_parts else "Нет задач на сегодня."
+
+    bday_text_parts = []
+    for bday in birthdays_soon:
+        date_str = f"{bday['birth_day']:02}.{bday['birth_month']:02}"
+        bday_text_parts.append(f"- {date_str}: {bday['person_name']}")
+    bdays_for_prompt = "\n".join(bday_text_parts) if bday_text_parts else "Нет дней рождений в ближайшую неделю."
+
+    prompt = f"""
+Ты — дружелюбный AI-ассистент. Твоя задача — составить короткое, бодрое и информативное утреннее сообщение для пользователя по имени {user_name}.
+Сообщение должно быть в формате HTML для Telegram.
+
+Вот данные для сводки:
+
+**Задачи на сегодня:**
+{notes_for_prompt}
+
+**Дни рождения на неделе:**
+{bdays_for_prompt}
+
+Сформируй из этого красивое сообщение. Начни с приветствия. Будь кратким. Если задач нет, пожелай хорошего дня. Если есть, мотивируй пользователя.
+Пример хорошего ответа:
+"☀️ Доброе утро, {user_name}!
+
+Вот твой план на сегодня:
+- 10:00: Встреча с командой
+- 14:30: Подготовить отчет
+
+Не забудь, на этой неделе день рождения у Мамы (25.10)! 🎂
+
+Продуктивного дня! 💪"
+"""
+    try:
+        from llm_processor import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
+        import aiohttp
+
+        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": DEEPSEEK_MODEL_NAME,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.5,
+            "max_tokens": 512,
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=90)) as resp:
+                if resp.status == 200:
+                    response_data = await resp.json()
+                    raw_digest_text = response_data['choices'][0]['message']['content']
+                    # Очищаем текст перед отправкой
+                    digest_text = clean_llm_response(raw_digest_text)
+                else:
+                    error_body = await resp.text()
+                    logger.error(f"LLM API Error: {resp.status}, Body: {error_body}")
+                    raise Exception(f"LLM API Error: {resp.status}")
+
+        await bot.send_message(telegram_id, digest_text, parse_mode="HTML")
+        logger.info(f"Утренняя сводка успешно отправлена пользователю {telegram_id}.")
+
+    except Exception as e:
+        logger.error(f"Не удалось сгенерировать или отправить сводку для {telegram_id}: {e}")
+
+
+async def check_and_send_digests(bot: Bot):
+    current_utc_hour = datetime.now(pytz.utc).hour
+    logger.info(f"Запущена ежечасная проверка для утренних сводок (UTC час: {current_utc_hour}).")
+
+    users_to_notify = await db.get_vip_users_for_digest(current_utc_hour)
+    if not users_to_notify:
+        logger.info("Нет пользователей для отправки сводки в этот час.")
+        return
+
+    logger.info(f"Найдено {len(users_to_notify)} пользователей для отправки сводки.")
+    tasks = [generate_and_send_daily_digest(bot, user) for user in users_to_notify]
+    await asyncio.gather(*tasks)
+
+
+# --- НАПОМИНАНИЯ О ДНЯХ РОЖДЕНИЯ ---
 def get_age_string(year: int, today: date) -> str:
-    """Формирует строку с возрастом, учитывая падежи."""
     age = today.year - year
-    # Если день рождения в этом году еще не наступил
-    if (today.month, today.day) < (1, 1):  # Это условие некорректно, дата рождения может быть любой.
-        # Правильная проверка: сравнить (сегодняшний месяц, день) с (месяц, день рождения)
-        # Но для простоты пока считаем, что возраст наступает в 00:00 дня рождения
-        pass  # Просто для наглядности, сейчас логика верна
-
-    if age <= 0: return ""  # Не показываем возраст для будущих дат
-
+    if age <= 0: return ""
     if age % 10 == 1 and age % 100 != 11:
         return f"({age} год)"
     if 2 <= age % 10 <= 4 and (age % 100 < 10 or age % 100 >= 20):
@@ -191,45 +319,34 @@ def get_age_string(year: int, today: date) -> str:
 
 
 async def send_birthday_reminders(bot: Bot):
-    """
-    Ежедневная задача: проверяет все дни рождения и отправляет уведомления.
-    """
     logger.info("Запущена ежедневная проверка дней рождений...")
     all_birthdays = await db.get_all_birthdays_for_reminders()
     today_utc = datetime.now(pytz.utc)
 
     tasks = []
     for bday in all_birthdays:
-        # Проверяем, наступает ли день рождения сегодня
         if bday['birth_day'] == today_utc.day and bday['birth_month'] == today_utc.month:
             user_id = bday['user_telegram_id']
             person_name = bday['person_name']
-
             age_info = ""
             if bday['birth_year']:
                 age_info = " " + get_age_string(bday['birth_year'], today_utc.date())
-
             text = f"🎂 Напоминание! Сегодня важный день у <b>{person_name}</b>{age_info}!"
-
-            # Собираем задачи в список, чтобы выполнить их асинхронно
-            tasks.append(
-                bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
-            )
+            tasks.append(bot.send_message(chat_id=user_id, text=text, parse_mode="HTML"))
             logger.info(f"Подготовлено напоминание о дне рождения '{person_name}' для пользователя {user_id}")
 
     if tasks:
-        # Отправляем все подготовленные сообщения
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                bday = all_birthdays[i]
-                logger.error(
-                    f"Не удалось отправить напоминание о дне рождения '{bday['person_name']}' пользователю {bday['user_telegram_id']}: {result}")
+                bday_list = [b for b in all_birthdays if b['birth_day'] == today_utc.day and b['birth_month'] == today_utc.month]
+                if i < len(bday_list):
+                    bday = bday_list[i]
+                    logger.error(
+                        f"Не удалось отправить напоминание о дне рождения '{bday['person_name']}' пользователю {bday['user_telegram_id']}: {result}")
 
 
 async def setup_daily_jobs(bot: Bot):
-    """Добавляет все ежедневные/повторяющиеся задачи в планировщик."""
-    # Запускаем каждый день в 00:05 по UTC
     scheduler.add_job(
         send_birthday_reminders,
         trigger='cron',
@@ -240,3 +357,14 @@ async def setup_daily_jobs(bot: Bot):
         replace_existing=True
     )
     logger.info("Ежедневная задача проверки дней рождений успешно запланирована.")
+
+    scheduler.add_job(
+        check_and_send_digests,
+        trigger='cron',
+        hour='*', # Каждый час
+        minute=1, # На первой минуте часа
+        kwargs={'bot': bot},
+        id='hourly_digest_check',
+        replace_existing=True
+    )
+    logger.info("Ежечасная задача проверки утренних сводок успешно запланирована.")

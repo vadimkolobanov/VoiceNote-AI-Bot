@@ -48,7 +48,6 @@ async def enhance_text_with_llm(
 
     current_datetime_utc_str = _get_current_datetime_utc_iso()
 
-    # --- УПРОЩЕННЫЙ ПРОМПТ ---
     system_prompt = f"""You are an AI assistant specialized in processing transcribed voice notes in Russian.
 Your task is to return a single, valid JSON object based on the user's text.
 
@@ -65,7 +64,8 @@ JSON Structure:
     }}
   ],
   "people_mentioned": [...],
-  "locations_mentioned": [...]
+  "locations_mentioned": [...],
+  "recurrence_rule": "The iCalendar RRULE string if the note is recurring, otherwise null."
 }}
 
 **Date/Time Calculation Rules:**
@@ -74,6 +74,13 @@ JSON Structure:
 - **Output Format:** All date/time values in the JSON MUST be in UTC timezone, ending with 'Z'.
 - **Ambiguous Time:** When a user says "at 8 o'clock", assume they mean "today at 8 o'clock". Use the user's timezone to correctly calculate the UTC time for that.
 - **Date without time:** If a date is mentioned without a time (e.g., "on Friday"), use T00:00:00Z for the time part.
+
+**Recurrence Rule (RRULE) Generation:**
+- If the user says "каждый день", use "FREQ=DAILY".
+- If "каждую пятницу", use "FREQ=WEEKLY;BYDAY=FR".
+- If "каждый месяц 15 числа", use "FREQ=MONTHLY;BYMONTHDAY=15".
+- If "каждые 3 недели", use "FREQ=WEEKLY;INTERVAL=3".
+- If the event is not recurring, the value for "recurrence_rule" MUST be null.
 """
     user_prompt = f"Analyze the following voice note text (in Russian):\n\n\"{raw_text}\""
 
@@ -95,7 +102,6 @@ JSON Structure:
     logger.debug(f"Sending request to DeepSeek. Current UTC: {current_datetime_utc_str}, User TZ: {user_timezone}")
     try:
         async with aiohttp.ClientSession() as session:
-            # ... (остальная часть функции без изменений)
             async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload,
                                     timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 response_text = await resp.text()
