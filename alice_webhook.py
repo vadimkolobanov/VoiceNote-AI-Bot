@@ -3,6 +3,7 @@ import logging
 import secrets
 import string
 import os
+import asyncio  # <-- Для фоновых задач
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Header, HTTPException
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(docs_url=None, redoc_url=None)
 
 
-# Модели данных Pydantic остаются без изменений
+# --- Модели данных для Алисы (без изменений) ---
 class AliceRequest(BaseModel):
     class Request(BaseModel):
         original_utterance: str
@@ -41,6 +42,7 @@ class AliceResponse(BaseModel):
     version: str = "1.0"
 
 
+# --- Глобальная переменная для экземпляра бота (без изменений) ---
 bot_instance: Bot | None = None
 
 
@@ -49,22 +51,57 @@ def set_bot_instance(bot: Bot):
     bot_instance = bot
 
 
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ ФОНОВОЙ РАБОТЫ ---
+async def process_note_in_background(user: dict, utterance: str):
+    """
+    Эта функция выполняется в фоне, не блокируя ответ Алисе.
+    Она делает всю тяжелую работу.
+    """
+    logger.info(f"Background task started for user {user['telegram_id']}")
+    try:
+        if not bot_instance:
+            logger.error("Bot instance is not set in background task!")
+            return
+
+        # Вызываем нашу основную сервисную функцию
+        success, message, new_note = await process_and_save_note(
+            bot=bot_instance,
+            telegram_id=user['telegram_id'],
+            text_to_process=utterance
+        )
+
+        # Отправляем результат пользователю в Telegram
+        if success and new_note:
+            await bot_instance.send_message(
+                user['telegram_id'],
+                f"🎙️ Заметка из Алисы сохранена:\n\n`{new_note['corrected_text']}`",
+                parse_mode="Markdown"
+            )
+        else:
+            await bot_instance.send_message(
+                user['telegram_id'],
+                f"😔 Не удалось сохранить заметку из Алисы.\nПричина: {message}"
+            )
+
+    except Exception as e:
+        logger.error(f"Error in background note processing for user {user['telegram_id']}: {e}", exc_info=True)
+        # Уведомляем пользователя о критической ошибке, если можем
+        if bot_instance:
+            await bot_instance.send_message(
+                user['telegram_id'],
+                "😔 Произошла критическая ошибка при обработке вашей заметки из Алисы."
+            )
+
+
+# --- КОНЕЦ НОВОЙ ФУНКЦИИ ---
+
+
 @app.post("/alice_webhook")
-async def handle_alice_request(request: AliceRequest):  # <-- Убрали 'authorization: str = Header(None)'
-
-    # --- ЭТОТ БЛОК ПОЛНОСТЬЮ УДАЛЯЕМ ---
-    # if ALICE_SECRET_TOKEN:
-    #     expected_header = f"Bearer {ALICE_SECRET_TOKEN}"
-    #     if not authorization or authorization != expected_header:
-    #         logger.warning(f"Unauthorized access attempt. Got header: '{authorization}', expected: '{expected_header}'")
-    #         raise HTTPException(status_code=403, detail="Forbidden")
-    # ------------------------------------
-    # Теперь любой запрос от Яндекса будет обработан.
-
-    # Вся остальная логика функции остается без изменений
+async def handle_alice_request(request: AliceRequest):
     alice_user_id = request.session.user.user_id
     utterance = request.request.original_utterance.lower()
 
+    # --- Блок активации кода (быстрый, поэтому остается без изменений) ---
     if utterance.startswith("активировать код"):
         code = utterance.replace("активировать код", "").strip().upper()
         if not code:
@@ -80,6 +117,7 @@ async def handle_alice_request(request: AliceRequest):  # <-- Убрали 'auth
                                             "✅ Ваш аккаунт успешно привязан к Яндекс.Алисе!")
         return AliceResponse(response={"text": "Отлично! Аккаунт привязан. Теперь скажите, что нужно запомнить."})
 
+    # --- Блок проверки пользователя (быстрый, без изменений) ---
     user = await db.find_user_by_alice_id(alice_user_id)
     if not user:
         return AliceResponse(response={
@@ -88,19 +126,18 @@ async def handle_alice_request(request: AliceRequest):  # <-- Убрали 'auth
     if not bot_instance:
         return AliceResponse(response={"text": "Внутренняя ошибка сервера. Не могу связаться с Telegram."})
 
-    success, message, new_note = await process_and_save_note(bot_instance, user['telegram_id'],
-                                                             request.request.original_utterance)
+    # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
+    # 1. Запускаем долгую обработку в фоновой задаче
+    asyncio.create_task(
+        process_note_in_background(user, request.request.original_utterance)
+    )
 
-    if success and new_note:
-        await bot_instance.send_message(user['telegram_id'],
-                                        f"🎙️ Заметка из Алисы сохранена:\n\n`{new_note['corrected_text']}`",
-                                        parse_mode="Markdown")
-        return AliceResponse(response={"text": "Готово, сохранила."})
-    else:
-        return AliceResponse(response={"text": f"К сожалению, не получилось. {message}"})
+    # 2. Немедленно отвечаем Алисе, не дожидаясь результата
+    return AliceResponse(response={"text": "Приняла! Результат отправлю в Telegram."})
+    # ---------------------------
 
 
-# Функции generate_activation_code и get_link_code_for_user остаются без изменений
+# --- Функции генерации кода (без изменений) ---
 def generate_activation_code(length=6):
     alphabet = string.ascii_uppercase + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
