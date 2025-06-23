@@ -100,18 +100,29 @@ def get_info_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_settings_menu_keyboard(daily_digest_enabled: bool = True) -> InlineKeyboardMarkup:
+def get_settings_menu_keyboard(
+        daily_digest_enabled: bool = True,
+        is_alice_linked: bool = False  # <-- Новый параметр
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🕒 Часовой пояс", callback_data=SettingsAction(action="go_to_timezone").pack())
-
-    # Кнопка для дайджеста
     digest_btn_text = "끄 Выключить утреннюю сводку" if daily_digest_enabled else " включить утреннюю сводку"
     builder.button(text=digest_btn_text, callback_data=SettingsAction(action="toggle_digest").pack())
-
     builder.button(text="⏰ Время напоминаний (⭐VIP)", callback_data=SettingsAction(action="go_to_reminders").pack())
     builder.button(text="🔔 Пред-напоминания (⭐VIP)", callback_data=SettingsAction(action="go_to_pre_reminders").pack())
+
+    # Показываем кнопку, только если аккаунт еще не привязан
+    if not is_alice_linked:
+        builder.button(text="🔗 Привязать Яндекс.Алису", callback_data=SettingsAction(action="link_alice").pack())
+
     builder.button(text="⬅️ Назад в профиль", callback_data="user_profile")
-    builder.adjust(1, 1, 2, 1) # Обновим компоновку
+
+    layout = [1, 1, 2]
+    if not is_alice_linked:
+        layout.append(1)
+    layout.append(1)
+    builder.adjust(*layout)
+
     return builder.as_markup()
 
 

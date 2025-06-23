@@ -7,6 +7,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
+# --- НОВЫЙ ИМПОРТ ---
+from alice_webhook import get_link_code_for_user
+# --------------------
+
 import database_setup as db
 from config import ADMIN_TELEGRAM_ID
 from inline_keyboards import (
@@ -49,6 +53,10 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
     is_vip = user_profile.get('is_vip', False)
     digest_enabled = user_profile.get('daily_digest_enabled', True)
 
+    # --- НОВАЯ ЛОГИКА ---
+    is_alice_linked = bool(user_profile.get('alice_user_id'))
+    # --------------------
+
     if isinstance(current_rem_time, time):
         current_rem_time_str = current_rem_time.strftime('%H:%M')
     else:
@@ -66,7 +74,14 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
         text_parts.append(f"▪️ Утренняя сводка: {hbold(digest_status)} (⭐ VIP)")
 
     text = "\n".join(text_parts)
-    keyboard = get_settings_menu_keyboard(daily_digest_enabled=digest_enabled if is_vip else False)
+
+    # --- ИЗМЕНЕННЫЙ ВЫЗОВ ---
+    keyboard = get_settings_menu_keyboard(
+        daily_digest_enabled=digest_enabled if is_vip else False,
+        is_alice_linked=is_alice_linked
+    )
+    # ----------------------
+
     return text, keyboard
 
 
@@ -96,6 +111,7 @@ async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMCo
         )
 
     await callback_query.answer()
+
 
 # --- Раздел "Утренняя сводка" (VIP) ---
 @router.callback_query(SettingsAction.filter(F.action == "toggle_digest"))
@@ -333,3 +349,29 @@ async def request_vip_handler(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Не удалось отправить заявку на VIP от {user.id} администратору {ADMIN_TELEGRAM_ID}: {e}")
         await callback.answer("❌ Произошла ошибка при отправке заявки. Пожалуйста, попробуйте позже.", show_alert=True)
+
+
+# --- НОВЫЙ ХЕНДЛЕР ДЛЯ ПРИВЯЗКИ АЛИСЫ ---
+@router.callback_query(SettingsAction.filter(F.action == "link_alice"))
+async def link_alice_handler(callback: CallbackQuery, state: FSMContext):
+    """Генерирует код для привязки аккаунта к Яндекс.Алисе по кнопке."""
+    telegram_id = callback.from_user.id
+
+    # Повторная проверка, на всякий случай
+    user_profile = await db.get_user_profile(telegram_id)
+    if user_profile and user_profile.get('alice_user_id'):
+        await callback.answer("Ваш аккаунт уже привязан.", show_alert=True)
+        await show_main_settings_handler(callback, state)
+        return
+
+    code = await get_link_code_for_user(telegram_id)
+
+    response_text = (
+        f"🗝️ {hbold('Привязка к Яндекс.Алисе')}\n\n"
+        f"Чтобы я могла сохранять заметки из Алисы, скажите ей следующую фразу:\n\n"
+        f"🗣️ {hitalic('Алиса, попроси VoiceNote активировать код')} {hcode(code)}\n\n"
+        f"Код действителен в течение 10 минут. Не передавайте его никому."
+    )
+
+    await callback.message.answer(response_text, parse_mode="HTML")
+    await callback.answer("Код активации отправлен вам в чат.", show_alert=True)
