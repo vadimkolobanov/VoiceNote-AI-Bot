@@ -58,18 +58,23 @@ class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
 # --- Keyboard Generators ---
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню с кнопкой 'Архив'."""
+    """Главное меню с кнопкой 'Поддержка'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
     builder.button(text="ℹ️ Инфо & Помощь", callback_data=InfoAction(action="main").pack())
-    builder.adjust(2, 2)
+
+
+    if config.DONATION_URL:
+        builder.button(text="❤️ Поддержка", callback_data="show_donate_info")
+
+
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
 def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура профиля с кнопкой 'Дни рождения'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
     builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
@@ -79,6 +84,7 @@ def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_info_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура раздела 'Инфо' без дублирующей кнопки поддержки."""
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data=InfoAction(action="how_to_use").pack())
     builder.button(text="⭐ VIP-возможности", callback_data=InfoAction(action="vip_features").pack())
@@ -86,15 +92,14 @@ def get_info_keyboard() -> InlineKeyboardMarkup:
         builder.button(text="📢 Новости бота", url=config.NEWS_CHANNEL_URL)
     if config.CHAT_URL:
         builder.button(text="💬 Чат для обсуждений", url=config.CHAT_URL)
-    if config.DONATION_URL:
-        builder.button(text="❤️ Поддержать проект", callback_data=InfoAction(action="donate").pack())
+
     builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
+
     layout = [2]
     if config.NEWS_CHANNEL_URL and config.CHAT_URL:
         layout.append(2)
     elif config.NEWS_CHANNEL_URL or config.CHAT_URL:
         layout.append(1)
-    if config.DONATION_URL: layout.append(1)
     layout.append(1)
     builder.adjust(*layout)
     return builder.as_markup()

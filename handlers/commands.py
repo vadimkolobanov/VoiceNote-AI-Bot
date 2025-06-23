@@ -1,8 +1,13 @@
 # handlers/commands.py
 from aiogram import Router, types
+# --- ИЗМЕНЕНИЕ: Добавляем импорт F ---
+from aiogram import F
+# ------------------------------------
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
-from aiogram.utils.markdown import hbold, hlink
+from aiogram.utils.markdown import hbold, hlink, hcode
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from config import DONATION_URL
 
 from config import (
     MAX_NOTES_MVP, MAX_DAILY_STT_RECOGNITIONS_MVP, CREATOR_CONTACT,
@@ -17,7 +22,6 @@ router = Router()
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    """Обработчик команды /start с улучшенным приветствием."""
     await state.clear()
 
     was_new_user = await db.get_user_profile(message.from_user.id) is None
@@ -81,7 +85,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
-    """Обработчик команды /help."""
     help_text = f"""
 👋 Привет! Я <b>VoiceNote AI</b> – твой умный помощник для заметок.
 
@@ -121,3 +124,62 @@ async def cmd_help(message: types.Message):
 Предложения или ошибки? Сообщи моему создателю: {CREATOR_CONTACT}
 """
     await message.answer(help_text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# --- Блок для кнопки поддержки ---
+DONATE_TEXT = f"""
+{hbold("❤️ Поддержать проект")}
+
+Привет! Я — VoiceNote AI, и я существую благодаря труду одного независимого разработчика.
+
+Если бот оказался для вас полезным и вы хотите помочь проекту развиваться, вы можете поддержать его любой комфортной суммой. Собранные средства пойдут на оплату серверов и API.
+
+{hbold("Как сделать донат:")}
+1. Нажмите на кнопку ниже, чтобы перейти на страницу доната (ЮMoney).
+2. Выберите желаемую сумму.
+3. Подтвердите платеж.
+
+Ежемесячное содержание бота составляет около 1000 рублей без учета рекламы.
+
+{hbold("Ваши взносы помогут:")}
+- Разработке новых функций. 
+- Поддержке серверов и API.
+- Поддержке бота в Telegram.
+- Оплате более мощных ИИ
+- В проектировании новых интеграций.
+
+{hbold("Спасибо за поддержку!")}
+
+Спасибо вам за поддержку!
+"""
+
+# --- ИЗМЕНЕНИЕ: Используем F вместо types.F ---
+@router.callback_query(F.data == "show_donate_info")
+async def show_donate_info_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    text = DONATE_TEXT.format(user_id=user_id)
+
+    if not DONATION_URL:
+        await callback.answer("К сожалению, функция поддержки временно недоступна.", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Перейти к поддержке (ЮMoney)", url=DONATION_URL)
+    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu_from_donate")
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+# --- ИЗМЕНЕНИЕ: Используем F вместо types.F ---
+@router.callback_query(F.data == "go_to_main_menu_from_donate")
+async def back_to_main_menu_from_donate_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "🏠 Вы в главном меню.",
+        reply_markup=get_main_menu_keyboard()
+    )
+    await callback.answer()

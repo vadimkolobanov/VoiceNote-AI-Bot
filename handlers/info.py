@@ -74,21 +74,7 @@ INFO_MAIN_TEXT = f"""
 Для предложений или сообщений об ошибках, пожалуйста, свяжитесь с создателем: {CREATOR_CONTACT}
 """
 
-DONATE_TEXT = f"""
-{hbold("❤️ Поддержать проект")}
 
-Привет! Я — VoiceNote AI, и я существую благодаря труду одного независимого разработчика.
-
-Если бот оказался для вас полезным и вы хотите помочь проекту развиваться, вы можете поддержать его любой комфортной суммой. Собранные средства пойдут на оплату серверов и API.
-
-{hbold("Как сделать донат:")}
-1. Нажмите на кнопку ниже, чтобы перейти на страницу доната (ЮMoney).
-2. {hbold("ОЧЕНЬ ВАЖНО:")} Отправьте ваш Telegram ID, чтобы я мог вас поблагодарить и выдать VIP-статус.
-
-Ваш Telegram ID: {hcode('{user_id}')} (нажмите, чтобы скопировать)
-
-Спасибо вам за поддержку!
-"""
 
 
 @router.callback_query(InfoAction.filter(F.action == "main"))
@@ -110,22 +96,6 @@ async def show_vip_features(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(InfoAction.filter(F.action == "donate"))
-async def show_donate_info(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    text = DONATE_TEXT.format(user_id=user_id)
-
-    if not DONATION_URL:
-        await callback.answer("К сожалению, функция поддержки временно недоступна.", show_alert=True)
-        return
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Перейти к поддержке (ЮMoney)", url=DONATION_URL)
-    builder.button(text="⬅️ Назад", callback_data=InfoAction(action="main").pack())
-
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup(),
-                                     disable_web_page_preview=True)
-    await callback.answer()
 
 
 # Хендлер для кнопки "🏠 Главное меню" из этого раздела
