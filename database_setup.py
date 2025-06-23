@@ -269,17 +269,19 @@ async def set_user_daily_digest_status(telegram_id: int, enabled: bool) -> bool:
         return int(result.split(" ")[1]) > 0
 
 
-async def get_vip_users_for_digest() -> list[dict]:
+async def get_vip_users_for_digest() -> list[dict]: # <-- Убираем параметр current_utc_hour
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+        # Этот запрос уже делает всё, что нужно: находит пользователей,
+        # у которых сейчас 9 утра в их локальной таймзоне.
         query = """
-                SELECT telegram_id, first_name, timezone
-                FROM users
-                WHERE is_vip = TRUE
-                  AND daily_digest_enabled = TRUE
-                  AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9; \
-                """
-        records = await conn.fetch(query)
+        SELECT telegram_id, first_name, timezone
+        FROM users
+        WHERE is_vip = TRUE
+          AND daily_digest_enabled = TRUE
+          AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9;
+        """
+        records = await conn.fetch(query) # <-- Вызываем без параметров
         return [dict(rec) for rec in records]
 
 
