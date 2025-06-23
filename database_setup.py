@@ -2,15 +2,18 @@
 import json
 import asyncpg
 import logging
-import os
 from datetime import datetime, timezone, date, time
 
 from config import DATABASE_URL, NOTES_PER_PAGE
 
 logger = logging.getLogger(__name__)
 
-# --- SCHEMA DEFINITION ---
-CREATE_TABLE_STATEMENTS = [
+# --- СХЕМА ОБНОВЛЕНИЯ БАЗЫ ДАННЫХ ---
+# Этот массив содержит все SQL-запросы для создания и обновления таблиц.
+# Они написаны таким образом, чтобы быть безопасными для повторного выполнения.
+# (IF NOT EXISTS, ALTER TABLE ... ADD COLUMN IF NOT EXISTS)
+CREATE_AND_UPDATE_TABLES_STATEMENTS = [
+    # --- Таблица Users ---
     """
     CREATE TABLE IF NOT EXISTS users
     (
@@ -44,6 +47,24 @@ CREATE_TABLE_STATEMENTS = [
         daily_digest_enabled BOOLEAN DEFAULT TRUE
         );
     """,
+    # --- Новые поля для интеграции с Алисой ---
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='alice_user_id') THEN
+            ALTER TABLE users ADD COLUMN alice_user_id TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='alice_activation_code') THEN
+            ALTER TABLE users ADD COLUMN alice_activation_code TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='alice_code_expires_at') THEN
+            ALTER TABLE users ADD COLUMN alice_code_expires_at TIMESTAMPTZ;
+        END IF;
+    END;
+    $$;
+    """,
+
+    # --- Таблица Notes ---
     """
     CREATE TABLE IF NOT EXISTS notes
     (
@@ -78,6 +99,8 @@ CREATE_TABLE_STATEMENTS = [
         is_completed BOOLEAN DEFAULT FALSE
         );
     """,
+
+    # --- Таблица Birthdays ---
     """
     CREATE TABLE IF NOT EXISTS birthdays
     (
@@ -103,6 +126,8 @@ CREATE_TABLE_STATEMENTS = [
     )
         );
     """,
+
+    # --- Таблица User Actions (для аналитики) ---
     """
     CREATE TABLE IF NOT EXISTS user_actions
     (
@@ -126,11 +151,14 @@ CREATE_TABLE_STATEMENTS = [
         metadata JSONB
         );
     """,
+
+    # --- Индексы для ускорения запросов ---
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_user_actions_user_id ON user_actions (user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_user_actions_action_type ON user_actions (action_type);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_alice_user_id ON users(alice_user_id) WHERE alice_user_id IS NOT NULL;",
 ]
 
 # --- DATABASE POOL ---
@@ -161,12 +189,14 @@ async def init_db():
     pool = await get_db_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
-            for statement in CREATE_TABLE_STATEMENTS:
+            logger.info("Проверка и обновление схемы базы данных...")
+            for statement in CREATE_AND_UPDATE_TABLES_STATEMENTS:
                 try:
                     await connection.execute(statement)
                 except Exception as e:
-                    logger.error(f"Ошибка при выполнении SQL: {statement}\n{e}")
-            logger.info("Инициализация таблиц БД завершена.")
+                    logger.error(f"Ошибка при выполнении SQL-запроса:\n{statement}\nОшибка: {e}")
+                    raise
+            logger.info("Схема базы данных актуальна.")
 
 
 # --- USER OPERATIONS ---
@@ -239,20 +269,81 @@ async def set_user_daily_digest_status(telegram_id: int, enabled: bool) -> bool:
         return int(result.split(" ")[1]) > 0
 
 
-async def get_vip_users_for_digest(current_utc_hour: int) -> list[dict]:
+async def get_vip_users_for_digest() -> list[dict]: # <-- Убираем параметр current_utc_hour
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+        # Этот запрос уже делает всё, что нужно: находит пользователей,
+        # у которых сейчас 9 утра в их локальной таймзоне.
         query = """
         SELECT telegram_id, first_name, timezone
         FROM users
         WHERE is_vip = TRUE
           AND daily_digest_enabled = TRUE
-          AND timezone != 'UTC' 
-          AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9
-          AND EXTRACT(HOUR FROM NOW()) = $1;
+          AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9;
         """
-        records = await conn.fetch(query, current_utc_hour)
+        records = await conn.fetch(query) # <-- Вызываем без параметров
         return [dict(rec) for rec in records]
+
+
+async def set_user_timezone(telegram_id: int, timezone_name: str) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, timezone_name, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET default_reminder_time = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, reminder_time, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, minutes, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+# --- ALICE INTEGRATION OPERATIONS ---
+async def set_alice_activation_code(telegram_id: int, code: str, expires_at: datetime) -> bool:
+    """Устанавливает код активации для пользователя Telegram."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET alice_activation_code = $1, alice_code_expires_at = $2 WHERE telegram_id = $3"
+        result = await conn.execute(query, code, expires_at, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def find_user_by_alice_code(code: str) -> dict | None:
+    """Находит пользователя по коду активации, если он не истек."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT * FROM users WHERE alice_activation_code = $1 AND alice_code_expires_at > NOW()"
+        record = await conn.fetchrow(query, code)
+        return dict(record) if record else None
+
+
+async def link_alice_user(telegram_id: int, alice_id: str) -> bool:
+    """Связывает аккаунт Alice с аккаунтом Telegram и очищает код."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET alice_user_id = $1, alice_activation_code = NULL, alice_code_expires_at = NULL, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, alice_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def find_user_by_alice_id(alice_id: str) -> dict | None:
+    """Находит пользователя по его Alice ID."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT * FROM users WHERE alice_user_id = $1"
+        record = await conn.fetchrow(query, alice_id)
+        return dict(record) if record else None
 
 
 # --- NOTE OPERATIONS ---
@@ -282,7 +373,7 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-                INSERT INTO notes (telegram_id, corrected_text, original_stt_text, llm_analysis_json, \
+                INSERT INTO notes (telegram_id, corrected_text, original_stt_text, llm_analysis_json,
                                    original_audio_telegram_file_id, note_taken_at, due_date, recurrence_rule)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING note_id; \
                 """
@@ -311,15 +402,15 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-        SELECT corrected_text, due_date
-        FROM notes
-        WHERE telegram_id = $1
-          AND is_archived = FALSE
-          AND is_completed = FALSE
-          AND due_date IS NOT NULL
-          AND (due_date AT TIME ZONE $2)::date = (NOW() AT TIME ZONE $2)::date
-        ORDER BY due_date ASC;
-        """
+                SELECT corrected_text, due_date
+                FROM notes
+                WHERE telegram_id = $1
+                  AND is_archived = FALSE
+                  AND is_completed = FALSE
+                  AND due_date IS NOT NULL
+                  AND (due_date AT TIME ZONE $2)::date = (NOW() AT TIME ZONE $2):: date
+                ORDER BY due_date ASC; \
+                """
         records = await conn.fetch(query, telegram_id, user_timezone)
         return [dict(rec) for rec in records]
 
@@ -363,12 +454,39 @@ async def get_notes_with_reminders() -> list[dict]:
                 SELECT n.*, u.default_reminder_time, u.timezone, u.pre_reminder_minutes, u.is_vip
                 FROM notes n \
                          JOIN users u ON n.telegram_id = u.telegram_id
-                WHERE n.is_archived = FALSE \
-                  AND n.is_completed = FALSE \
-                  AND n.due_date IS NOT NULL \
+                WHERE n.is_archived = FALSE
+                  AND n.is_completed = FALSE
+                  AND n.due_date IS NOT NULL
                   AND n.due_date > NOW(); \
                 """
         return [dict(rec) for rec in await conn.fetch(query)]
+
+
+async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET corrected_text = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
+            new_text, note_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def update_note_category(note_id: int, new_category: str, telegram_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", new_category,
+            note_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def set_note_archived_status(note_id: int, telegram_id: int, archived: bool) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", archived,
+            note_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
 
 
 # --- BIRTHDAY OPERATIONS ---
@@ -385,13 +503,13 @@ async def get_birthdays_for_user(telegram_id: int, page: int = 1, per_page: int 
         total = await conn.fetchval("SELECT COUNT(*) FROM birthdays WHERE user_telegram_id = $1", telegram_id) or 0
         query = """
                 SELECT * \
-                FROM birthdays \
+                FROM birthdays
                 WHERE user_telegram_id = $1
-                ORDER BY CASE \
-                             WHEN (birth_month, birth_day) < (EXTRACT(MONTH FROM NOW()), EXTRACT(DAY FROM NOW())) THEN 1 \
-                             ELSE 0 END, \
+                ORDER BY CASE
+                             WHEN (birth_month, birth_day) < (EXTRACT(MONTH FROM NOW()), EXTRACT(DAY FROM NOW())) THEN 1
+                             ELSE 0 END,
                          birth_month, birth_day
-                    LIMIT $2 \
+                    LIMIT $2
                 OFFSET $3; \
                 """
         records = await conn.fetch(query, telegram_id, per_page, offset)
@@ -402,15 +520,17 @@ async def get_birthdays_for_upcoming_digest(telegram_id: int) -> list[dict]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-        SELECT person_name, birth_day, birth_month, birth_year
-        FROM birthdays
-        WHERE user_telegram_id = $1
-        AND to_date(
-            to_char(NOW(), 'YYYY') || '-' || to_char(birth_month, 'FM00') || '-' || to_char(birth_day, 'FM00'),
-            'YYYY-MM-DD'
-        ) BETWEEN date_trunc('day', NOW()) AND date_trunc('day', NOW()) + interval '7 days'
-        ORDER BY birth_month, birth_day;
-        """
+                SELECT person_name, birth_day, birth_month, birth_year
+                FROM birthdays
+                WHERE user_telegram_id = $1
+                  AND to_date(
+                        to_char(NOW(), 'YYYY') || '-' || to_char(birth_month, 'FM00') || '-' || \
+                        to_char(birth_day, 'FM00'),
+                        'YYYY-MM-DD'
+                      ) BETWEEN date_trunc('day', NOW()) AND date_trunc('day', NOW()) + \
+                    interval '7 days'
+                ORDER BY birth_month, birth_day; \
+                """
         records = await conn.fetch(query, telegram_id)
         return [dict(rec) for rec in records]
 
@@ -419,7 +539,8 @@ async def add_birthday(user_telegram_id: int, person_name: str, day: int, month:
     pool = await get_db_pool()
     query = "INSERT INTO birthdays (user_telegram_id, person_name, birth_day, birth_month, birth_year) VALUES ($1, $2, $3, $4, $5) RETURNING *;"
     async with pool.acquire() as conn:
-        return await conn.fetchrow(query, user_telegram_id, person_name, day, month, year)
+        record = await conn.fetchrow(query, user_telegram_id, person_name, day, month, year)
+        return dict(record) if record else None
 
 
 async def delete_birthday(birthday_id: int, user_telegram_id: int) -> bool:
@@ -438,19 +559,6 @@ async def add_birthdays_bulk(user_telegram_id: int, birthdays_data: list[tuple])
         await conn.executemany(query, data_to_insert)
     return len(data_to_insert)
 
-async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        query = "UPDATE users SET default_reminder_time = $1, updated_at = NOW() WHERE telegram_id = $2"
-        result = await conn.execute(query, reminder_time, telegram_id)
-        return int(result.split(" ")[1]) > 0
-
-async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        query = "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2"
-        result = await conn.execute(query, minutes, telegram_id)
-        return int(result.split(" ")[1]) > 0
 
 async def get_all_birthdays_for_reminders() -> list[dict]:
     pool = await get_db_pool()
@@ -468,31 +576,6 @@ async def log_user_action(user_telegram_id: int, action_type: str, metadata: dic
             await conn.execute(query, user_telegram_id, action_type, metadata_json)
     except Exception as e:
         logger.error(f"Ошибка логирования действия '{action_type}' для {user_telegram_id}: {e}")
-
-async def set_user_timezone(telegram_id: int, timezone_name: str) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        query = "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2"
-        result = await conn.execute(query, timezone_name, telegram_id)
-        return int(result.split(" ")[1]) > 0
-
-async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute("UPDATE notes SET corrected_text = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", new_text, note_id, telegram_id)
-        return int(result.split(" ")[1]) > 0
-
-async def update_note_category(note_id: int, new_category: str, telegram_id: int) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute("UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", new_category, note_id, telegram_id)
-        return int(result.split(" ")[1]) > 0
-
-async def set_note_archived_status(note_id: int, telegram_id: int, archived: bool) -> bool:
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        result = await conn.execute("UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", archived, note_id, telegram_id)
-        return int(result.split(" ")[1]) > 0
 
 
 # --- LIFECYCLE FUNCTIONS ---

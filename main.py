@@ -2,11 +2,14 @@
 import asyncio
 import logging
 import os
-# --- НОВЫЕ ИМПОРТЫ ---
 from logging.handlers import RotatingFileHandler
 from logtail import LogtailHandler
 
+import uvicorn
+# --- ИЗМЕНЕНИЕ: Добавляем импорт ---
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+# --------------------------------
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
@@ -26,62 +29,53 @@ from handlers import (
 )
 import database_setup as db
 from services.scheduler import scheduler, load_reminders_on_startup, setup_daily_jobs
-
-# --- НОВЫЙ БЛОК КОНФИГУРАЦИИ ---
-# Загружаем переменные для Logtail из окружения
-LOGTAIL_SOURCE_TOKEN = os.environ.get("LOGTAIL_SOURCE_TOKEN")
-LOGTAIL_HOST = os.environ.get("LOGTAIL_HOST")
+from alice_webhook import app as fastapi_app, set_bot_instance
 
 # --- ПРОФЕССИОНАЛЬНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ---
-# 1. Создаем "корневой" логгер. Не используем basicConfig, чтобы иметь полный контроль.
+# (Ваш блок настройки логирования остается здесь без изменений)
 logger = logging.getLogger()
-logger.setLevel(logging.INFO) # Устанавливаем минимальный уровень для ВСЕХ обработчиков.
-
-# 2. Убираем все стандартные обработчики, чтобы избежать дублирования
+logger.setLevel(logging.INFO)
 if logger.hasHandlers():
     logger.handlers.clear()
-
-# 3. Настраиваем обработчик для вывода в консоль (удобно для локальной разработки)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s [%(levelname)s] - %(message)s'))
 logger.addHandler(console_handler)
-
-# 4. Настраиваем обработчик для записи в файл (надежный бэкап)
 log_dir = 'logs'
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 file_handler = RotatingFileHandler(
-    os.path.join(log_dir, 'bot.log'),
-    maxBytes=5*1024*1024,
-    backupCount=5,
-    encoding='utf-8'
+    os.path.join(log_dir, 'bot.log'), maxBytes=5 * 1024 * 1024, backupCount=5, encoding='utf-8'
 )
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s [%(levelname)s] - %(message)s (%(filename)s:%(lineno)d)'))
+file_handler.setFormatter(
+    logging.Formatter('%(asctime)s - %(name)s [%(levelname)s] - %(message)s (%(filename)s:%(lineno)d)'))
 logger.addHandler(file_handler)
-
-# 5. Настраиваем обработчик для отправки логов в Logtail
+LOGTAIL_SOURCE_TOKEN = os.environ.get("LOGTAIL_SOURCE_TOKEN")
+LOGTAIL_HOST = os.environ.get("LOGTAIL_HOST")
 if LOGTAIL_SOURCE_TOKEN and LOGTAIL_HOST:
     logtail_handler = LogtailHandler(source_token=LOGTAIL_SOURCE_TOKEN, host=LOGTAIL_HOST)
     logger.addHandler(logtail_handler)
     logger.info("Logtail handler configured successfully.")
 else:
     logger.warning("Logtail configuration not found. Logs will not be sent to Logtail.")
-
-# 6. Уменьшаем "шум" от сторонних библиотек
 logging.getLogger("aiogram").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
-
+logging.getLogger("uvicorn").setLevel(logging.WARNING)
 
 # --- Bot Instance ---
 if not TG_BOT_TOKEN:
     logger.critical("Переменная окружения TG_BOT_TOKEN не установлена!")
     exit("Критическая ошибка: TG_BOT_TOKEN не найден.")
-bot_instance = Bot(token=TG_BOT_TOKEN)
+
+# --- ИЗМЕНЕНИЕ: Новый способ инициализации ---
+bot_instance = Bot(token=TG_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+
+
+# -------------------------------------------
 
 
 # --- Lifecycle Handlers ---
-async def on_startup(dispatcher: Dispatcher, bot: Bot):
+async def on_startup(bot: Bot):
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Вебхук успешно удален. Начинаем работу в режиме polling")
@@ -98,6 +92,8 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot):
     scheduler.start()
     logger.info("Планировщик запущен, все задачи загружены.")
 
+    set_bot_instance(bot)
+
     logger.info("Бот запущен и готов к работе!")
     if not DEEPSEEK_API_KEY_EXISTS:
         logger.warning("DEEPSEEK_API_KEY не установлен! Функционал LLM будет недоступен.")
@@ -108,7 +104,7 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot):
         )
 
 
-async def on_shutdown(dispatcher: Dispatcher):
+async def on_shutdown():
     logger.info("Остановка планировщика...")
     scheduler.shutdown(wait=False)
     logger.info("Планировщик остановлен.")
@@ -117,7 +113,9 @@ async def on_shutdown(dispatcher: Dispatcher):
     await db.shutdown_database_on_shutdown()
     logger.info("Соединения с БД закрыты.")
 
-    await bot_instance.session.close()
+    # Проверяем, что сессия существует и не закрыта, перед закрытием
+    if bot_instance.session and not bot_instance.session.closed:
+        await bot_instance.session.close()
     logger.info("Сессия бота закрыта. Бот остановлен.")
 
 
@@ -125,6 +123,9 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
+    dp.startup.register(on_startup)
+
+    # Роутеры
     dp.include_router(admin_router.router)
     dp.include_router(info_router.router)
     dp.include_router(birthdays_router.router)
@@ -135,22 +136,23 @@ async def main():
     dp.include_router(text_router.router)
     dp.include_router(cmd_router.router)
 
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
+    # Настраиваем Uvicorn
+    uvicorn_config = uvicorn.Config(
+        app=fastapi_app,
+        host="0.0.0.0",
+        port=8000,
+        log_config=None,
+    )
+    server = uvicorn.Server(uvicorn_config)
 
-    logger.info("Запуск polling...")
     try:
-        if await bot_instance.get_webhook_info():
-            logger.warning("Обнаружен активный вебхук! Принудительное удаление...")
-            await bot_instance.delete_webhook()
-
-        await dp.start_polling(bot_instance, allowed_updates=dp.resolve_used_update_types())
-    except Exception as e:
-        logger.critical(f"Ошибка при запуске polling: {e}", exc_info=True)
+        logger.info("Запуск Telegram-бота и веб-сервера для Алисы...")
+        await asyncio.gather(
+            dp.start_polling(bot_instance, allowed_updates=dp.resolve_used_update_types()),
+            server.serve()
+        )
     finally:
-        if bot_instance.session and not bot_instance.session.closed:
-            await bot_instance.session.close()
-        logger.info("Polling завершен.")
+        await on_shutdown()
 
 
 if __name__ == "__main__":
