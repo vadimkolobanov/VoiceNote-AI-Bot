@@ -6,10 +6,8 @@ from logging.handlers import RotatingFileHandler
 from logtail import LogtailHandler
 
 import uvicorn
-# --- ИЗМЕНЕНИЕ: Добавляем импорт ---
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-# --------------------------------
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 
@@ -31,8 +29,7 @@ import database_setup as db
 from services.scheduler import scheduler, load_reminders_on_startup, setup_daily_jobs
 from alice_webhook import app as fastapi_app, set_bot_instance
 
-# --- ПРОФЕССИОНАЛЬНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ---
-# (Ваш блок настройки логирования остается здесь без изменений)
+# --- Настройка логирования ---
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 if logger.hasHandlers():
@@ -67,11 +64,7 @@ if not TG_BOT_TOKEN:
     logger.critical("Переменная окружения TG_BOT_TOKEN не установлена!")
     exit("Критическая ошибка: TG_BOT_TOKEN не найден.")
 
-# --- ИЗМЕНЕНИЕ: Новый способ инициализации ---
 bot_instance = Bot(token=TG_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-
-
-# -------------------------------------------
 
 
 # --- Lifecycle Handlers ---
@@ -113,7 +106,6 @@ async def on_shutdown():
     await db.shutdown_database_on_shutdown()
     logger.info("Соединения с БД закрыты.")
 
-    # Проверяем, что сессия существует и не закрыта, перед закрытием
     if bot_instance.session and not bot_instance.session.closed:
         await bot_instance.session.close()
     logger.info("Сессия бота закрыта. Бот остановлен.")
@@ -125,7 +117,6 @@ async def main():
 
     dp.startup.register(on_startup)
 
-    # Роутеры
     dp.include_router(admin_router.router)
     dp.include_router(info_router.router)
     dp.include_router(birthdays_router.router)
@@ -136,7 +127,6 @@ async def main():
     dp.include_router(text_router.router)
     dp.include_router(cmd_router.router)
 
-    # Настраиваем Uvicorn
     uvicorn_config = uvicorn.Config(
         app=fastapi_app,
         host="0.0.0.0",

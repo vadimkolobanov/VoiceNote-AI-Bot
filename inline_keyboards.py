@@ -107,7 +107,7 @@ def get_info_keyboard() -> InlineKeyboardMarkup:
 
 def get_settings_menu_keyboard(
         daily_digest_enabled: bool = True,
-        is_alice_linked: bool = False  # <-- Новый параметр
+        is_alice_linked: bool = False
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🕒 Часовой пояс", callback_data=SettingsAction(action="go_to_timezone").pack())
@@ -116,7 +116,6 @@ def get_settings_menu_keyboard(
     builder.button(text="⏰ Время напоминаний (⭐VIP)", callback_data=SettingsAction(action="go_to_reminders").pack())
     builder.button(text="🔔 Пред-напоминания (⭐VIP)", callback_data=SettingsAction(action="go_to_pre_reminders").pack())
 
-    # Показываем кнопку, только если аккаунт еще не привязан
     if not is_alice_linked:
         builder.button(text="🔗 Привязать Яндекс.Алису", callback_data=SettingsAction(action="link_alice").pack())
 
@@ -228,7 +227,6 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
     builder.button(text=list_button_text,
                    callback_data=PageNavigation(target="notes", page=current_page, archived=is_archived).pack())
 
-    # Adjust layout dynamically
     if is_completed:
         builder.adjust(1, 1)
     elif not is_archived:
@@ -238,7 +236,7 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
         if has_audio: layout.append(1)
         layout.append(1)
         builder.adjust(*layout)
-    else: # is_archived and not completed
+    else:
         layout = [1, 1]
         if has_audio: layout.append(1)
         layout.append(1)
@@ -292,11 +290,14 @@ def get_admin_users_list_keyboard(users: list[dict], current_page: int, total_pa
     return builder.as_markup()
 
 
-def get_note_confirmation_keyboard() -> InlineKeyboardMarkup:
+def get_undo_creation_keyboard(note_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой 'Отменить' для авто-сохраненной заметки."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Сохранить", callback_data="confirm_save_note")
-    builder.button(text="❌ Отмена", callback_data="cancel_save_note")
-    builder.adjust(2)
+    builder.button(
+        text="❌ Отменить",
+        callback_data=NoteAction(action="undo_create", note_id=note_id).pack()
+    )
+    builder.adjust(1)
     return builder.as_markup()
 
 
