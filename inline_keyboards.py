@@ -58,33 +58,32 @@ class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
 # --- Keyboard Generators ---
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню с кнопкой 'Поддержка'."""
+    """Главное меню с кнопкой 'Настройки'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
+    builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.button(text="ℹ️ Инфо & Помощь", callback_data=InfoAction(action="main").pack())
-
 
     if config.DONATION_URL:
         builder.button(text="❤️ Поддержка", callback_data="show_donate_info")
 
-
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2)
     return builder.as_markup()
 
 
 def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура профиля без кнопки 'Настройки'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
-    builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.button(text="🏠 Главное меню", callback_data="main_menu_from_notes")
     builder.adjust(1)
     return builder.as_markup()
 
 
 def get_info_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура раздела 'Инфо' без дублирующей кнопки поддержки."""
+    """Клавиатура раздела 'Инфо'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data=InfoAction(action="how_to_use").pack())
     builder.button(text="⭐ VIP-возможности", callback_data=InfoAction(action="vip_features").pack())
@@ -109,6 +108,7 @@ def get_settings_menu_keyboard(
         daily_digest_enabled: bool = True,
         is_alice_linked: bool = False
 ) -> InlineKeyboardMarkup:
+    """Клавиатура настроек с кнопкой 'Назад в главное меню'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🕒 Часовой пояс", callback_data=SettingsAction(action="go_to_timezone").pack())
     digest_btn_text = "끄 Выключить утреннюю сводку" if daily_digest_enabled else " включить утреннюю сводку"
@@ -119,7 +119,7 @@ def get_settings_menu_keyboard(
     if not is_alice_linked:
         builder.button(text="🔗 Привязать Яндекс.Алису", callback_data=SettingsAction(action="link_alice").pack())
 
-    builder.button(text="⬅️ Назад в профиль", callback_data="user_profile")
+    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
 
     layout = [1, 1, 2]
     if not is_alice_linked:

@@ -7,9 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
-# --- НОВЫЙ ИМПОРТ ---
 from alice_webhook import get_link_code_for_user
-# --------------------
 
 import database_setup as db
 from config import ADMIN_TELEGRAM_ID
@@ -20,7 +18,8 @@ from inline_keyboards import (
     get_pre_reminder_keyboard,
     get_request_vip_keyboard,
     SettingsAction,
-    TimezoneAction
+    TimezoneAction,
+    get_main_menu_keyboard # Добавляем импорт
 )
 from services.tz_utils import ALL_PYTZ_TIMEZONES
 from states import ProfileSettingsStates
@@ -39,7 +38,6 @@ def format_pre_reminder_minutes(minutes: int) -> str:
     return f"За {hours} ч."
 
 
-# --- Вспомогательная функция, чтобы не дублировать код ---
 async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.InlineKeyboardMarkup] | tuple[
     None, None]:
     """Формирует текст и клавиатуру для главного меню настроек."""
@@ -52,10 +50,7 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
     current_pre_rem_minutes = user_profile.get('pre_reminder_minutes', 60)
     is_vip = user_profile.get('is_vip', False)
     digest_enabled = user_profile.get('daily_digest_enabled', True)
-
-    # --- НОВАЯ ЛОГИКА ---
     is_alice_linked = bool(user_profile.get('alice_user_id'))
-    # --------------------
 
     if isinstance(current_rem_time, time):
         current_rem_time_str = current_rem_time.strftime('%H:%M')
@@ -74,14 +69,10 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
         text_parts.append(f"▪️ Утренняя сводка: {hbold(digest_status)} (⭐ VIP)")
 
     text = "\n".join(text_parts)
-
-    # --- ИЗМЕНЕННЫЙ ВЫЗОВ ---
     keyboard = get_settings_menu_keyboard(
         daily_digest_enabled=digest_enabled if is_vip else False,
         is_alice_linked=is_alice_linked
     )
-    # ----------------------
-
     return text, keyboard
 
 
@@ -111,6 +102,13 @@ async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMCo
         )
 
     await callback_query.answer()
+
+# --- НОВЫЙ ХЕНДЛЕР для возврата в главное меню из любого места ---
+@router.callback_query(F.data == "go_to_main_menu")
+async def go_to_main_menu_from_anywhere_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard())
+    await callback.answer()
 
 
 # --- Раздел "Утренняя сводка" (VIP) ---
@@ -357,7 +355,6 @@ async def link_alice_handler(callback: CallbackQuery, state: FSMContext):
     """Генерирует код для привязки аккаунта к Яндекс.Алисе по кнопке."""
     telegram_id = callback.from_user.id
 
-    # Повторная проверка, на всякий случай
     user_profile = await db.get_user_profile(telegram_id)
     if user_profile and user_profile.get('alice_user_id'):
         await callback.answer("Ваш аккаунт уже привязан.", show_alert=True)
