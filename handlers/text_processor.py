@@ -1,137 +1,74 @@
 # handlers/text_processor.py
 import logging
-from datetime import datetime, timedelta, time
-import pytz
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.markdown import hcode, hbold, hitalic
 
 import database_setup as db
-from config import DEEPSEEK_API_KEY_EXISTS
-from inline_keyboards import get_note_confirmation_keyboard
-from llm_processor import enhance_text_with_llm
-from services.tz_utils import format_datetime_for_user
-from states import NoteCreationStates
+from inline_keyboards import get_undo_creation_keyboard
+from services import note_creator
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+MIN_TEXT_LENGTH_FOR_NOTE = 10
+MIN_WORDS_FOR_NOTE = 2
+GARBAGE_WORDS = {'привет', 'спс', 'спасибо', 'ок', 'ok', 'хорошо', 'ага', 'угу', 'hi', 'hello', 'thanks'}
+
+
+async def process_text_and_autosave(message: types.Message, text: str, status_message: types.Message):
+    """
+    Общая функция для обработки текста, сохранения заметки и отправки ответа.
+    """
+    success, user_message, new_note = await note_creator.process_and_save_note(
+        bot=message.bot,
+        telegram_id=message.from_user.id,
+        text_to_process=text,
+        message_date=message.date
+    )
+
+    if success:
+        await db.log_user_action(
+            message.from_user.id,
+            'create_note_text_auto',
+            metadata={'note_id': new_note['note_id']}
+        )
+        keyboard = get_undo_creation_keyboard(new_note['note_id'])
+        await status_message.edit_text(user_message, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await status_message.edit_text(user_message, parse_mode="HTML")
 
 
 @router.message(F.forward_date, F.text)
 async def handle_forwarded_text_message(message: types.Message, state: FSMContext):
     """
     Обрабатывает пересланные текстовые сообщения, анализирует их
-    и предлагает сохранить как заметку.
+    и автоматически сохраняет как заметку.
     """
-    user_profile = await db.get_user_profile(message.from_user.id)
-    if not user_profile:
-        await message.reply("Не удалось найти ваш профиль. Пожалуйста, нажмите /start.")
+    await state.clear()
+    text_to_process = message.text
+    if not text_to_process or not text_to_process.strip():
         return
 
-    forwarded_text = message.text
-    if not forwarded_text.strip():
+    status_msg = await message.reply("✔️ Пересланное сообщение получено. Обрабатываю...")
+    await process_text_and_autosave(message, text_to_process, status_msg)
+
+
+@router.message(F.text, ~F.text.startswith('/'))
+async def handle_regular_text_message(message: types.Message, state: FSMContext):
+    """
+    Обрабатывает обычные текстовые сообщения, фильтрует "мусор"
+    и автоматически сохраняет как заметку.
+    """
+    await state.clear()
+    text = message.text.strip()
+
+    # Фильтр "мусорных" сообщений
+    if len(text) < MIN_TEXT_LENGTH_FOR_NOTE or \
+       len(text.split()) < MIN_WORDS_FOR_NOTE or \
+       text.lower() in GARBAGE_WORDS:
+        logger.info(f"Ignoring short/garbage text from {message.from_user.id}: '{text}'")
         return
 
-    status_msg = await message.reply("✔️ Пересланное сообщение получено. Анализирую текст с помощью AI...")
-
-    if not DEEPSEEK_API_KEY_EXISTS:
-        await state.set_state(NoteCreationStates.awaiting_confirmation)
-        await state.update_data(
-            original_stt_text=forwarded_text,
-            corrected_text_for_save=forwarded_text,
-            llm_analysis_json=None,
-            original_audio_telegram_file_id=None,
-            voice_message_date=message.date
-        )
-        await status_msg.edit_text(
-            f"Вот текст из пересланного сообщения. Сохранить его как заметку?\n\n{hcode(forwarded_text)}",
-            reply_markup=get_note_confirmation_keyboard(),
-            parse_mode="HTML"
-        )
-        return
-
-    user_timezone_str = user_profile.get('timezone', 'UTC')
-    user_tz = pytz.timezone(user_timezone_str)
-    current_user_dt = datetime.now(user_tz)
-    current_user_dt_iso = current_user_dt.isoformat()
-
-    is_vip = user_profile.get('is_vip', False)
-
-    llm_result_dict = await enhance_text_with_llm(forwarded_text, current_user_datetime_iso=current_user_dt_iso)
-    llm_info_for_user_display = ""
-    llm_analysis_result_json = None
-    corrected_text_for_response = forwarded_text
-
-    if "error" in llm_result_dict:
-        logger.error(f"LLM error for forwarded text from user {message.from_user.id}: {llm_result_dict['error']}")
-        llm_info_for_user_display = f"\n\n⚠️ {hbold('Ошибка при AI анализе:')} {hcode(llm_result_dict['error'])}"
-    else:
-        llm_analysis_result_json = llm_result_dict
-        corrected_text_for_response = llm_result_dict.get("corrected_text", forwarded_text)
-
-        if llm_result_dict.get("dates_times"):
-            try:
-                due_date_str_utc = llm_result_dict["dates_times"][0].get("absolute_datetime_start")
-                if due_date_str_utc:
-                    dt_obj_utc = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
-
-                    is_time_ambiguous = (dt_obj_utc.time() == time(0, 0, 0))
-                    if is_time_ambiguous:
-                        default_time = user_profile.get('default_reminder_time', time(9, 0)) if is_vip else time(12, 0)
-                        local_due_date = datetime.combine(dt_obj_utc.date(), default_time)
-                        aware_local_due_date = user_tz.localize(local_due_date)
-                        final_utc_date_to_show = aware_local_due_date.astimezone(pytz.utc)
-                    else:
-                        final_utc_date_to_show = dt_obj_utc
-
-                    llm_result_dict["dates_times"][0]["absolute_datetime_start"] = final_utc_date_to_show.strftime(
-                        '%Y-%m-%dT%H:%M:%SZ')
-                    llm_analysis_result_json = llm_result_dict
-                    display_date = format_datetime_for_user(final_utc_date_to_show, user_timezone_str)
-                    logger.info(
-                        f"Дата для предпросмотра (forwarded): {display_date} (исходная UTC: {due_date_str_utc})")
-
-            except Exception as e:
-                logger.error(f"Ошибка при коррекции/форматировании даты для предпросмотра (forwarded): {e}")
-                display_date = "Ошибка даты"
-
-        details_parts = [f"{hbold('✨ Улучшенный текст (AI):')}\n{hcode(corrected_text_for_response)}"]
-        if llm_result_dict.get("task_description"):
-            details_parts.append(f"📝 {hbold('Задача:')} {hitalic(llm_result_dict['task_description'])}")
-
-        if llm_result_dict.get("dates_times") and 'display_date' in locals() and display_date:
-            mention = llm_result_dict["dates_times"][0].get('original_mention', 'N/A')
-            dates_times_str_list = [f"- {hitalic(mention)} -> {hbold(display_date)}"]
-            details_parts.append(f"🗓️ {hbold('Распознанные даты/время:')}\n" + "\n".join(dates_times_str_list))
-
-        llm_info_for_user_display = "\n\n" + "\n\n".join(details_parts)
-
-    await state.set_state(NoteCreationStates.awaiting_confirmation)
-    await state.update_data(
-        original_stt_text=forwarded_text,
-        corrected_text_for_save=corrected_text_for_response,
-        llm_analysis_json=llm_analysis_result_json,
-        original_audio_telegram_file_id=None,
-        voice_message_date=message.date
-    )
-
-    response_to_user = (
-        f"{hbold('📝 Анализ пересланного сообщения:')}"
-        f"{llm_info_for_user_display}\n\n"
-        "💾 Сохранить эту информацию как новую заметку?"
-    )
-
-    try:
-        await status_msg.edit_text(
-            response_to_user,
-            reply_markup=get_note_confirmation_keyboard(),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        logger.warning(f"Could not edit status message for forwarded text, sending new: {e}")
-        await message.answer(
-            response_to_user,
-            reply_markup=get_note_confirmation_keyboard(),
-            parse_mode="HTML"
-        )
+    status_msg = await message.reply("✔️ Сообщение принято. Обрабатываю...")
+    await process_text_and_autosave(message, text, status_msg)

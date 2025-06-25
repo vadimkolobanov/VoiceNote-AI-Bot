@@ -6,23 +6,22 @@
 
     <!-- SEO-теги -->
     <title>VoiceNote AI — Ваш умный ассистент для голосовых заметок в Telegram</title>
-    <meta name="description" content="Превратите ваши голосовые и текстовые сообщения в структурированные заметки, задачи и напоминания с помощью ИИ. VoiceNote AI распознает речь, поймет суть и напомнит о важном. Попробуйте бесплатно!">
+    <meta name="description" content="Превратите ваши голосовые и текстовые сообщения в структурированные заметки, задачи и напоминания с помощью ИИ. VoiceNote AI распознает речь, поймет суть и напомнит о важном.">
     <meta name="keywords" content="голосовые заметки, telegram бот, искусственный интеллект, распознавание речи, планировщик, задачи, напоминания, продуктивность, VoiceNote AI, ai ассистент">
 
     <!-- Yandex.Metrika counter -->
     <script type="text/javascript" >
-   (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
-   m[i].l=1*new Date();
-   for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
-   k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
-   (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
-
-   ym(102611972, "init", {
-        clickmap:true,
-        trackLinks:true,
-        accurateTrackBounce:true,
-        webvisor:true
-   });
+       (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+       m[i].l=1*new Date();
+       for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+       k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+       (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+       ym(102611972, "init", {
+            clickmap:true,
+            trackLinks:true,
+            accurateTrackBounce:true,
+            webvisor:true
+       });
     </script>
     <noscript><div><img src="https://mc.yandex.ru/watch/102611972" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
     <!-- /Yandex.Metrika counter -->
@@ -30,8 +29,9 @@
     <!-- Open Graph для красивых ссылок в соцсетях -->
     <meta property="og:title" content="VoiceNote AI — Преврати голос в порядок">
     <meta property="og:description" content="Просто надиктуйте идею, задачу или дату. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.">
-    <meta property="og:image" content="https://voicenote-ai.ru/og-image.png"> <!-- ЗАМЕНИТЕ НА ССЫЛКУ НА ВАШУ КАРТИНКУ -->
-    <meta property="og:url" content="https://voicenote.ru"> <!-- ЗАМЕНИТЕ НА ВАШ ДОМЕН -->
+    <!-- ЗАМЕНИТЕ НА ССЫЛКУ НА ВАШУ КАРТИНКУ ДЛЯ ПРЕВЬЮ -->
+    <meta property="og:image" content="https://voicenote-ai.ru/og-image.png">
+    <meta property="og:url" content="https://voicenote-ai.ru">
     <meta property="og:type" content="website">
     <meta property="og:locale" content="ru_RU">
     <meta property="og:site_name" content="VoiceNote AI">
@@ -43,7 +43,8 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="VoiceNote AI — Преврати голос в порядок">
     <meta name="twitter:description" content="Просто надиктуйте идею, задачу или дату. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.">
-    <meta name="twitter:image" content="https://voicenote-ai.ru/og-image.png"> <!-- ЗАМЕНИТЕ НА ССЫЛКУ НА ВАШУ КАРТИНКУ -->
+    <!-- ЗАМЕНИТЕ НА ССЫЛКУ НА ВАШУ КАРТИНКУ ДЛЯ ПРЕВЬЮ -->
+    <meta name="twitter:image" content="https://voicenote-ai.ru/og-image.png">
 
     <!-- Favicon -->
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
@@ -60,17 +61,9 @@
                     fontFamily: { sans: ['Inter', 'sans-serif'], },
                     animation: {
                         float: 'float 6s ease-in-out infinite',
-                        pulseWave: 'pulseWave 2s infinite',
                     },
                     keyframes: {
-                        float: {
-                            '0%, 100%': { transform: 'translateY(0)' },
-                            '50%': { transform: 'translateY(-15px)' },
-                        },
-                        pulseWave: {
-                            '0%, 100%': { transform: 'scale(1)', opacity: '0.5' },
-                            '50%': { transform: 'scale(1.1)', opacity: '0' },
-                        },
+                        float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-15px)' }, },
                     }
                 }
             }
@@ -130,51 +123,41 @@
     </header>
 
     <main>
-        <section class="bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-16 md:py-24">
+        <section class="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 text-white py-16 md:py-24 overflow-hidden">
             <div class="container mx-auto px-6">
                 <div class="flex flex-col md:flex-row items-center gap-12">
                     <div class="md:w-1/2 text-center md:text-left">
                         <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight mb-4">Преврати голос и текст в порядок.</h1>
-                        <p class="text-xl md:text-2xl text-blue-100 mb-8">Надиктовывайте идеи, пересылайте сообщения от коллег, ставьте задачи. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.</p>
+                        <p class="text-xl md:text-2xl text-blue-100 mb-8">Надиктовывайте идеи, пересылайте сообщения, ставьте задачи. VoiceNote AI сам всё расшифрует, структурирует и поставит напоминание.</p>
                         <div class="flex flex-col sm:flex-row gap-4 justify-center md:justify-start">
                             <a href="https://t.me/tgnote_by_bot" target="_blank" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-4 px-8 rounded-full text-center transition duration-300 transform hover:scale-105 shadow-lg">
-                                Попробовать бесплатно
+                                Попробовать в Telegram
                             </a>
                         </div>
                         <p class="mt-4 text-sm text-blue-200">Без регистрации, кредитных карт и сложных настроек</p>
                     </div>
-                    <div class="md:w-1/2 flex justify-center relative animate-float">
-                        <div class="relative max-w-md w-full">
-                            <div class="absolute inset-0 flex items-center justify-center z-10">
-                                <div class="bg-white/10 rounded-full w-64 h-64 animate-pulseWave"></div>
-                                <div class="bg-white/10 rounded-full w-80 h-80 absolute animate-pulseWave" style="animation-delay: 1s;"></div>
-                            </div>
-                            <div class="relative z-20 flex flex-col items-center">
-                                <div class="bg-white rounded-3xl shadow-2xl overflow-hidden transform rotate-3 w-72">
-                                    <div class="bg-gradient-to-r from-cyan-400 to-blue-500 p-5">
-                                        <div class="font-bold text-xl text-white">Ежедневные задачи</div>
-                                        <div class="text-white opacity-90 mt-2 flex items-center">
-                                            <i class="fas fa-check-circle text-green-300 mr-2"></i>
-                                            <span>Отправить отчет</span>
-                                        </div>
-                                    </div>
-                                    <div class="p-5">
-                                        <div class="flex justify-between items-center mb-3">
-                                            <div class="font-medium text-slate-800">Позвонить Марку о проекте</div>
-                                            <span class="bg-indigo-100 text-indigo-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">Важно</span>
-                                        </div>
-                                        <div class="text-sm text-gray-500 flex justify-between items-center">
-                                            <span>Завтра, 10:00</span>
-                                            <span class="flex items-center">
-                                                <i class="fas fa-bell text-orange-500 mr-1"></i>
-                                                Напомнить
-                                            </span>
-                                        </div>
-                                    </div>
+                    <!-- Обновленный графический блок -->
+                    <div class="md:w-1/2 flex justify-center items-center animate-float">
+                        <div class="relative w-full max-w-md p-8 bg-white/10 rounded-3xl shadow-2xl backdrop-blur-sm border border-white/20">
+                            <div class="flex items-start space-x-4">
+                                <i class="fas fa-brain text-4xl text-cyan-300"></i>
+                                <div>
+                                    <h3 class="font-bold text-lg">AI-анализ в действии</h3>
+                                    <p class="text-blue-200 text-sm">От сырого текста к четкой задаче</p>
                                 </div>
-                                <div class="mt-8 relative">
-                                    <i class="fas fa-microphone h-16 w-16 text-blue-300 mx-auto"></i>
-                                    <div class="absolute top-0 left-0 right-0 bottom-0 bg-blue-500 rounded-full animate-ping opacity-20"></div>
+                            </div>
+                            <div class="mt-6 space-y-4">
+                                <div class="bg-slate-800/50 p-3 rounded-lg">
+                                    <p class="text-xs text-slate-300 mb-1">Голосовое сообщение:</p>
+                                    <p class="italic">"Напомни позвонить клиенту в пятницу и подготовить отчет"</p>
+                                </div>
+                                <div class="text-center">
+                                    <i class="fas fa-arrow-down text-2xl text-orange-400 animate-pulse"></i>
+                                </div>
+                                <div class="bg-green-500/80 p-3 rounded-lg shadow-lg">
+                                    <p class="text-xs font-bold mb-1">Результат:</p>
+                                    <p><i class="fas fa-check-circle mr-2"></i><b>Задача:</b> Позвонить клиенту, подготовить отчет</p>
+                                    <p><i class="fas fa-bell mr-2"></i><b>Срок:</b> Пятница, 09:00</p>
                                 </div>
                             </div>
                         </div>
@@ -186,8 +169,8 @@
         <section id="how-it-works" class="py-20 bg-slate-100">
             <div class="container mx-auto px-6">
                 <div class="text-center max-w-3xl mx-auto mb-16">
-                    <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-4">От хаоса в голове — к порядку в делах</h2>
-                    <p class="text-gray-600 text-lg">Всего 3 простых шага, чтобы ваши идеи и задачи всегда были под контролем.</p>
+                    <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-4">От хаоса к порядку за 3 шага</h2>
+                    <p class="text-gray-600 text-lg">Забудьте про стикеры и блокноты. Ваши идеи и задачи теперь под контролем.</p>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
                     <div class="bg-white rounded-2xl p-8 shadow-lg feature-card text-center reveal">
@@ -255,38 +238,21 @@
                         </div>
                     </div>
                     <div class="flex flex-col md:flex-row-reverse items-center gap-12 reveal">
-                         <div class="md:w-1/2">
-                            <div class="text-purple-600 font-bold text-sm mb-2 uppercase tracking-wider">Контроль данных</div>
-                            <h3 class="text-3xl font-bold mb-4">Ваши данные — ваши правила</h3>
-                            <p class="text-gray-600 mb-6">Мы ценим вашу конфиденциальность и право на владение своими данными. Все ваши заметки надежно хранятся, и вы в любой момент можете их удалить.</p>
-                            <p class="text-gray-600 font-semibold">⭐ VIP-пользователи получают возможность экспортировать всю свою базу в удобном формате (JSON, CSV, TXT) для резервного копирования или анализа.</p>
+                        <div class="md:w-1/2">
+                           <div class="text-green-600 font-bold text-sm mb-2 uppercase tracking-wider">⭐ VIP-Фишка</div>
+                           <h3 class="text-3xl font-bold mb-4">Начинайте день с ясным планом</h3>
+                           <p class="text-gray-600 mb-6">Каждое утро в 9:00 по вашему времени бот будет присылать персональную сводку: задачи на сегодня и ближайшие дни рождения. Вы всегда будете в курсе, что важно.</p>
                         </div>
                         <div class="md:w-1/2 flex justify-center">
-                            <div class="bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl w-full max-w-sm p-6 shadow-xl text-white">
-                                <h4 class="font-bold mb-4">Экспорт в один клик:</h4>
-                                <div class="grid grid-cols-3 gap-4 text-center">
-                                    <div class="bg-white/20 p-4 rounded-lg"><i class="fas fa-file-code text-2xl mb-2"></i><span class="text-xs">JSON</span></div>
-                                    <div class="bg-white/20 p-4 rounded-lg"><i class="fas fa-file-csv text-2xl mb-2"></i><span class="text-xs">CSV</span></div>
-                                    <div class="bg-white/20 p-4 rounded-lg"><i class="fas fa-file-alt text-2xl mb-2"></i><span class="text-xs">TXT</span></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flex flex-col md:flex-row items-center gap-12 reveal">
-                         <div class="md:w-1/2">
-                            <div class="text-cyan-600 font-bold text-sm mb-2 uppercase tracking-wider">Персонализация</div>
-                            <h3 class="text-3xl font-bold mb-4">Настройте бота под себя</h3>
-                            <p class="text-gray-600 mb-6">Каждый пользователь может настроить свой часовой пояс и выбрать удобные категории для заметок. Бот работает по вашим правилам, подстраиваясь под ваш ритм жизни.</p>
-                        </div>
-                        <div class="md:w-1/2 flex justify-center">
-                             <div class="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl border">
-                                <h4 class="font-bold mb-4 text-slate-800">Панель настроек</h4>
-                                <div class="space-y-4">
-                                    <div class="flex justify-between items-center"><span class="text-gray-600">Часовой пояс</span><span class="font-semibold bg-slate-100 px-3 py-1 rounded-md">Москва (UTC+3)</span></div>
-                                    <div class="flex justify-between items-center"><span class="text-gray-600">Напоминать утром в</span><span class="font-semibold bg-slate-100 px-3 py-1 rounded-md">09:00</span></div>
-                                    <div class="flex justify-between items-center"><span class="text-gray-600">Пред-напоминание</span><span class="font-semibold bg-slate-100 px-3 py-1 rounded-md">За 1 час</span></div>
-                                </div>
-                            </div>
+                            <div class="bg-white border rounded-2xl w-full max-w-sm p-6 shadow-xl">
+                               <h4 class="font-bold mb-4 text-slate-800">☀️ Утренняя сводка</h4>
+                               <div class="space-y-3">
+                                   <p class="text-slate-600">Вот твой план на сегодня, Александр:</p>
+                                   <div class="bg-slate-100 p-3 rounded-lg"><strong>10:00</strong> — Встреча с командой</div>
+                                   <div class="bg-slate-100 p-3 rounded-lg"><strong>14:30</strong> — Подготовить отчет</div>
+                                   <div class="bg-amber-100 p-3 rounded-lg">🎂 Не забудь поздравить Маму (28.05)!</div>
+                               </div>
+                           </div>
                         </div>
                     </div>
                 </div>
@@ -301,54 +267,37 @@
                 </div>
                 <div class="flex flex-wrap justify-center -mx-4">
                     <div class="w-full md:w-1/2 lg:w-2/5 px-4 mb-8 reveal">
-                        <div class="bg-white rounded-2xl shadow-lg p-8 h-full pricing-card">
+                        <div class="bg-white rounded-2xl shadow-lg p-8 h-full pricing-card border">
                             <h3 class="text-xl font-bold text-slate-900">Бесплатный</h3>
                             <p class="text-gray-500 mt-2 mb-6">Идеально, чтобы начать и оценить магию.</p>
                             <div class="text-4xl font-extrabold my-4">0 ₽</div>
                             <ul class="space-y-4 mb-8 text-slate-600">
-                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span>5 активных заметок</span></li>
-                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span>15 распознаваний в день</span></li>
-                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span>5 записей дней рождения</span></li>
+                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span><b>5</b> активных заметок</span></li>
+                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span><b>15</b> распознаваний в день</span></li>
+                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span><b>5</b> записей дней рождения</span></li>
                                 <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span>Базовые напоминания</span></li>
+                                <li class="flex items-center text-gray-400"><i class="fas fa-times text-gray-400 mr-3"></i><span>Утренние сводки</span></li>
+                                <li class="flex items-center text-gray-400"><i class="fas fa-times text-gray-400 mr-3"></i><span>Импорт/Экспорт данных</span></li>
                             </ul>
-                            <a href="https://t.me/tgnote_by_bot" target="_blank" class="block w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-4 rounded-lg text-center transition">Начать бесплатно</a>
+                            <a href="https://t.me/tgnote_by_bot" target="_blank" class="block w-full bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-4 rounded-lg text-center transition">Начать бесплатно</a>
                         </div>
                     </div>
                     <div class="w-full md:w-1/2 lg:w-2/5 px-4 mb-8 reveal" style="transition-delay: 200ms;">
                         <div class="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl shadow-2xl p-8 text-white h-full pricing-card relative">
-                            <div class="absolute -top-3 right-6 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Популярный</div>
-                            <h3 class="text-xl font-bold">VIP</h3>
+                            <div class="absolute -top-3 right-6 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">⭐ VIP</div>
+                            <h3 class="text-xl font-bold">Полный доступ</h3>
                             <p class="opacity-80 mt-2 mb-6">Снимите все лимиты и откройте полный потенциал AI-ассистента.</p>
                             <div class="text-4xl font-extrabold my-4">По заявке</div>
                             <ul class="space-y-4 mb-8">
-                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Никаких лимитов</li>
+                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Безлимит на заметки и распознавания</li>
+                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Безлимит на дни рождения + импорт</li>
                                 <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Умные и предварительные напоминания</li>
+                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Ежедневные утренние сводки</li>
                                 <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Отложенные напоминания (Snooze)</li>
-                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Импорт дней рождения</li>
-                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Экспорт всех данных</li>
+                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Приоритетная поддержка</li>
                             </ul>
                             <a href="https://t.me/tgnote_by_bot" target="_blank" class="block w-full bg-white text-blue-600 font-bold py-4 rounded-lg text-center hover:bg-slate-100 transition">Получить VIP</a>
                         </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section id="testimonials" class="py-20 bg-white">
-            <div class="container mx-auto px-6">
-                <h2 class="text-3xl font-bold text-center mb-16 text-slate-900">Нам доверяют свою продуктивность</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <div class="bg-slate-50 p-6 rounded-xl border reveal">
-                        <div class="flex items-center mb-4"><img src="https://i.pravatar.cc/150?u=a" alt="Аватар Александра" class="w-12 h-12 rounded-full mr-4"><div><h4 class="font-bold">Александр Т.</h4><p class="text-sm text-gray-500">Разработчик</p></div></div>
-                        <p class="text-gray-700">"Это просто спасение! Все мои идеи теперь в одном месте, а не в сотне чатов. Функция напоминаний — огонь!"</p>
-                    </div>
-                    <div class="bg-slate-50 p-6 rounded-xl border reveal" style="transition-delay: 200ms;">
-                        <div class="flex items-center mb-4"><img src="https://i.pravatar.cc/150?u=b" alt="Аватар Михаила" class="w-12 h-12 rounded-full mr-4"><div><h4 class="font-bold">Тимур Г.</h4><p class="text-sm text-gray-500">Предприниматель</p></div></div>
-                        <p class="text-gray-700">"Использую для фиксации итогов встреч. Надиктовал, и через минуту у меня готовая заметка. Экономит кучу времени."</p>
-                    </div>
-                    <div class="bg-slate-50 p-6 rounded-xl border reveal" style="transition-delay: 400ms;">
-                        <div class="flex items-center mb-4"><img src="https://i.pravatar.cc/150?u=n" alt="Аватар Дианы" class="w-12 h-12 rounded-full mr-4"><div><h4 class="font-bold">Диана Г.</h4><p class="text-sm text-gray-500">Домохозяйка</p></div></div>
-                        <p class="text-gray-700">"Наконец-то я не забываю поздравлять друзей. Мама довольна :)"</p>
                     </div>
                 </div>
             </div>
@@ -370,7 +319,7 @@
             <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
                 <div>
                     <h4 class="font-bold text-white mb-4">VoiceNote AI</h4>
-                    <p class="text-sm">Ваш умный ассистент для голосовых заметок.</p>
+                    <p class="text-sm">Ваш умный ассистент для заметок.</p>
                 </div>
                 <div>
                     <h4 class="font-bold text-white mb-4">Продукт</h4>
@@ -407,40 +356,29 @@
             const mobileMenuButton = document.getElementById('mobile-menu-button');
             const mobileMenu = document.getElementById('mobile-menu');
             mobileMenuButton.addEventListener('click', () => { mobileMenu.classList.toggle('hidden'); });
-            mobileMenu.addEventListener('click', (e) => { if (e.target.tagName === 'A') { mobileMenu.classList.add('hidden'); } });
+            document.querySelectorAll('#mobile-menu a').forEach(link => {
+                link.addEventListener('click', () => mobileMenu.classList.add('hidden'));
+            });
 
-            // Smooth scrolling
+            // Smooth scrolling for navigation
             document.querySelectorAll('a[href^="#"]').forEach(anchor => {
                 anchor.addEventListener('click', function (e) {
                     e.preventDefault();
                     const targetId = this.getAttribute('href');
                     if (targetId === '#') return;
-                    const targetElement = document.querySelector(targetId);
-                    if (targetElement) {
-                        const offset = 80;
-                        const bodyRect = document.body.getBoundingClientRect().top;
-                        const elementRect = targetElement.getBoundingClientRect().top;
-                        const elementPosition = elementRect - bodyRect;
-                        const offsetPosition = elementPosition - offset;
-                        window.scrollTo({ top: offsetPosition, behavior: 'smooth' });
-                    }
+                    document.querySelector(targetId).scrollIntoView({ behavior: 'smooth', block: 'start' });
                 });
             });
 
-            // "Вау-эффект" анимации при прокрутке
+            // Animation on scroll
             const observer = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
                         entry.target.classList.add('visible');
                     }
                 });
-            }, {
-                threshold: 0.1
-            });
-
-            document.querySelectorAll('.reveal').forEach(el => {
-                observer.observe(el);
-            });
+            }, { threshold: 0.1 });
+            document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
         });
     </script>
 </body>

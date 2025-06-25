@@ -45,8 +45,7 @@ NOTE_CATEGORIES = [
 NEWS_CHANNEL_URL = os.environ.get("NEWS_CHANNEL_URL")
 CHAT_URL = os.environ.get("CHAT_URL")
 CREATOR_CONTACT = os.environ.get("CREATOR_CONTACT", "@useranybody")
-# --- ДОБАВЛЕНО ---
-DONATION_URL = os.environ.get("DONATION_URL") # Ссылка на ЮMoney
+DONATION_URL = os.environ.get("DONATION_URL")
 
 
 # --- Feature Flags (based on API key presence) ---
