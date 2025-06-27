@@ -60,7 +60,8 @@ async def process_text_and_autosave(message: types.Message, text: str, status_me
     await status_message.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard)
 
 
-@router.message(F.forward_date, F.text)
+# Добавляем фильтр ~F.text.startswith('/')
+@router.message(F.forward_date, F.text, ~F.text.startswith('/'))
 async def handle_forwarded_text_message(message: types.Message, state: FSMContext):
     """
     Обрабатывает пересланные текстовые сообщения, анализирует их
@@ -75,6 +76,7 @@ async def handle_forwarded_text_message(message: types.Message, state: FSMContex
     await process_text_and_autosave(message, text_to_process, status_msg)
 
 
+# Добавляем фильтр ~F.text.startswith('/')
 @router.message(F.text, ~F.text.startswith('/'))
 async def handle_regular_text_message(message: types.Message, state: FSMContext):
     """
