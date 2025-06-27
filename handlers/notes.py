@@ -41,13 +41,13 @@ def humanize_rrule(rule_str: str) -> str:
         return "Повторяющаяся"
 
 
-# --- Вспомогательная функция для возврата в меню ---
 async def return_to_main_menu(message: types.Message):
     """Отправляет сообщение с главным меню."""
-    await message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard())
+    user_profile = await db.get_user_profile(message.from_user.id)
+    is_vip = user_profile.get('is_vip', False) if user_profile else False
+    await message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
 
 
-# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ ОТМЕНЫ СОЗДАНИЯ ЗАМЕТКИ ---
 @router.callback_query(NoteAction.filter(F.action == "undo_create"))
 async def undo_note_creation_handler(callback: CallbackQuery, callback_data: NoteAction):
     """Обрабатывает отмену только что созданной заметки."""
@@ -65,8 +65,6 @@ async def undo_note_creation_handler(callback: CallbackQuery, callback_data: Not
         await callback.message.edit_text(f"☑️ Заметка #{hbold(str(note_id))} уже была удалена или не найдена.")
         await callback.answer("Действие уже неактуально", show_alert=True)
 
-
-# --- NOTES LIST, PAGINATION, VIEW, ACTIONS ---
 
 async def _display_notes_list_page(
         target_message: types.Message,
@@ -128,10 +126,12 @@ async def cmd_my_notes(message: types.Message, state: FSMContext):
 @router.callback_query(F.data == "main_menu_from_notes")
 async def back_to_main_menu_from_notes_handler(callback_query: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    user_profile = await db.get_user_profile(callback_query.from_user.id)
+    is_vip = user_profile.get('is_vip', False) if user_profile else False
     try:
-        await callback_query.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard())
+        await callback_query.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
     except Exception:
-        await callback_query.message.answer("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard())
+        await callback_query.message.answer("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
     await callback_query.answer()
 
 

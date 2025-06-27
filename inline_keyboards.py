@@ -57,9 +57,13 @@ class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
 
 # --- Keyboard Generators ---
 
-def get_main_menu_keyboard() -> InlineKeyboardMarkup:
+def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
     """Главное меню с кнопкой 'Настройки'."""
     builder = InlineKeyboardBuilder()
+
+    if not is_vip:
+        builder.button(text="👑 Получить VIP 👑", callback_data=SettingsAction(action="get_free_vip").pack())
+
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
@@ -69,7 +73,11 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     if config.DONATION_URL:
         builder.button(text="❤️ Поддержка", callback_data="show_donate_info")
 
-    builder.adjust(2, 2, 2)
+    if not is_vip:
+        builder.adjust(1, 2, 2, 2)
+    else:
+        builder.adjust(2, 2, 2)
+
     return builder.as_markup()
 
 
@@ -77,7 +85,7 @@ def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура профиля без кнопки 'Настройки'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
-    builder.button(text="🏠 Главное меню", callback_data="main_menu_from_notes")
+    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -329,7 +337,7 @@ def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_
                                                                                                         page=current_page + 1,
                                                                                                         archived=is_archive_list).pack()))
     if pagination_row_items: builder.row(*pagination_row_items)
-    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu_from_notes"))
+    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="go_to_main_menu"))
     return builder.as_markup()
 
 
