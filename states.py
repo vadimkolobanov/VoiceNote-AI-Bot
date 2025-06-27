@@ -23,3 +23,7 @@ class BirthdayStates(StatesGroup):
 class AdminStates(StatesGroup):
     """Состояния для админ-функций, таких как рассылка."""
     awaiting_broadcast_message = State()
+
+class SupportStates(StatesGroup):
+    """Состояния для системы поддержки."""
+    awaiting_report_message = State()

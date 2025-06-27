@@ -61,22 +61,19 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
     """Главное меню с кнопкой 'Настройки'."""
     builder = InlineKeyboardBuilder()
 
-    if not is_vip:
-        builder.button(text="👑 Получить VIP 👑", callback_data=SettingsAction(action="get_free_vip").pack())
-
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
     builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
-    builder.button(text="ℹ️ Инфо & Помощь", callback_data=InfoAction(action="main").pack())
+    builder.button(text="ℹ️ Инфо", callback_data=InfoAction(action="main").pack())
 
     if config.DONATION_URL:
         builder.button(text="❤️ Поддержка", callback_data="show_donate_info")
 
-    if not is_vip:
-        builder.adjust(1, 2, 2, 2)
-    else:
-        builder.adjust(2, 2, 2)
+    builder.button(text="💬 Сообщить о проблеме", callback_data="report_problem")
+
+    # Кнопка поддержки снизу, остальные попарно
+    builder.adjust(2, 2, 2, 1)
 
     return builder.as_markup()
 
@@ -219,7 +216,7 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
                                                     target_list=target_list_str).pack())
         builder.button(text="🗄️ В архив", callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
                                                                    target_list=target_list_str).pack())
-    else: # is_archived
+    else:  # is_archived
         builder.button(text="↩️ Восстановить",
                        callback_data=NoteAction(action="unarchive", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
@@ -378,14 +375,14 @@ def get_birthdays_list_keyboard(birthdays: list[dict], page: int, total_pages: i
     pagination_row = []
     if page > 1:
         pagination_row.append(InlineKeyboardButton(text="⬅️",
-                                                         callback_data=PageNavigation(target="birthdays", page=page - 1,
-                                                                                      user_id=user_id).pack()))
+                                                   callback_data=PageNavigation(target="birthdays", page=page - 1,
+                                                                                user_id=user_id).pack()))
     if total_pages > 1:
         pagination_row.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="ignore"))
     if page < total_pages:
         pagination_row.append(InlineKeyboardButton(text="➡️",
-                                                         callback_data=PageNavigation(target="birthdays", page=page + 1,
-                                                                                      user_id=user_id).pack()))
+                                                   callback_data=PageNavigation(target="birthdays", page=page + 1,
+                                                                                user_id=user_id).pack()))
     builder.adjust(2)
     if pagination_row:
         builder.row(*pagination_row)

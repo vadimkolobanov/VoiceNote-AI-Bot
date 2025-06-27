@@ -23,7 +23,8 @@ from handlers import (
     admin as admin_router,
     info as info_router,
     birthdays as birthdays_router,
-    text_processor as text_router
+    text_processor as text_router,
+    support as support_router  # <-- Импортируем новый роутер
 )
 import database_setup as db
 from services.scheduler import scheduler, load_reminders_on_startup, setup_daily_jobs
@@ -117,7 +118,9 @@ async def main():
 
     dp.startup.register(on_startup)
 
+    # Подключаем роутеры в правильном порядке
     dp.include_router(admin_router.router)
+    dp.include_router(support_router.router)  # <-- Подключаем новый роутер
     dp.include_router(info_router.router)
     dp.include_router(birthdays_router.router)
     dp.include_router(settings_router.router)
