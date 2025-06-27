@@ -19,7 +19,7 @@ from inline_keyboards import (
     get_request_vip_keyboard,
     SettingsAction,
     TimezoneAction,
-    get_main_menu_keyboard # Добавляем импорт
+    get_main_menu_keyboard
 )
 from services.tz_utils import ALL_PYTZ_TIMEZONES
 from states import ProfileSettingsStates
@@ -76,8 +76,6 @@ async def get_settings_text_and_keyboard(telegram_id: int) -> tuple[str, types.I
     return text, keyboard
 
 
-# --- Главное меню настроек ---
-
 @router.callback_query(SettingsAction.filter(F.action == "go_to_main"))
 async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMContext):
     """Отображает главный экран настроек."""
@@ -103,15 +101,7 @@ async def show_main_settings_handler(callback_query: CallbackQuery, state: FSMCo
 
     await callback_query.answer()
 
-# --- НОВЫЙ ХЕНДЛЕР для возврата в главное меню из любого места ---
-@router.callback_query(F.data == "go_to_main_menu")
-async def go_to_main_menu_from_anywhere_handler(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard())
-    await callback.answer()
 
-
-# --- Раздел "Утренняя сводка" (VIP) ---
 @router.callback_query(SettingsAction.filter(F.action == "toggle_digest"))
 async def toggle_daily_digest_handler(callback: CallbackQuery, state: FSMContext):
     user_profile = await db.get_user_profile(callback.from_user.id)
@@ -128,7 +118,6 @@ async def toggle_daily_digest_handler(callback: CallbackQuery, state: FSMContext
     await show_main_settings_handler(callback, state)
 
 
-# --- Раздел "Часовой пояс" (доступен всем) ---
 @router.callback_query(SettingsAction.filter(F.action == "go_to_timezone"))
 async def show_timezone_selection_handler(callback_query: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -192,8 +181,6 @@ async def process_manual_timezone_handler(message: types.Message, state: FSMCont
     if text:
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-
-# --- Раздел "Время напоминаний" (VIP) ---
 
 @router.callback_query(SettingsAction.filter(F.action == "go_to_reminders"))
 async def show_reminder_time_handler(callback_query: CallbackQuery):
@@ -271,8 +258,6 @@ async def process_manual_reminder_time_handler(message: types.Message, state: FS
         return
 
 
-# --- Раздел "Предварительные напоминания" (VIP) ---
-
 @router.callback_query(SettingsAction.filter(F.action == "go_to_pre_reminders"))
 async def show_pre_reminder_handler(callback: CallbackQuery):
     user_profile = await db.get_user_profile(callback.from_user.id)
@@ -316,8 +301,6 @@ async def set_pre_reminder_handler(callback: CallbackQuery, callback_data: Setti
     await show_main_settings_handler(callback, state)
 
 
-# --- ХЕНДЛЕР: Обработка заявки на VIP ---
-
 @router.callback_query(SettingsAction.filter(F.action == "request_vip"))
 async def request_vip_handler(callback: CallbackQuery, state: FSMContext):
     """Отправляет заявку администратору и уведомляет пользователя."""
@@ -349,7 +332,6 @@ async def request_vip_handler(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Произошла ошибка при отправке заявки. Пожалуйста, попробуйте позже.", show_alert=True)
 
 
-# --- НОВЫЙ ХЕНДЛЕР ДЛЯ ПРИВЯЗКИ АЛИСЫ ---
 @router.callback_query(SettingsAction.filter(F.action == "link_alice"))
 async def link_alice_handler(callback: CallbackQuery, state: FSMContext):
     """Генерирует код для привязки аккаунта к Яндекс.Алисе по кнопке."""
@@ -372,3 +354,48 @@ async def link_alice_handler(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.answer(response_text, parse_mode="HTML")
     await callback.answer("Код активации отправлен вам в чат.", show_alert=True)
+
+
+@router.callback_query(SettingsAction.filter(F.action == "get_free_vip"))
+async def get_vip_handler(callback: types.CallbackQuery, state: FSMContext):
+    """Обрабатывает нажатие кнопки 'Получить VIP' и выдает статус."""
+    user_id = callback.from_user.id
+
+    user_profile = await db.get_user_profile(user_id)
+    if user_profile and user_profile.get('is_vip'):
+        await callback.answer("У вас уже есть VIP-статус!", show_alert=True)
+        return
+
+    success = await db.set_user_vip_status(user_id, True)
+    if not success:
+        await callback.answer("❌ Произошла ошибка. Попробуйте, пожалуйста, позже.", show_alert=True)
+        return
+
+    await db.log_user_action(user_id, 'get_free_vip_button')
+
+    user_notification_text = (
+        f"🎉 {hbold('Поздравляем!')}\n\n"
+        f"Вам присвоен статус 👑 {hbold('VIP')}!\n\n"
+        "Теперь для вас доступны все эксклюзивные возможности:\n"
+        "✅ Безлимитное количество заметок.\n"
+        "✅ Безлимитное количество распознаваний.\n"
+        "✅ Умные напоминания (если в заметке указана только дата).\n"
+        "✅ Предварительные напоминания (например, за час до срока).\n"
+        "✅ Возможность отложить напоминание.\n\n"
+        "Спасибо, что вы с нами! Изучите новые возможности в разделе `⚙️ Настройки`."
+    )
+
+    await callback.answer("🎉 Поздравляем! Вам присвоен VIP-статус!", show_alert=True)
+    await callback.bot.send_message(user_id, user_notification_text, parse_mode="HTML")
+
+    try:
+        await callback.message.edit_text(
+            "🏠 Вы в главном меню.",
+            reply_markup=get_main_menu_keyboard(is_vip=True)
+        )
+    except Exception as e:
+        logger.warning(f"Could not edit message after granting VIP: {e}")
+        await callback.message.answer(
+            "🏠 Вы в главном меню.",
+            reply_markup=get_main_menu_keyboard(is_vip=True)
+        )

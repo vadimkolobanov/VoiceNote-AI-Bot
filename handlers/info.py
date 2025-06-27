@@ -11,7 +11,6 @@ from config import CREATOR_CONTACT, DONATION_URL
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Тексты вынесены для удобства редактирования
 HOW_TO_USE_TEXT = f"""
 {hbold("❓ Как пользоваться ботом")}
 
@@ -92,12 +91,4 @@ async def show_how_to_use(callback: types.CallbackQuery):
 @router.callback_query(InfoAction.filter(F.action == "vip_features"))
 async def show_vip_features(callback: types.CallbackQuery):
     await callback.message.edit_text(VIP_FEATURES_TEXT, parse_mode="HTML", reply_markup=get_info_keyboard())
-    await callback.answer()
-
-
-# Хендлер для кнопки "🏠 Главное меню" из этого раздела
-@router.callback_query(F.data == "go_to_main_menu")
-async def back_to_main_menu_from_info(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard())
     await callback.answer()

@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-# --- Отображение главного меню и списка дней рождений ---
-
 async def show_birthdays_list(event: types.Message | types.CallbackQuery, state: FSMContext, page: int = 1):
     """Основная функция для отображения списка дней рождений."""
     await state.clear()
@@ -77,8 +75,6 @@ async def show_birthdays_list(event: types.Message | types.CallbackQuery, state:
 async def birthdays_list_handler(callback: CallbackQuery, callback_data: PageNavigation, state: FSMContext):
     await show_birthdays_list(callback, state, page=callback_data.page)
 
-
-# --- Логика добавления, удаления, импорта ---
 
 @router.callback_query(BirthdayAction.filter(F.action == "add_manual"))
 async def add_birthday_manual_start(callback: CallbackQuery, state: FSMContext):
@@ -172,7 +168,6 @@ async def delete_birthday_handler(callback: CallbackQuery, callback_data: Birthd
     await show_birthdays_list(callback, state, page=callback_data.page)
 
 
-# --- Импорт из файла ---
 @router.callback_query(BirthdayAction.filter(F.action == "import_file"))
 async def import_file_start(callback: CallbackQuery, state: FSMContext):
     """Начинает сценарий импорта из файла."""
@@ -255,11 +250,3 @@ async def process_import_file(message: types.Message, state: FSMContext):
 
     await state.clear()
     await show_birthdays_list(message, state)
-
-
-# --- Общие хендлеры ---
-@router.callback_query(F.data == "go_to_main_menu")
-async def go_to_main_menu_handler(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard())
-    await callback.answer()

@@ -29,6 +29,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await db.log_user_action(message.from_user.id, 'user_registered')
 
     user_timezone = user_profile.get('timezone', 'UTC')
+    is_vip = user_profile.get('is_vip', False)
     timezone_warning = ""
     if user_timezone == 'UTC':
         timezone_warning = (
@@ -57,7 +58,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         f"{community_block}"
     )
 
-    reply_markup = get_main_menu_keyboard()
+    reply_markup = get_main_menu_keyboard(is_vip=is_vip)
 
     if user_timezone == 'UTC':
         tz_button = types.InlineKeyboardButton(
@@ -118,7 +119,6 @@ async def cmd_help(message: types.Message):
     await message.answer(help_text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-# --- Блок для кнопки поддержки ---
 DONATE_TEXT = f"""
 {hbold("❤️ Поддержать проект")}
 
@@ -157,7 +157,7 @@ async def show_donate_info_handler(callback: types.CallbackQuery):
 
     builder = InlineKeyboardBuilder()
     builder.button(text="Перейти к поддержке (ЮMoney)", url=DONATION_URL)
-    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu_from_donate")
+    builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
 
     await callback.message.edit_text(
         text,
@@ -168,10 +168,20 @@ async def show_donate_info_handler(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "go_to_main_menu_from_donate")
-async def back_to_main_menu_from_donate_handler(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "🏠 Вы в главном меню.",
-        reply_markup=get_main_menu_keyboard()
-    )
+@router.callback_query(F.data == "go_to_main_menu")
+async def go_to_main_menu_handler(callback: types.CallbackQuery, state: FSMContext):
+    """Универсальный обработчик для возврата в главное меню."""
+    await state.clear()
+    user_profile = await db.get_user_profile(callback.from_user.id)
+    is_vip = user_profile.get('is_vip', False) if user_profile else False
+    try:
+        await callback.message.edit_text(
+            "🏠 Вы в главном меню.",
+            reply_markup=get_main_menu_keyboard(is_vip=is_vip)
+        )
+    except Exception:
+        await callback.message.answer(
+            "🏠 Вы в главном меню.",
+            reply_markup=get_main_menu_keyboard(is_vip=is_vip)
+        )
     await callback.answer()
