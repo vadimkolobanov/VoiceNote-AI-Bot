@@ -61,6 +61,13 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
     """Главное меню с кнопкой 'Настройки'."""
     builder = InlineKeyboardBuilder()
 
+    # --- НОВАЯ КНОПКА: Появляется только для не-VIP пользователей ---
+    if not is_vip:
+        builder.button(
+            text="🚀 Получить VIP бесплатно",
+            callback_data=SettingsAction(action="get_free_vip").pack()
+        )
+
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
     builder.button(text="🗄️ Архив", callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
     builder.button(text="👤 Профиль", callback_data="user_profile")
@@ -72,8 +79,15 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
 
     builder.button(text="💬 Сообщить о проблеме", callback_data="report_problem")
 
-    # Кнопка поддержки снизу, остальные попарно
-    builder.adjust(2, 2, 2, 1)
+    # --- НОВАЯ ЛОГИКА РАЗМЕТКИ ---
+    # Если пользователь не VIP, первая кнопка (VIP) будет на всю ширину,
+    # остальные идут по стандартной схеме.
+    if not is_vip:
+        builder.adjust(1, 2, 2, 2, 1)
+    else:
+        # Стандартная разметка для VIP-пользователей
+        builder.adjust(2, 2, 2, 1)
+
 
     return builder.as_markup()
 
