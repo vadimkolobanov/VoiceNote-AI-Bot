@@ -24,18 +24,15 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
         await callback_query.answer("Профиль не найден. Пожалуйста, нажмите /start.", show_alert=True)
         return
 
-    # Получаем все нужные данные
     active_notes_count = await db.count_active_notes_for_user(telegram_id)
-    birthdays_count = await db.count_birthdays_for_user(telegram_id) # <-- Новая статистика
+    birthdays_count = await db.count_birthdays_for_user(telegram_id)
     user_timezone = user_profile_data.get('timezone', 'UTC')
     reg_date_utc = user_profile_data['created_at']
     reg_date_local_str = format_datetime_for_user(reg_date_utc, user_timezone)
     is_vip = user_profile_data.get('is_vip', False)
 
-    # --- Формируем красивый текст профиля ---
     profile_header = f"👤 {hbold('Ваш профиль')}\n\n"
 
-    # Блок "О вас"
     user_info_parts = [
         f"▪️ {hbold('ID')}: {hcode(user_profile_data['telegram_id'])}",
     ]
@@ -45,31 +42,31 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
         user_info_parts.append(f"▪️ {hbold('Имя')}: {hitalic(user_profile_data['first_name'])}")
     user_info_block = "\n".join(user_info_parts)
 
-    # Блок "Статистика и лимиты"
     notes_limit_str = "Безлимитно" if is_vip else f"{MAX_NOTES_MVP}"
     stt_limit_str = "Безлимитно" if is_vip else f"{MAX_DAILY_STT_RECOGNITIONS_MVP}"
     birthdays_limit_str = "Безлимитно" if is_vip else f"{MAX_NOTES_MVP}"
 
-
     stats_info_parts = [
         f"Активные заметки: {hbold(active_notes_count)} / {notes_limit_str}",
-        f"Дни рождения: {hbold(birthdays_count)} / {birthdays_limit_str}", # <-- Новая статистика
+        f"Дни рождения: {hbold(birthdays_count)} / {birthdays_limit_str}",
         f"Распознавания сегодня: {hbold(user_profile_data.get('daily_stt_recognitions_count', 0))} / {stt_limit_str}"
     ]
     stats_block = f"📊 {hbold('Статистика')}:\n" + "\n".join(stats_info_parts)
 
-    # Блок "Настройки и подписка"
+    timezone_display_str = hcode(user_timezone)
+    if user_timezone == 'UTC':
+        timezone_display_str += " ⚠️"
+
     subscription_status = f"👑 VIP" if is_vip else "Free"
     settings_info_parts = [
         f"Статус: {hitalic(subscription_status)}",
-        f"Часовой пояс: {hcode(user_timezone)}",
+        f"Часовой пояс: {timezone_display_str}",
         f"Зарегистрирован: {hitalic(reg_date_local_str)}"
     ]
     settings_block = f"⚙️ {hbold('Подписка и данные')}:\n" + "\n".join(settings_info_parts)
 
     response_text = "\n\n".join([profile_header, user_info_block, stats_block, settings_block])
 
-    # Используем правильную клавиатуру
     keyboard = get_profile_actions_keyboard()
 
     try:

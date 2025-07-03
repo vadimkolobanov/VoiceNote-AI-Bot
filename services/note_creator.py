@@ -1,6 +1,6 @@
 # services/note_creator.py
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import pytz
 
 from aiogram import Bot
@@ -21,23 +21,18 @@ async def process_and_save_note(
         text_to_process: str,
         audio_file_id: str | None = None,
         message_date: datetime | None = None
-) -> tuple[bool, str, dict | None]:
-    """
-    Универсальная функция для обработки текста, анализа и немедленного сохранения заметки.
-    Возвращает (успех, текст_ответа_пользователю, созданная_заметка).
-    """
+) -> tuple[bool, str, dict | None, bool]:
     user_profile = await db.get_user_profile(telegram_id)
     if not user_profile:
-        return False, "Не удалось найти ваш профиль. Пожалуйста, нажмите /start.", None
+        return False, "Не удалось найти ваш профиль. Пожалуйста, нажмите /start.", None, False
 
     is_vip = user_profile.get('is_vip', False)
     note_taken_at = message_date or datetime.now(pytz.utc)
 
-    # --- ПРОВЕРКА ЛИМИТОВ ПЕРЕД СОЗДАНИЕМ ---
     if not is_vip:
         active_notes_count = await db.count_active_notes_for_user(telegram_id)
         if active_notes_count >= MAX_NOTES_MVP:
-            return False, f"⚠️ Достигнут лимит в {MAX_NOTES_MVP} заметок. Чтобы добавить новую, удалите старую.", None
+            return False, f"⚠️ Достигнут лимит в {MAX_NOTES_MVP} заметок. Чтобы добавить новую, удалите старую.", None, False
 
     if not DEEPSEEK_API_KEY_EXISTS:
         note_id = await db.create_note(
@@ -50,11 +45,10 @@ async def process_and_save_note(
         if note_id:
             note = await db.get_note_by_id(note_id, telegram_id)
             user_message = f"✅ Заметка #{hbold(str(note_id))} сохранена (без AI-анализа)."
-            return True, user_message, note
+            return True, user_message, note, False
         else:
-            return False, "❌ Ошибка при сохранении заметки.", None
+            return False, "❌ Ошибка при сохранении заметки.", None, False
 
-    # --- ОБРАБОТКА С ПОМОЩЬЮ LLM ---
     user_timezone_str = user_profile.get('timezone', 'UTC')
     user_tz = pytz.timezone(user_timezone_str)
     current_user_dt = datetime.now(user_tz)
@@ -72,11 +66,9 @@ async def process_and_save_note(
         llm_analysis_json = llm_result_dict
         corrected_text_to_save = llm_result_dict.get("corrected_text", text_to_process)
 
-    # --- ПАРСИНГ ДАТЫ И ПОВТОРЕНИЙ ---
     due_date_obj = None
     recurrence_rule = llm_analysis_json.get("recurrence_rule") if llm_analysis_json else None
 
-    # Проверка VIP для повторяющихся задач
     if recurrence_rule and not is_vip:
         recurrence_rule = None
         warning_message += f"\n\n⭐ Повторяющиеся задачи — это VIP-функция. Заметка сохранена как разовая."
@@ -86,6 +78,24 @@ async def process_and_save_note(
             due_date_str_utc = llm_analysis_json["dates_times"][0].get("absolute_datetime_start")
             if due_date_str_utc:
                 dt_obj_utc = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
+
+                original_mention = llm_analysis_json["dates_times"][0].get("original_mention", "").lower()
+                is_relative_short_time = any(word in original_mention for word in ['минут', 'час', 'часа', 'часов'])
+                if is_relative_short_time:
+                    time_difference = dt_obj_utc - datetime.now(pytz.utc)
+                    if time_difference > timedelta(days=2):
+                        logger.warning(
+                            f"LLM returned a far-future date ({dt_obj_utc}) for a short relative time ('{original_mention}'). Correcting."
+                        )
+                        corrected_time = dt_obj_utc.astimezone(user_tz).time()
+                        corrected_date_local = datetime.now(user_tz)
+
+                        corrected_dt_local = datetime.combine(corrected_date_local.date(), corrected_time)
+                        if corrected_dt_local < corrected_date_local:
+                            corrected_dt_local += timedelta(days=1)
+
+                        dt_obj_utc = corrected_dt_local.astimezone(pytz.utc)
+                        logger.info(f"Date corrected to: {dt_obj_utc}")
 
                 is_time_ambiguous = (dt_obj_utc.time() == time(0, 0))
                 if is_time_ambiguous:
@@ -97,7 +107,6 @@ async def process_and_save_note(
         except Exception as e:
             logger.error(f"Ошибка парсинга даты из LLM: {e}")
 
-    # --- СОХРАНЕНИЕ В БД ---
     note_id = await db.create_note(
         telegram_id=telegram_id,
         corrected_text=corrected_text_to_save,
@@ -110,19 +119,23 @@ async def process_and_save_note(
     )
 
     if not note_id:
-        return False, "❌ Ошибка при сохранении заметки в базу.", None
+        return False, "❌ Ошибка при сохранении заметки в базу.", None, False
 
-    # --- ДОБАВЛЕНИЕ НАПОМИНАНИЯ ---
     new_note = await db.get_note_by_id(note_id, telegram_id)
     if due_date_obj:
         add_reminder_to_scheduler(bot, {**new_note, **user_profile})
 
-    # --- ФОРМИРОВАНИЕ ОТВЕТА ---
     user_message = f"✅ Заметка #{hbold(str(note_id))} успешно сохранена!{warning_message}"
     date_info = ""
+    needs_tz_prompt = False
+
     if new_note.get('due_date'):
-        date_info = f"\n🗓️ Срок: {format_datetime_for_user(new_note['due_date'], user_timezone_str)}"
+        formatted_date = format_datetime_for_user(new_note['due_date'], user_timezone_str)
+        date_info = f"\n🗓️ Срок: {formatted_date}"
+        if user_timezone_str == 'UTC':
+            needs_tz_prompt = True
+            date_info += f"\n\n{hbold('⚠️ Важно!')} Ваше напоминание установлено по UTC. Чтобы оно сработало вовремя, пожалуйста, укажите ваш часовой пояс."
 
     full_response = f"{user_message}\n\n{hcode(new_note['corrected_text'])}{date_info}"
 
-    return True, full_response, new_note
+    return True, full_response, new_note, needs_tz_prompt

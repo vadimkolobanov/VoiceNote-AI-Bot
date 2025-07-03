@@ -1,4 +1,3 @@
-# handlers/notes.py
 import logging
 from datetime import datetime, timedelta, time
 from dateutil.rrule import rrulestr
@@ -88,7 +87,6 @@ async def _display_notes_list_page(
             telegram_id=telegram_id, page=page_num, per_page=NOTES_PER_PAGE, archived=is_archive_list
         )
 
-    list_type_name = "архивных заметок" if is_archive_list else "активных задач"
     if not notes_on_page and page_num == 1:
         empty_text = "В архиве пусто." if is_archive_list else "У вас пока нет активных задач. Создайте новую!"
         text_content = empty_text
@@ -190,9 +188,6 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
             text, parse_mode="HTML",
             reply_markup=get_note_view_actions_keyboard(note, current_page)
         )
-
-    await callback_query.answer()
-
 
 @router.callback_query(NoteAction.filter(F.action == "listen_audio"))
 async def listen_audio_handler(callback_query: CallbackQuery, callback_data: NoteAction):

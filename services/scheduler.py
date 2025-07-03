@@ -1,4 +1,3 @@
-# services/scheduler.py
 import logging
 import asyncio
 import re
@@ -17,7 +16,6 @@ from services.tz_utils import format_datetime_for_user
 
 logger = logging.getLogger(__name__)
 
-# --- Scheduler Setup ---
 jobstores = {'default': MemoryJobStore()}
 executors = {'default': AsyncIOExecutor()}
 scheduler = AsyncIOScheduler(jobstores=jobstores, executors=executors, timezone=pytz.utc)
@@ -202,7 +200,6 @@ async def load_reminders_on_startup(bot: Bot):
     logger.info(f"Загружено и обработано {count} заметок с напоминаниями.")
 
 
-# --- БЛОК ДАЙДЖЕСТА ---
 def clean_llm_response(text: str) -> str:
     """Очищает ответ LLM от внешних оберток типа ```html ... ``` или кавычек."""
     cleaned_text = re.sub(r'^```(html|)\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
@@ -221,24 +218,26 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     notes_today = await db.get_notes_for_today_digest(telegram_id, user_timezone)
     birthdays_soon = await db.get_birthdays_for_upcoming_digest(telegram_id)
 
-    if not notes_today and not birthdays_soon:
-        logger.info(f"Для пользователя {telegram_id} нет данных для сводки, пропуск.")
-        return
-
     notes_text_parts = []
-    for note in notes_today:
-        time_str = note['due_date'].astimezone(pytz.timezone(user_timezone)).strftime('%H:%M')
-        notes_text_parts.append(f"- {time_str}: {note['corrected_text']}")
-    notes_for_prompt = "\n".join(notes_text_parts) if notes_text_parts else "Нет задач на сегодня."
+    if notes_today:
+        for note in notes_today:
+            time_str = note['due_date'].astimezone(pytz.timezone(user_timezone)).strftime('%H:%M')
+            notes_text_parts.append(f"- {time_str}: {note['corrected_text']}")
+        notes_for_prompt = "\n".join(notes_text_parts)
+    else:
+        notes_for_prompt = "На сегодня задач нет."
 
     bday_text_parts = []
-    for bday in birthdays_soon:
-        date_str = f"{bday['birth_day']:02}.{bday['birth_month']:02}"
-        bday_text_parts.append(f"- {date_str}: {bday['person_name']}")
-    bdays_for_prompt = "\n".join(bday_text_parts) if bday_text_parts else "Нет дней рождений в ближайшую неделю."
+    if birthdays_soon:
+        for bday in birthdays_soon:
+            date_str = f"{bday['birth_day']:02}.{bday['birth_month']:02}"
+            bday_text_parts.append(f"- {date_str}: {bday['person_name']}")
+        bdays_for_prompt = "\n".join(bday_text_parts)
+    else:
+        bdays_for_prompt = "Нет дней рождений в ближайшую неделю."
 
     prompt = f"""
-Ты — дружелюбный AI-ассистент. Твоя задача — составить короткое, бодрое и информативное утреннее сообщение для пользователя по имени {user_name}.
+Ты — дружелюбный и мотивирующий AI-ассистент. Твоя задача — составить короткое, бодрое и информативное утреннее сообщение для пользователя по имени {user_name}.
 Сообщение должно быть в формате HTML для Telegram.
 
 Вот данные для сводки:
@@ -249,18 +248,24 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 **Дни рождения на неделе:**
 {bdays_for_prompt}
 
-Сформируй из этого красивое сообщение. Начни с приветствия. Будь кратким. Если задач нет, пожелай хорошего дня. Если есть, мотивируй пользователя.
-Пример хорошего ответа:
-"☀️ Доброе утро, {user_name}!
+---
+ИНСТРУКЦИИ ПО ФОРМИРОВАНИЮ ОТВЕТА:
 
-Вот твой план на сегодня:
-- 10:00: Встреча с командой
-- 14:30: Подготовить отчет
+1.  **Если есть задачи на сегодня:**
+    - Поприветствуй пользователя.
+    - Перечисли задачи в виде списка.
+    - Если есть дни рождения, упомяни их с иконкой 🎂.
+    - Закончи мотивирующей фразой, например: "Продуктивного дня! 💪".
 
-Не забудь, на этой неделе день рождения у Мамы (25.10)! 🎂
+2.  **Если задач на сегодня НЕТ:**
+    - Поприветствуй пользователя и пожелай хорошего дня.
+    - Мягко подтолкни его к планированию. Используй фразы вроде "Отличный день, чтобы всё спланировать! Просто отправь мне голосовое или текстовое сообщение с твоими планами."
+    - Если при этом есть дни рождения, обязательно упомяни их.
+    - Если дней рождений тоже нет, предложи пользователю добавить их, например: "Кстати, чтобы не забыть поздравить близких, ты можешь добавить их дни рождения в разделе 'Профиль' -> '🎂 Дни рождения'."
 
-Продуктивного дня! 💪"
+3.  Будь кратким, позитивным и используй HTML-теги `<b>` для выделения и `<i>` для акцентов. Не используй markdown.
 """
+    digest_text = ""
     try:
         from llm_processor import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
         import aiohttp
@@ -277,7 +282,7 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
             "max_tokens": 512,
         }
         async with aiohttp.ClientSession() as session:
-            async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=90)) as resp:
+            async with session.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status == 200:
                     response_data = await resp.json()
                     raw_digest_text = response_data['choices'][0]['message']['content']
@@ -285,17 +290,28 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
                 else:
                     error_body = await resp.text()
                     logger.error(f"LLM API Error for digest: {resp.status}, Body: {error_body}")
-                    # В случае ошибки LLM, отправляем простой шаблонный дайджест
                     digest_text = f"☀️ Доброе утро, {user_name}!\n\nНе удалось сгенерировать AI-сводку. Вот ваши данные:\n\n<b>Задачи на сегодня:</b>\n{notes_for_prompt}\n\n<b>Дни рождения на неделе:</b>\n{bdays_for_prompt}"
 
+    except Exception as e:
+        logger.error(f"Ошибка при обращении к LLM для генерации сводки для {telegram_id}: {e}")
+        digest_text = f"☀️ Доброе утро, {user_name}!\n\nНе удалось сгенерировать AI-сводку. Вот ваши данные:\n\n<b>Задачи на сегодня:</b>\n{notes_for_prompt}\n\n<b>Дни рождения на неделе:</b>\n{bdays_for_prompt}"
 
+    try:
         await bot.send_message(telegram_id, digest_text, parse_mode="HTML")
         logger.info(f"Утренняя сводка успешно отправлена пользователю {telegram_id}.")
-
     except Exception as e:
-        logger.error(f"Не удалось сгенерировать или отправить сводку для {telegram_id}: {e}")
+        if "can't parse entities" in str(e):
+            logger.error(f"Не удалось отправить сводку для {telegram_id} из-за ошибки парсинга HTML. Отправляю без форматирования. Ошибка: {e}")
+            text_without_html = re.sub('<[^<]+?>', '', digest_text)
+            try:
+                await bot.send_message(telegram_id, text_without_html, parse_mode=None)
+                logger.info(f"Утренняя сводка успешно отправлена (без форматирования) пользователю {telegram_id}.")
+            except Exception as final_e:
+                 logger.error(f"Не удалось отправить сводку для {telegram_id} даже без форматирования: {final_e}")
+        else:
+            logger.error(f"Не удалось отправить сводку для {telegram_id}: {e}")
 
-# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ---
+
 async def check_and_send_digests(bot: Bot):
     """
     Запускается каждый час. Получает из БД список пользователей,
@@ -303,8 +319,6 @@ async def check_and_send_digests(bot: Bot):
     """
     logger.info("Запущена ежечасная проверка для отправки утренних сводок.")
 
-    # Получаем пользователей, для которых пора отправлять сводку.
-    # Вся логика определения времени находится внутри этой функции в БД.
     users_to_notify = await db.get_vip_users_for_digest()
 
     if not users_to_notify:
@@ -316,7 +330,6 @@ async def check_and_send_digests(bot: Bot):
     await asyncio.gather(*tasks)
 
 
-# --- НАПОМИНАНИЯ О ДНЯХ РОЖДЕНИЯ ---
 def get_age_string(year: int, today: date) -> str:
     age = today.year - year
     if age <= 0: return ""
@@ -348,8 +361,6 @@ async def send_birthday_reminders(bot: Bot):
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                # Эта логика может быть неточной, если дни рождения не уникальны.
-                # Лучше логировать по user_id из исходного списка.
                 bday_info = next((b for b in all_birthdays if b['user_telegram_id'] == tasks[i].kwargs['chat_id']), None)
                 if bday_info:
                      logger.error(
@@ -359,7 +370,7 @@ async def setup_daily_jobs(bot: Bot):
     scheduler.add_job(
         send_birthday_reminders,
         trigger='cron',
-        hour=0, # В полночь по UTC
+        hour=0,
         minute=5,
         kwargs={'bot': bot},
         id='daily_birthday_check',
@@ -370,8 +381,8 @@ async def setup_daily_jobs(bot: Bot):
     scheduler.add_job(
         check_and_send_digests,
         trigger='cron',
-        hour='*', # Каждый час
-        minute=1, # На первой минуте часа, чтобы не конфликтовать с другими задачами
+        hour='*',
+        minute=1,
         kwargs={'bot': bot},
         id='hourly_digest_check',
         replace_existing=True
