@@ -11,23 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
-    """
-    Безопасно парсит JSON-ответ от LLM.
-    Если LLM вернула некорректный JSON, пытается его "починить".
-    """
-    # Улучшение: Иногда LLM оборачивает JSON в ```json ... ```. Удаляем эту обертку.
     if response_text.strip().startswith("```json"):
         response_text = response_text.strip()[7:-3]
 
     try:
-        # Пытаемся загрузить JSON
         extracted_info = json.loads(response_text)
         if not isinstance(extracted_info, dict):
             logger.warning(f"LLM returned JSON, but it's not a dictionary: {extracted_info}")
             return {"error": "LLM returned non-dict JSON", "corrected_text": original_text}
 
-        # Улучшение: Если corrected_text пустой или отсутствует, используем исходный текст.
-        # Это делает систему более устойчивой к ошибкам LLM.
         if not extracted_info.get("corrected_text"):
             logger.warning(
                 f"LLM did not return 'corrected_text' or it was empty. Using original text. Full LLM JSON: {extracted_info}"
@@ -37,7 +29,6 @@ def _parse_llm_json_response(response_text: str, original_text: str) -> dict:
 
     except json.JSONDecodeError as e:
         logger.error(f"LLM JSONDecodeError: {e}. LLM Response: {response_text[:500]}...")
-        # Возвращаем ошибку и исходный текст, чтобы система не падала.
         return {"error": "Failed to decode JSON from LLM", "corrected_text": original_text}
     except Exception as e:
         logger.error(f"Unexpected error parsing LLM response: {e}. LLM Response: {response_text[:500]}...")
@@ -48,52 +39,49 @@ async def enhance_text_with_llm(
         raw_text: str,
         current_user_datetime_iso: str
 ) -> dict:
-    """
-    Обращается к API DeepSeek для анализа текста и извлечения структурированных данных.
-    """
-    # Проверка конфигурации API
     if not all([DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME]):
         logger.error("DeepSeek API is not fully configured. Skipping LLM processing.")
         return {"error": "DeepSeek API not configured", "corrected_text": raw_text}
 
-    # --- УЛУЧШЕННЫЙ И БОЛЕЕ СТРОГИЙ СИСТЕМНЫЙ ПРОМПТ ---
-    # Решает проблему с округлением времени и делает инструкции более четкими.
-    system_prompt = f"""You are an AI assistant specialized in processing transcribed voice notes in Russian.
-Your task is to return a single, valid JSON object based on the user's text. You must be extremely precise with time calculations.
+    system_prompt = f"""You are an expert AI assistant that processes raw, transcribed Russian text into a concise, actionable task. Your goal is to clean up messy speech and extract the core task into a short summary.
 
-JSON Structure:
+The user's local time is: `{current_user_datetime_iso}`.
+
+**Your task is to return a JSON object with the following structure:**
 {{
-  "corrected_text": "...",
-  "task_description": "...",
-  "event_description": "...",
+  "summary_text": "A short, clear task title. Max 1-7 words. This is the main output.",
+  "corrected_text": "The full, cleaned-up version of the original text, preserving all important details.",
   "dates_times": [
     {{
-      "original_mention": "How the date/time was mentioned in the text.",
-      "absolute_datetime_start": "The calculated absolute time in UTC, in ISO 8601 format (YYYY-MM-DDTHH:MM:SSZ).",
-      "absolute_datetime_end": "..."
+      "original_mention": "How the date/time was mentioned.",
+      "absolute_datetime_start": "YYYY-MM-DDTHH:MM:SSZ"
     }}
   ],
-  "people_mentioned": [...],
-  "locations_mentioned": [...],
-  "recurrence_rule": "The iCalendar RRULE string if the note is recurring, otherwise null."
+  "recurrence_rule": "iCalendar RRULE string or null."
 }}
 
-**Date/Time Calculation Rules (VERY IMPORTANT):**
-- **The exact current time is:** `{current_user_datetime_iso}`. This is the user's local time.
-- **You MUST use this provided time as the precise starting point for all relative time calculations (like "in two hours" or "in 15 minutes").**
-- **DO NOT round the current time.** If the time is 18:48, use 18:48, not 18:50. Your calculations must be exact to the minute.
-- **Output Format:** All date/time values in the final JSON MUST be in UTC timezone, ending with 'Z'.
-- **Ambiguous Time:** If a user says "at 8 o'clock" without specifying a date, assume they mean "today at 8 o'clock".
-- **Date without time:** If a date is mentioned without a time (e.g., "on Friday"), use T00:00:00Z for the time part as a placeholder.
+**Rules for 'summary_text':**
+- It MUST be a short, actionable title (e.g., "Позвонить маме", "Купить продукты", "Заехать в автосервис (стук)").
+- Remove all filler words ("так", "ну", "значит", "короче").
+- If the user provides context, add it concisely in parentheses. Example: "проверить почту насчет билетов" -> "Проверить почту (билеты)".
+- It should be in the infinitive form if it's a task.
 
-**Recurrence Rule (RRULE) Generation:**
-- If the user says "каждый день", use "FREQ=DAILY".
-- If "каждую пятницу", use "FREQ=WEEKLY;BYDAY=FR".
-- If "каждый месяц 15 числа", use "FREQ=MONTHLY;BYMONTHDAY=15".
-- If "каждые 3 недели", use "FREQ=WEEKLY;INTERVAL=3".
-- If the event is not recurring, the value for "recurrence_rule" MUST be null.
+**Rules for 'corrected_text':**
+- This should be the full, grammatically correct version of the user's text.
+- Clean up speech disfluencies but preserve all specific details that might be lost in the summary.
+
+**Example:**
+- **User input:** "Так, короче, это я себе, надо не забыть в пятницу вечером заехать в сервис, а то у меня там что-то стучит под капотом"
+- **Your JSON output:**
+  {{
+    "summary_text": "Заехать в автосервис (стук под капотом)",
+    "corrected_text": "В пятницу вечером нужно заехать в автосервис, так как что-то стучит под капотом.",
+    "dates_times": [],
+    "recurrence_rule": null
+  }}
+
+All datetimes MUST be in UTC ISO 8601 format ending with 'Z'.
 """
-    # -----------------------------------------------------------------
 
     user_prompt = f"Analyze the following voice note text (in Russian):\n\n\"{raw_text}\""
 
@@ -108,7 +96,7 @@ JSON Structure:
             {"role": "user", "content": user_prompt}
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.1,  # Низкая температура для большей предсказуемости
+        "temperature": 0.1,
         "max_tokens": 2048,
     }
 
@@ -129,9 +117,7 @@ JSON Structure:
                     if 'choices' in response_data and response_data['choices']:
                         message_content_str = response_data['choices'][0].get('message', {}).get('content')
                         if message_content_str:
-                            # Парсим внутренний JSON с помощью нашей безопасной функции
-                            parsed_result = _parse_llm_json_response(message_content_str, raw_text)
-                            return parsed_result
+                            return _parse_llm_json_response(message_content_str, raw_text)
                         else:
                             error_msg = "DeepSeek response 'message.content' is missing or empty."
                             logger.error(error_msg)
@@ -141,7 +127,6 @@ JSON Structure:
                         logger.error(f"{error_msg} Full response: {response_text[:500]}")
                         return {"error": error_msg, "corrected_text": raw_text}
                 else:
-                    # Улучшенная обработка ошибок API
                     error_message = f"DeepSeek API error status: {resp.status}"
                     logger.error(f"{error_message}. Response: {response_text[:500]}")
                     try:
@@ -151,7 +136,7 @@ JSON Structure:
                             if isinstance(err_obj, dict) and "message" in err_obj:
                                 error_message += f": {err_obj['message']}"
                     except (json.JSONDecodeError, TypeError):
-                        pass  # Не удалось извлечь детали, используем общую ошибку
+                        pass
                     return {"error": error_message, "corrected_text": raw_text}
 
     except aiohttp.ClientError as e:

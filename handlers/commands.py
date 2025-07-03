@@ -33,9 +33,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
     timezone_warning = ""
     if user_timezone == 'UTC':
         timezone_warning = (
-            f"\n\n<b>⚠️ Настройте часовой пояс!</b>\n"
-            f"Чтобы напоминания приходили вовремя, пожалуйста, "
-            f"укажите ваш часовой пояс в настройках."
+            f"\n\n{hbold('⚠️ ВАЖНО: Настройте ваш часовой пояс!')}\n"
+            f"Без этого напоминания могут приходить в неправильное время. "
+            f"Это займет 10 секунд."
         )
 
     community_links = []

@@ -8,7 +8,6 @@ from config import NOTE_CATEGORIES, MAX_NOTES_MVP
 from services.tz_utils import COMMON_TIMEZONES
 
 
-# --- CallbackData Factories ---
 class NoteAction(CallbackData, prefix="note_act"):
     action: str
     note_id: int
@@ -55,13 +54,9 @@ class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
     page: int
 
 
-# --- Keyboard Generators ---
-
 def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
-    """Главное меню с кнопкой 'Настройки'."""
     builder = InlineKeyboardBuilder()
 
-    # --- НОВАЯ КНОПКА: Появляется только для не-VIP пользователей ---
     if not is_vip:
         builder.button(
             text="🚀 Получить VIP бесплатно",
@@ -79,13 +74,9 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
 
     builder.button(text="💬 Сообщить о проблеме", callback_data="report_problem")
 
-    # --- НОВАЯ ЛОГИКА РАЗМЕТКИ ---
-    # Если пользователь не VIP, первая кнопка (VIP) будет на всю ширину,
-    # остальные идут по стандартной схеме.
     if not is_vip:
         builder.adjust(1, 2, 2, 2, 1)
     else:
-        # Стандартная разметка для VIP-пользователей
         builder.adjust(2, 2, 2, 1)
 
 
@@ -93,7 +84,6 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
 
 
 def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура профиля без кнопки 'Настройки'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
     builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
@@ -102,7 +92,6 @@ def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_info_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура раздела 'Инфо'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data=InfoAction(action="how_to_use").pack())
     builder.button(text="⭐ VIP-возможности", callback_data=InfoAction(action="vip_features").pack())
@@ -127,7 +116,6 @@ def get_settings_menu_keyboard(
         daily_digest_enabled: bool = True,
         is_alice_linked: bool = False
 ) -> InlineKeyboardMarkup:
-    """Клавиатура настроек с кнопкой 'Назад в главное меню'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🕒 Часовой пояс", callback_data=SettingsAction(action="go_to_timezone").pack())
     digest_btn_text = "끄 Выключить утреннюю сводку" if daily_digest_enabled else " включить утреннюю сводку"
@@ -310,13 +298,16 @@ def get_admin_users_list_keyboard(users: list[dict], current_page: int, total_pa
 
 
 def get_undo_creation_keyboard(note_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой 'Отменить' для авто-сохраненной заметки."""
     builder = InlineKeyboardBuilder()
+    builder.button(
+        text="👀 Посмотреть детали",
+        callback_data=NoteAction(action="view", note_id=note_id).pack()
+    )
     builder.button(
         text="❌ Отменить",
         callback_data=NoteAction(action="undo_create", note_id=note_id).pack()
     )
-    builder.adjust(1)
+    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -329,8 +320,9 @@ def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_
     else:
         for note in notes:
             status_icon = "✅" if note.get('is_completed') else "📝"
-            preview_text = f"{status_icon} #{note['note_id']} - {note['corrected_text'][:35]}"
-            if len(note['corrected_text']) > 35: preview_text += "..."
+            text_to_show = note.get('summary_text') or note['corrected_text']
+            preview_text = f"{status_icon} #{note['note_id']} - {text_to_show[:35]}"
+            if len(text_to_show) > 35: preview_text += "..."
             builder.button(text=preview_text,
                            callback_data=NoteAction(action="view", note_id=note['note_id'], page=current_page,
                                                     target_list=target_list_str).pack())
@@ -364,7 +356,6 @@ def get_confirm_delete_keyboard(note_id: int, page: int, target_list: str) -> In
 
 
 def get_birthdays_menu_keyboard(is_vip: bool, current_count: int) -> InlineKeyboardMarkup:
-    """Главное меню раздела 'Дни рождения'."""
     builder = InlineKeyboardBuilder()
     if is_vip or current_count < config.MAX_NOTES_MVP:
         builder.button(text="➕ Добавить вручную", callback_data=BirthdayAction(action="add_manual").pack())
