@@ -1,3 +1,4 @@
+# handlers/notes.py
 import logging
 from datetime import datetime, timedelta, time
 from dateutil.rrule import rrulestr
@@ -127,7 +128,8 @@ async def back_to_main_menu_from_notes_handler(callback_query: types.CallbackQue
     user_profile = await db.get_user_profile(callback_query.from_user.id)
     is_vip = user_profile.get('is_vip', False) if user_profile else False
     try:
-        await callback_query.message.edit_text("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
+        await callback_query.message.edit_text("🏠 Вы в главном меню.",
+                                               reply_markup=get_main_menu_keyboard(is_vip=is_vip))
     except Exception:
         await callback_query.message.answer("🏠 Вы в главном меню.", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
     await callback_query.answer()
@@ -163,7 +165,10 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
     status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else "📌")
     status_text = "Выполнена" if is_completed else ("В архиве" if note['is_archived'] else "Активна")
 
-    text = f"{status_icon} {hbold(f'Заметка #{note['note_id']}')}\n\n"
+    summary = note.get('summary_text')
+    full_text = note['corrected_text']
+
+    text = f"{status_icon} {hbold(f'Заметка #{note["note_id"]}')}\n\n"
     if recurrence_rule and is_vip:
         text += f"⭐ 🔁 Повторение: {hitalic(humanize_rrule(recurrence_rule))}\n"
     text += f"Статус: {hitalic(status_text)}\n"
@@ -173,7 +178,11 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
         text += f"Обновлена: {hitalic(updated_at_local)}\n"
     if due_date_local:
         text += f"Срок до: {hitalic(due_date_local)}\n"
-    text += f"\n{hbold('Текст заметки:')}\n{hcode(note['corrected_text'])}\n"
+
+    text += f"\n{hbold('Текст заметки:')}\n{hcode(summary or full_text)}\n"
+
+    if summary and summary.strip() != full_text.strip():
+        text += f"\n{hitalic('Полный текст:')}\n{hcode(full_text)}\n"
 
     note['is_vip'] = is_vip
 
@@ -188,6 +197,7 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
             text, parse_mode="HTML",
             reply_markup=get_note_view_actions_keyboard(note, current_page)
         )
+
 
 @router.callback_query(NoteAction.filter(F.action == "listen_audio"))
 async def listen_audio_handler(callback_query: CallbackQuery, callback_data: NoteAction):

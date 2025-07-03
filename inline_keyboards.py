@@ -79,6 +79,7 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
     else:
         builder.adjust(2, 2, 2, 1)
 
+
     return builder.as_markup()
 
 
@@ -296,19 +297,17 @@ def get_admin_users_list_keyboard(users: list[dict], current_page: int, total_pa
     return builder.as_markup()
 
 
-def get_note_creation_response_keyboard(note_id: int, show_tz_button: bool = False) -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой 'Отменить' и опционально 'Настроить ТЗ'."""
+def get_undo_creation_keyboard(note_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if show_tz_button:
-        builder.button(
-            text="🕒 Установить мой часовой пояс",
-            callback_data=SettingsAction(action="go_to_timezone").pack()
-        )
     builder.button(
-        text="❌ Отменить создание",
+        text="👀 Посмотреть детали",
+        callback_data=NoteAction(action="view", note_id=note_id).pack()
+    )
+    builder.button(
+        text="❌ Отменить",
         callback_data=NoteAction(action="undo_create", note_id=note_id).pack()
     )
-    builder.adjust(1)
+    builder.adjust(2)
     return builder.as_markup()
 
 
@@ -321,8 +320,9 @@ def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_
     else:
         for note in notes:
             status_icon = "✅" if note.get('is_completed') else "📝"
-            preview_text = f"{status_icon} #{note['note_id']} - {note['corrected_text'][:35]}"
-            if len(note['corrected_text']) > 35: preview_text += "..."
+            text_to_show = note.get('summary_text') or note['corrected_text']
+            preview_text = f"{status_icon} #{note['note_id']} - {text_to_show[:35]}"
+            if len(text_to_show) > 35: preview_text += "..."
             builder.button(text=preview_text,
                            callback_data=NoteAction(action="view", note_id=note['note_id'], page=current_page,
                                                     target_list=target_list_str).pack())

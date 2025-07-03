@@ -6,11 +6,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
 import database_setup as db
-from inline_keyboards import get_note_creation_response_keyboard
+# ИСПРАВЛЕНИЕ: Импортируем правильную функцию
+from inline_keyboards import get_undo_creation_keyboard
 from services import note_creator
 from services.tz_utils import format_datetime_for_user
 from handlers.notes import humanize_rrule
-
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -42,7 +42,8 @@ async def process_text_and_autosave(message: types.Message, text: str, status_me
         metadata={'note_id': new_note['note_id']}
     )
 
-    keyboard = get_note_creation_response_keyboard(new_note['note_id'], show_tz_button=needs_tz_prompt)
+    # ИСПРАВЛЕНИЕ: Вызываем правильную функцию.
+    keyboard = get_undo_creation_keyboard(new_note['note_id'])
     await status_message.edit_text(user_message, parse_mode="HTML", reply_markup=keyboard)
 
 
@@ -71,8 +72,8 @@ async def handle_regular_text_message(message: types.Message, state: FSMContext)
     text = message.text.strip()
 
     if len(text) < MIN_TEXT_LENGTH_FOR_NOTE or \
-       len(text.split()) < MIN_WORDS_FOR_NOTE or \
-       text.lower() in GARBAGE_WORDS:
+            len(text.split()) < MIN_WORDS_FOR_NOTE or \
+            text.lower() in GARBAGE_WORDS:
         logger.info(f"Ignoring short/garbage text from {message.from_user.id}: '{text}'")
         return
 

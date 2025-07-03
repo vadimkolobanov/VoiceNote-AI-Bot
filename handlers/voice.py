@@ -10,7 +10,8 @@ from config import (
     MIN_VOICE_DURATION_SEC, YANDEX_STT_CONFIGURED,
     MIN_STT_TEXT_CHARS, MIN_STT_TEXT_WORDS, MAX_VOICE_DURATION_SEC
 )
-from inline_keyboards import get_note_creation_response_keyboard
+# ИСПРАВЛЕНИЕ: Импортируем правильную функцию
+from inline_keyboards import get_undo_creation_keyboard
 from services.common import get_or_create_user, check_and_update_stt_limit, increment_stt_recognition_count
 from services import note_creator
 from utills import download_audio_content, recognize_speech_yandex
@@ -88,7 +89,9 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
             'create_note_voice_auto',
             metadata={'note_id': new_note['note_id']}
         )
-        keyboard = get_note_creation_response_keyboard(new_note['note_id'], show_tz_button=needs_tz_prompt)
+        # ИСПРАВЛЕНИЕ: Вызываем правильную функцию. Аргументы у нее теперь другие.
+        # Убираем show_tz_button, так как эта логика теперь внутри клавиатуры не нужна.
+        keyboard = get_undo_creation_keyboard(new_note['note_id'])
         await status_msg.edit_text(user_message, parse_mode="HTML", reply_markup=keyboard)
     else:
         await status_msg.edit_text(user_message, parse_mode="HTML")

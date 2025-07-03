@@ -1,6 +1,6 @@
 # services/note_creator.py
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 import pytz
 
 from aiogram import Bot
@@ -37,6 +37,7 @@ async def process_and_save_note(
     if not DEEPSEEK_API_KEY_EXISTS:
         note_id = await db.create_note(
             telegram_id=telegram_id,
+            summary_text=text_to_process[:80],
             corrected_text=text_to_process,
             original_stt_text=text_to_process,
             original_audio_telegram_file_id=audio_file_id,
@@ -60,11 +61,14 @@ async def process_and_save_note(
 
     if "error" in llm_result_dict:
         logger.error(f"LLM error for user {telegram_id}: {llm_result_dict['error']}")
+        summary_text_to_save = text_to_process[:80]
         corrected_text_to_save = text_to_process
         warning_message = "\n\n⚠️ Заметка сохранена, но при AI-анализе произошла ошибка. Текст сохранен как есть."
     else:
         llm_analysis_json = llm_result_dict
+        summary_text_to_save = llm_result_dict.get("summary_text", text_to_process[:80])
         corrected_text_to_save = llm_result_dict.get("corrected_text", text_to_process)
+
 
     due_date_obj = None
     recurrence_rule = llm_analysis_json.get("recurrence_rule") if llm_analysis_json else None
@@ -79,24 +83,6 @@ async def process_and_save_note(
             if due_date_str_utc:
                 dt_obj_utc = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
 
-                original_mention = llm_analysis_json["dates_times"][0].get("original_mention", "").lower()
-                is_relative_short_time = any(word in original_mention for word in ['минут', 'час', 'часа', 'часов'])
-                if is_relative_short_time:
-                    time_difference = dt_obj_utc - datetime.now(pytz.utc)
-                    if time_difference > timedelta(days=2):
-                        logger.warning(
-                            f"LLM returned a far-future date ({dt_obj_utc}) for a short relative time ('{original_mention}'). Correcting."
-                        )
-                        corrected_time = dt_obj_utc.astimezone(user_tz).time()
-                        corrected_date_local = datetime.now(user_tz)
-
-                        corrected_dt_local = datetime.combine(corrected_date_local.date(), corrected_time)
-                        if corrected_dt_local < corrected_date_local:
-                            corrected_dt_local += timedelta(days=1)
-
-                        dt_obj_utc = corrected_dt_local.astimezone(pytz.utc)
-                        logger.info(f"Date corrected to: {dt_obj_utc}")
-
                 is_time_ambiguous = (dt_obj_utc.time() == time(0, 0))
                 if is_time_ambiguous:
                     default_time = user_profile.get('default_reminder_time', time(9, 0)) if is_vip else time(12, 0)
@@ -109,6 +95,7 @@ async def process_and_save_note(
 
     note_id = await db.create_note(
         telegram_id=telegram_id,
+        summary_text=summary_text_to_save,
         corrected_text=corrected_text_to_save,
         original_stt_text=text_to_process,
         llm_analysis_json=llm_analysis_json,
@@ -136,6 +123,6 @@ async def process_and_save_note(
             needs_tz_prompt = True
             date_info += f"\n\n{hbold('⚠️ Важно!')} Ваше напоминание установлено по UTC. Чтобы оно сработало вовремя, пожалуйста, укажите ваш часовой пояс."
 
-    full_response = f"{user_message}\n\n{hcode(new_note['corrected_text'])}{date_info}"
+    full_response = f"{user_message}\n\n{hcode(new_note.get('summary_text', new_note['corrected_text']))}{date_info}"
 
     return True, full_response, new_note, needs_tz_prompt
