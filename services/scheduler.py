@@ -1,3 +1,4 @@
+# services/scheduler.py
 import logging
 import asyncio
 import re
@@ -6,6 +7,7 @@ import pytz
 from dateutil.rrule import rrulestr
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
@@ -99,10 +101,14 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
             if note and note.get('recurrence_rule'):
                 await reschedule_recurring_note(bot, note)
 
-
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        if "chat not found" in e.message or "bot was blocked by the user" in e.message:
+            logger.warning(f"Не удалось отправить напоминание пользователю {telegram_id}. Чат не найден или бот заблокирован. Ошибка: {e}")
+            # Здесь можно добавить логику по деактивации пользователя в БД
+        else:
+            logger.error(f"Ошибка Telegram API при отправке напоминания {note_id} пользователю {telegram_id}: {e}", exc_info=True)
     except Exception as e:
-        logger.error(f"Не удалось отправить напоминание по заметке #{note_id} пользователю {telegram_id}: {e}",
-                     exc_info=True)
+        logger.error(f"Не удалось отправить напоминание по заметке #{note_id} пользователю {telegram_id}: {e}", exc_info=True)
 
 
 def add_reminder_to_scheduler(bot: Bot, note: dict):
@@ -201,7 +207,6 @@ async def load_reminders_on_startup(bot: Bot):
 
 
 def clean_llm_response(text: str) -> str:
-    """Очищает ответ LLM от внешних оберток типа ```html ... ``` или кавычек."""
     cleaned_text = re.sub(r'^```(html|)\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
     if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
         cleaned_text = cleaned_text[1:-1]
@@ -299,6 +304,11 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     try:
         await bot.send_message(telegram_id, digest_text, parse_mode="HTML")
         logger.info(f"Утренняя сводка успешно отправлена пользователю {telegram_id}.")
+    except (TelegramBadRequest, TelegramForbiddenError) as e:
+        if "chat not found" in e.message or "bot was blocked by the user" in e.message:
+            logger.warning(f"Не удалось отправить сводку пользователю {telegram_id}. Чат не найден или бот заблокирован. Ошибка: {e}")
+        else:
+            logger.error(f"Ошибка Telegram API при отправке сводки {telegram_id}: {e}", exc_info=True)
     except Exception as e:
         if "can't parse entities" in str(e):
             logger.error(f"Не удалось отправить сводку для {telegram_id} из-за ошибки парсинга HTML. Отправляю без форматирования. Ошибка: {e}")
@@ -313,18 +323,11 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 
 
 async def check_and_send_digests(bot: Bot):
-    """
-    Запускается каждый час. Получает из БД список пользователей,
-    у которых сейчас 9 утра по их местному времени, и отправляет им сводку.
-    """
     logger.info("Запущена ежечасная проверка для отправки утренних сводок.")
-
     users_to_notify = await db.get_vip_users_for_digest()
-
     if not users_to_notify:
         logger.info("Нет пользователей для отправки сводки в этот час.")
         return
-
     logger.info(f"Найдено {len(users_to_notify)} пользователей для отправки сводки.")
     tasks = [generate_and_send_daily_digest(bot, user) for user in users_to_notify]
     await asyncio.gather(*tasks)
@@ -344,7 +347,6 @@ async def send_birthday_reminders(bot: Bot):
     logger.info("Запущена ежедневная проверка дней рождений...")
     all_birthdays = await db.get_all_birthdays_for_reminders()
     today_utc = datetime.now(pytz.utc)
-
     tasks = []
     for bday in all_birthdays:
         if bday['birth_day'] == today_utc.day and bday['birth_month'] == today_utc.month:
@@ -356,15 +358,16 @@ async def send_birthday_reminders(bot: Bot):
             text = f"🎂 Напоминание! Сегодня важный день у <b>{person_name}</b>{age_info}!"
             tasks.append(bot.send_message(chat_id=user_id, text=text, parse_mode="HTML"))
             logger.info(f"Подготовлено напоминание о дне рождения '{person_name}' для пользователя {user_id}")
-
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                bday_info = next((b for b in all_birthdays if b['user_telegram_id'] == tasks[i].kwargs['chat_id']), None)
-                if bday_info:
-                     logger.error(
-                        f"Не удалось отправить напоминание о дне рождения '{bday_info['person_name']}' пользователю {bday_info['user_telegram_id']}: {result}")
+                try:
+                    chat_id = tasks[i].__self__.chat_id
+                    logger.error(f"Не удалось отправить напоминание о дне рождения пользователю {chat_id}: {result}")
+                except Exception:
+                    logger.error(f"Не удалось отправить напоминание и получить chat_id: {result}")
+
 
 async def setup_daily_jobs(bot: Bot):
     scheduler.add_job(
@@ -377,7 +380,6 @@ async def setup_daily_jobs(bot: Bot):
         replace_existing=True
     )
     logger.info("Ежедневная задача проверки дней рождений успешно запланирована.")
-
     scheduler.add_job(
         check_and_send_digests,
         trigger='cron',

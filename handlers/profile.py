@@ -31,6 +31,11 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
     reg_date_local_str = format_datetime_for_user(reg_date_utc, user_timezone)
     is_vip = user_profile_data.get('is_vip', False)
 
+    # --- НОВАЯ ЛОГИКА: Проверяем наличие активного списка покупок ---
+    active_shopping_list = await db.get_active_shopping_list(telegram_id)
+    has_active_shopping_list = active_shopping_list is not None
+    # -------------------------------------------------------------
+
     profile_header = f"👤 {hbold('Ваш профиль')}\n\n"
 
     user_info_parts = [
@@ -67,7 +72,9 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
 
     response_text = "\n\n".join([profile_header, user_info_block, stats_block, settings_block])
 
-    keyboard = get_profile_actions_keyboard()
+    # --- ИЗМЕНЕНИЕ: Передаем флаг в клавиатуру ---
+    keyboard = get_profile_actions_keyboard(has_active_shopping_list=has_active_shopping_list)
+    # ---------------------------------------------
 
     try:
         await callback_query.message.edit_text(

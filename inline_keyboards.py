@@ -2,6 +2,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram import types  # <--- ВОТ ЭТО ИСПРАВЛЕНИЕ
 
 import config
 from config import NOTE_CATEGORIES, MAX_NOTES_MVP
@@ -15,6 +16,12 @@ class NoteAction(CallbackData, prefix="note_act"):
     target_list: str = 'active'
     category: str | None = None
     snooze_minutes: int | None = None
+
+
+class ShoppingListAction(CallbackData, prefix="shop_list"):
+    action: str
+    note_id: int
+    item_index: int | None = None
 
 
 class PageNavigation(CallbackData, prefix="pg_nav"):
@@ -79,12 +86,15 @@ def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:
     else:
         builder.adjust(2, 2, 2, 1)
 
-
     return builder.as_markup()
 
 
-def get_profile_actions_keyboard() -> InlineKeyboardMarkup:
+def get_profile_actions_keyboard(has_active_shopping_list: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+
+    if has_active_shopping_list:
+        builder.button(text="🛒 Список покупок", callback_data="show_shopping_list_from_profile")
+
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
     builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
     builder.adjust(1)
@@ -188,6 +198,45 @@ def get_category_selection_keyboard(note_id: int, page: int, target_list: str) -
     return builder.as_markup()
 
 
+def get_shopping_list_keyboard(note_id: int, items: list, is_archived: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+
+    if not items:
+        builder.button(
+            text="⬅️ Назад к заметке",
+            callback_data=NoteAction(action="view", note_id=note_id, page=1).pack()
+        )
+        builder.adjust(1)
+        return builder.as_markup()
+
+    for index, item in enumerate(items):
+        status_icon = "✅" if item.get('checked') else "⬜️"
+        item_name = item.get('item_name', 'Без названия').strip()
+        button_text = f"{status_icon} {item_name}"
+
+        if is_archived:
+            builder.button(text=button_text, callback_data="ignore")
+        else:
+            builder.button(
+                text=button_text,
+                callback_data=ShoppingListAction(action="toggle", note_id=note_id, item_index=index).pack()
+            )
+
+    builder.adjust(1)
+
+    if not is_archived:
+        builder.row(types.InlineKeyboardButton(
+            text="🛒 Завершить и архивировать",
+            callback_data=ShoppingListAction(action="archive", note_id=note_id).pack()
+        ))
+
+    builder.row(types.InlineKeyboardButton(
+        text="⬅️ Назад к заметке",
+        callback_data=NoteAction(action="view", note_id=note_id, page=1).pack()
+    ))
+    return builder.as_markup()
+
+
 def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     note_id = note['note_id']
@@ -197,15 +246,24 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
     is_recurring = bool(note.get('recurrence_rule'))
     is_vip = note.get('is_vip', False)
     target_list_str = 'archive' if is_archived else 'active'
+    category = note.get('category')
+
+    if category == 'Покупки':
+        action_text = "📖 Посмотреть архивный список" if is_archived else "🛒 Открыть список покупок"
+        builder.button(
+            text=action_text,
+            callback_data=ShoppingListAction(action="show", note_id=note_id).pack()
+        )
 
     if is_completed:
         builder.button(text="🗑️ Удалить навсегда",
                        callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
     elif not is_archived:
-        builder.button(text="✅ Выполнено",
-                       callback_data=NoteAction(action="complete", note_id=note_id, page=current_page,
-                                                target_list=target_list_str).pack())
+        if category != 'Покупки':
+            builder.button(text="✅ Выполнено",
+                           callback_data=NoteAction(action="complete", note_id=note_id, page=current_page,
+                                                    target_list=target_list_str).pack())
         builder.button(text="✏️ Редактировать",
                        callback_data=NoteAction(action="edit", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
@@ -218,13 +276,14 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
                                                     target_list=target_list_str).pack())
         builder.button(text="🗄️ В архив", callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
                                                                    target_list=target_list_str).pack())
-    else:  # is_archived
+    else:
         builder.button(text="↩️ Восстановить",
                        callback_data=NoteAction(action="unarchive", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
         builder.button(text="🗑️ Удалить навсегда",
                        callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
+
     if has_audio and not is_completed:
         builder.button(text="🎧 Прослушать оригинал",
                        callback_data=NoteAction(action="listen_audio", note_id=note_id, page=current_page,
@@ -234,21 +293,7 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
     builder.button(text=list_button_text,
                    callback_data=PageNavigation(target="notes", page=current_page, archived=is_archived).pack())
 
-    if is_completed:
-        builder.adjust(1, 1)
-    elif not is_archived:
-        layout = [2, 1]
-        if is_recurring and is_vip: layout.append(1)
-        layout.append(1)
-        if has_audio: layout.append(1)
-        layout.append(1)
-        builder.adjust(*layout)
-    else:
-        layout = [1, 1]
-        if has_audio: layout.append(1)
-        layout.append(1)
-        builder.adjust(*layout)
-
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -297,12 +342,20 @@ def get_admin_users_list_keyboard(users: list[dict], current_page: int, total_pa
     return builder.as_markup()
 
 
-def get_undo_creation_keyboard(note_id: int) -> InlineKeyboardMarkup:
+def get_undo_creation_keyboard(note_id: int, is_shopping_list: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="👀 Посмотреть детали",
-        callback_data=NoteAction(action="view", note_id=note_id).pack()
-    )
+
+    if is_shopping_list:
+        builder.button(
+            text="🛒 Посмотреть список",
+            callback_data=ShoppingListAction(action="show", note_id=note_id).pack()
+        )
+    else:
+        builder.button(
+            text="👀 Посмотреть детали",
+            callback_data=NoteAction(action="view", note_id=note_id).pack()
+        )
+
     builder.button(
         text="❌ Отменить",
         callback_data=NoteAction(action="undo_create", note_id=note_id).pack()
@@ -319,7 +372,12 @@ def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_
         pass
     else:
         for note in notes:
-            status_icon = "✅" if note.get('is_completed') else "📝"
+            category = note.get('category')
+            if category == 'Покупки':
+                status_icon = "🛒"
+            else:
+                status_icon = "✅" if note.get('is_completed') else "📝"
+
             text_to_show = note.get('summary_text') or note['corrected_text']
             preview_text = f"{status_icon} #{note['note_id']} - {text_to_show[:35]}"
             if len(text_to_show) > 35: preview_text += "..."
