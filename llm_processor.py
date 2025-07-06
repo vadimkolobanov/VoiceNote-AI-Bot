@@ -51,6 +51,10 @@ The user's local time is: `{current_user_datetime_iso}`.
 {{
   "summary_text": "A short, clear task title. Max 1-7 words. This is the main output.",
   "corrected_text": "The full, cleaned-up version of the original text, preserving all important details.",
+  "category": "The category of the note. Default is 'Общее'. For shopping lists, use 'Покупки'.",
+  "items": [
+    {{ "item_name": "название товара", "checked": false }}
+  ],
   "dates_times": [
     {{
       "original_mention": "How the date/time was mentioned.",
@@ -61,26 +65,37 @@ The user's local time is: `{current_user_datetime_iso}`.
 }}
 
 **Rules for 'summary_text':**
-- It MUST be a short, actionable title (e.g., "Позвонить маме", "Купить продукты", "Заехать в автосервис (стук)").
-- Remove all filler words ("так", "ну", "значит", "короче").
-- If the user provides context, add it concisely in parentheses. Example: "проверить почту насчет билетов" -> "Проверить почту (билеты)".
-- It should be in the infinitive form if it's a task.
+- It MUST be a short, actionable title (e.g., "Позвонить маме", "Заехать в автосервис").
+- For shopping lists, it should be "Список покупок".
 
 **Rules for 'corrected_text':**
 - This should be the full, grammatically correct version of the user's text.
-- Clean up speech disfluencies but preserve all specific details that might be lost in the summary.
+- Clean up speech disfluencies but preserve all specific details.
 
-**Example:**
-- **User input:** "Так, короче, это я себе, надо не забыть в пятницу вечером заехать в сервис, а то у меня там что-то стучит под капотом"
-- **Your JSON output:**
+**Special Rule for Shopping Lists:**
+If the text is a list of items to buy (e.g., "купить молоко, хлеб, яйца"), do the following:
+1. Set the "category" field to "Покупки".
+2. Populate the "items" field with an array of objects. Each object must have "item_name" (string) and "checked" (boolean, default to false).
+3. "summary_text" should be "Список покупок".
+4. "items" array must not be empty. If you can't parse any items, treat it as a regular note.
+
+**Shopping List Example:**
+- User input: "надо будет купить хлеб яйца и молоко"
+- Your JSON output:
   {{
-    "summary_text": "Заехать в автосервис (стук под капотом)",
-    "corrected_text": "В пятницу вечером нужно заехать в автосервис, так как что-то стучит под капотом.",
+    "summary_text": "Список покупок",
+    "corrected_text": "Нужно купить: хлеб, яйца, молоко.",
+    "category": "Покупки",
+    "items": [
+      {{ "item_name": "Хлеб", "checked": false }},
+      {{ "item_name": "Яйца", "checked": false }},
+      {{ "item_name": "Молоко", "checked": false }}
+    ],
     "dates_times": [],
     "recurrence_rule": null
   }}
 
-All datetimes MUST be in UTC ISO 8601 format ending with 'Z'.
+All datetimes MUST be in UTC ISO 8601 format ending with 'Z'. If there are no dates, `dates_times` should be an empty array. If it's not a list, `items` should be an empty array.
 """
 
     user_prompt = f"Analyze the following voice note text (in Russian):\n\n\"{raw_text}\""

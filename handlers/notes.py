@@ -14,9 +14,11 @@ from config import MAX_NOTES_MVP, NOTES_PER_PAGE
 from inline_keyboards import (
     get_notes_list_display_keyboard,
     NoteAction,
+    ShoppingListAction,
     PageNavigation,
     get_main_menu_keyboard,
     get_note_view_actions_keyboard,
+    get_shopping_list_keyboard,
     get_confirm_delete_keyboard,
     get_category_selection_keyboard,
 )
@@ -30,7 +32,6 @@ router = Router()
 
 
 def humanize_rrule(rule_str: str) -> str:
-    """Превращает RRULE в человекочитаемую строку."""
     try:
         if "FREQ=DAILY" in rule_str: return "Каждый день"
         if "FREQ=WEEKLY" in rule_str: return "Каждую неделю"
@@ -42,20 +43,33 @@ def humanize_rrule(rule_str: str) -> str:
 
 
 async def return_to_main_menu(message: types.Message):
-    """Отправляет сообщение с главным меню."""
     user_profile = await db.get_user_profile(message.from_user.id)
     is_vip = user_profile.get('is_vip', False) if user_profile else False
     await message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
 
 
+async def _render_shopping_list(note_id: int, message: types.Message, user_id: int):
+    """Вспомогательная функция для отрисовки списка покупок."""
+    note = await db.get_note_by_id(note_id, user_id)
+    if not note:
+        await message.edit_text("Ошибка: не удалось найти данные списка.")
+        return
+
+    items = note.get('llm_analysis_json', {}).get('items', [])
+    is_archived = note.get('is_archived', False)
+    keyboard = get_shopping_list_keyboard(note_id, items, is_archived)
+
+    await message.edit_text(
+        f"🛒 {note.get('summary_text') or 'Ваш список покупок'}:",
+        reply_markup=keyboard
+    )
+
+
 @router.callback_query(NoteAction.filter(F.action == "undo_create"))
 async def undo_note_creation_handler(callback: CallbackQuery, callback_data: NoteAction):
-    """Обрабатывает отмену только что созданной заметки."""
     note_id = callback_data.note_id
     user_id = callback.from_user.id
-
     deleted = await db.delete_note(note_id, user_id)
-
     if deleted:
         remove_reminder_from_scheduler(note_id)
         await db.log_user_action(user_id, 'undo_create_note', metadata={'note_id': note_id})
@@ -89,8 +103,7 @@ async def _display_notes_list_page(
         )
 
     if not notes_on_page and page_num == 1:
-        empty_text = "В архиве пусто." if is_archive_list else "У вас пока нет активных задач. Создайте новую!"
-        text_content = empty_text
+        text_content = "В архиве пусто." if is_archive_list else "У вас пока нет активных задач. Создайте новую!"
     else:
         title = "🗄️ Ваш архив" if is_archive_list else "📝 Ваши активные задачи"
         text_content = f"{hbold(f'{title} (Стр. {page_num}/{total_pages}):')}"
@@ -102,6 +115,66 @@ async def _display_notes_list_page(
     except Exception as e:
         logger.info(f"Не удалось отредактировать сообщение для списка заметок, отправляю новое: {e}")
         await target_message.answer(text_content, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(ShoppingListAction.filter(F.action == "show"))
+async def show_shopping_list_handler(callback: CallbackQuery, callback_data: ShoppingListAction):
+    await _render_shopping_list(callback_data.note_id, callback.message, callback.from_user.id)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "show_shopping_list_from_profile")
+async def show_shopping_list_from_profile_handler(callback: CallbackQuery):
+    active_list = await db.get_active_shopping_list(callback.from_user.id)
+    if not active_list:
+        await callback.answer("Активный список покупок не найден.", show_alert=True)
+        # Обновим профиль, чтобы убрать кнопку, если список уже заархивирован
+        await callback.message.delete()
+        from handlers.profile import user_profile_display_handler
+        await user_profile_display_handler(callback, FSMContext(storage=router.fsm.storage, key=callback.from_user.id))
+        return
+
+    await _render_shopping_list(active_list['note_id'], callback.message, callback.from_user.id)
+    await callback.answer()
+
+
+@router.callback_query(ShoppingListAction.filter(F.action == "toggle"))
+async def toggle_shopping_list_item_handler(callback: CallbackQuery, callback_data: ShoppingListAction):
+    note_id = callback_data.note_id
+    item_index = callback_data.item_index
+    user_id = callback.from_user.id
+
+    note = await db.get_note_by_id(note_id, user_id)
+    if not note or note.get('is_archived'):
+        await callback.answer("Этот список уже в архиве.", show_alert=True)
+        return
+
+    llm_json = note.get('llm_analysis_json', {})
+    items = llm_json.get('items', [])
+
+    if 0 <= item_index < len(items):
+        items[item_index]['checked'] = not items[item_index].get('checked', False)
+    else:
+        await callback.answer("Ошибка: товар не найден.", show_alert=True)
+        return
+
+    llm_json['items'] = items
+    await db.update_note_llm_json(note_id, llm_json, user_id)
+
+    await _render_shopping_list(note_id, callback.message, user_id)
+    await callback.answer(f"Отмечено: {items[item_index]['item_name']}")
+
+
+@router.callback_query(ShoppingListAction.filter(F.action == "archive"))
+async def archive_shopping_list_handler(callback: CallbackQuery, callback_data: ShoppingListAction, state: FSMContext):
+    success = await db.set_note_completed_status(callback_data.note_id, callback.from_user.id, completed=True)
+    if success:
+        remove_reminder_from_scheduler(callback_data.note_id)
+        await callback.answer("✅ Список покупок завершен и перенесен в архив.", show_alert=False)
+        await _display_notes_list_page(callback.message, callback.from_user.id, page_num=1, state=state,
+                                       is_archive_list=False)
+    else:
+        await callback.answer("❌ Не удалось заархивировать список.", show_alert=True)
 
 
 @router.callback_query(PageNavigation.filter(F.target == "notes"))
@@ -162,13 +235,13 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
     category = note.get('category', 'Общее')
     is_completed = note.get('is_completed', False)
 
-    status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else "📌")
+    status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else ("🛒" if category == 'Покупки' else "📌"))
     status_text = "Выполнена" if is_completed else ("В архиве" if note['is_archived'] else "Активна")
 
     summary = note.get('summary_text')
     full_text = note['corrected_text']
 
-    text = f"{status_icon} {hbold(f'Заметка #{note["note_id"]}')}\n\n"
+    text = f"{status_icon} {hbold(f'Заметка #{note['note_id']}')}\n\n"
     if recurrence_rule and is_vip:
         text += f"⭐ 🔁 Повторение: {hitalic(humanize_rrule(recurrence_rule))}\n"
     text += f"Статус: {hitalic(status_text)}\n"
@@ -197,6 +270,7 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
             text, parse_mode="HTML",
             reply_markup=get_note_view_actions_keyboard(note, current_page)
         )
+    await callback_query.answer()
 
 
 @router.callback_query(NoteAction.filter(F.action == "listen_audio"))
@@ -345,22 +419,25 @@ async def start_note_edit_handler(callback_query: CallbackQuery, callback_data: 
 async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     note_id = user_data.get("note_id_to_edit")
+    page_to_return_to = user_data.get("page_to_return_to", 1)
+
     await state.clear()
     await message.answer("🚫 Редактирование отменено.")
 
-    fake_callback_query = types.CallbackQuery(
-        id=str(message.message_id),
+    # Создаем фейковый callback, чтобы переиспользовать view_note_detail_handler
+    # Это более надежно, чем отправлять новое сообщение, т.к. сохраняется контекст
+    fake_callback = types.CallbackQuery(
+        id=f"fake_{message.from_user.id}",
         from_user=message.from_user,
-        chat_instance="fake",
         message=message,
-        data=NoteAction(
-            action="view",
-            note_id=note_id,
-            page=user_data.get("page_to_return_to", 1)
-        ).pack()
+        chat_instance="fake_chat_instance"
     )
-    fake_callback_data = NoteAction(action="view", note_id=note_id, page=user_data.get("page_to_return_to", 1))
-    await view_note_detail_handler(fake_callback_query, fake_callback_data, state)
+    fake_callback_data = NoteAction(
+        action="view",
+        note_id=note_id,
+        page=page_to_return_to
+    )
+    await view_note_detail_handler(fake_callback, fake_callback_data, state)
 
 
 @router.message(NoteEditingStates.awaiting_new_text, F.text)
@@ -438,7 +515,7 @@ async def snooze_reminder_handler(callback: CallbackQuery, callback_data: NoteAc
         await callback.answer("❌ Не удалось отложить: заметка или дата не найдены.", show_alert=True)
         return
 
-    new_due_date = datetime.now(datetime.now().astimezone().tzinfo) + timedelta(minutes=snooze_minutes)
+    new_due_date = datetime.now(pytz.utc) + timedelta(minutes=snooze_minutes)
 
     await db.update_note_due_date(note_id, new_due_date)
 
@@ -460,9 +537,12 @@ async def snooze_reminder_handler(callback: CallbackQuery, callback_data: NoteAc
 
     await callback.answer(f"👌 Понял! Напомню через {snooze_text}", show_alert=False)
 
+    user_tz = pytz.timezone(user_profile.get('timezone', 'UTC'))
+    local_snooze_time = new_due_date.astimezone(user_tz)
+
     try:
         await callback.message.edit_text(
-            f"{callback.message.text}\n\n{hbold(f'Статус: ⏰ Отложено до {new_due_date.astimezone().strftime('%H:%M')}')}",
+            f"{callback.message.text}\n\n{hbold(f'Статус: ⏰ Отложено до {local_snooze_time.strftime('%H:%M')}')}",
             parse_mode="HTML", reply_markup=None
         )
     except Exception:

@@ -13,13 +13,27 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS users
     (
-        telegram_id BIGINT PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        language_code TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        telegram_id
+        BIGINT
+        PRIMARY
+        KEY,
+        username
+        TEXT,
+        first_name
+        TEXT,
+        last_name
+        TEXT,
+        language_code
+        TEXT,
+        created_at
+        TIMESTAMPTZ
+        DEFAULT
+        NOW
+    (
+    ),
+        updated_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
         is_vip BOOLEAN DEFAULT FALSE,
         timezone TEXT DEFAULT 'UTC',
         default_reminder_time TIME DEFAULT '09:00:00',
@@ -27,7 +41,7 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         daily_stt_recognitions_count INTEGER DEFAULT 0,
         last_stt_reset_date DATE,
         daily_digest_enabled BOOLEAN DEFAULT TRUE
-    );
+        );
     """,
     # --- Новые поля для интеграции с Алисой ---
     """
@@ -50,14 +64,29 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS notes
     (
-        note_id SERIAL PRIMARY KEY,
-        telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        note_id
+        SERIAL
+        PRIMARY
+        KEY,
+        telegram_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        users
+    (
+        telegram_id
+    ) ON DELETE CASCADE,
         summary_text TEXT,
         original_stt_text TEXT,
         corrected_text TEXT NOT NULL,
         category TEXT DEFAULT 'Общее',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
+        updated_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
         note_taken_at TIMESTAMPTZ,
         original_audio_telegram_file_id TEXT,
         llm_analysis_json JSONB,
@@ -65,7 +94,7 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         recurrence_rule TEXT,
         is_archived BOOLEAN DEFAULT FALSE,
         is_completed BOOLEAN DEFAULT FALSE
-    );
+        );
     """,
     # --- Безопасное добавление нового поля в существующую таблицу ---
     """
@@ -82,26 +111,52 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS birthdays
     (
-        id SERIAL PRIMARY KEY,
-        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        user_telegram_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        users
+    (
+        telegram_id
+    ) ON DELETE CASCADE,
         person_name TEXT NOT NULL,
         birth_day INTEGER NOT NULL,
         birth_month INTEGER NOT NULL,
         birth_year INTEGER,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    )
+        );
     """,
 
     # --- Таблица User Actions (для аналитики) ---
     """
     CREATE TABLE IF NOT EXISTS user_actions
     (
-        id SERIAL PRIMARY KEY,
-        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        user_telegram_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        users
+    (
+        telegram_id
+    ) ON DELETE CASCADE,
         action_type TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
         metadata JSONB
-    );
+        );
     """,
 
     # --- Индексы для ускорения запросов ---
@@ -223,12 +278,12 @@ async def get_vip_users_for_digest() -> list[dict]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-        SELECT telegram_id, first_name, timezone
-        FROM users
-        WHERE is_vip = TRUE
-          AND daily_digest_enabled = TRUE
-          AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9;
-        """
+                SELECT telegram_id, first_name, timezone
+                FROM users
+                WHERE is_vip = TRUE
+                  AND daily_digest_enabled = TRUE
+                  AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9; \
+                """
         records = await conn.fetch(query)
         return [dict(rec) for rec in records]
 
@@ -316,8 +371,8 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
     async with pool.acquire() as conn:
         query = """
                 INSERT INTO notes (telegram_id, summary_text, corrected_text, original_stt_text, llm_analysis_json,
-                                   original_audio_telegram_file_id, note_taken_at, due_date, recurrence_rule)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING note_id;
+                                   original_audio_telegram_file_id, note_taken_at, due_date, recurrence_rule, category)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING note_id;
                 """
         try:
             llm_json_str = json.dumps(kwargs.get("llm_analysis_json")) if kwargs.get("llm_analysis_json") else None
@@ -331,7 +386,8 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
                 kwargs.get("original_audio_telegram_file_id"),
                 kwargs.get("note_taken_at"),
                 kwargs.get("due_date"),
-                kwargs.get("recurrence_rule")
+                kwargs.get("recurrence_rule"),
+                kwargs.get("category", "Общее")
             )
             return note_id
         except Exception as e:
@@ -339,12 +395,46 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
             return None
 
 
+def _process_note_record(record: asyncpg.Record) -> dict | None:
+    """Вспомогательная функция для обработки записи заметки, включая парсинг JSON."""
+    if not record:
+        return None
+
+    note_dict = dict(record)
+
+    if 'llm_analysis_json' in note_dict and isinstance(note_dict['llm_analysis_json'], str):
+        try:
+            note_dict['llm_analysis_json'] = json.loads(note_dict['llm_analysis_json'])
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                f"Не удалось распарсить llm_analysis_json для заметки #{note_dict.get('note_id')}. Оставляем как есть.")
+
+    return note_dict
+
+
 async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         record = await conn.fetchrow("SELECT * FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id,
                                      telegram_id)
-        return dict(record) if record else None
+        return _process_note_record(record)
+
+
+async def get_active_shopping_list(telegram_id: int) -> dict | None:
+    """Возвращает самую последнюю активную заметку-список покупок."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = """
+                SELECT * \
+                FROM notes
+                WHERE telegram_id = $1
+                  AND category = 'Покупки'
+                  AND is_archived = FALSE
+                  AND is_completed = FALSE
+                ORDER BY created_at DESC LIMIT 1; \
+                """
+        record = await conn.fetchrow(query, telegram_id)
+        return _process_note_record(record)
 
 
 async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> list[dict]:
@@ -363,6 +453,39 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
         records = await conn.fetch(query, telegram_id, user_timezone)
         return [dict(rec) for rec in records]
 
+async def get_or_create_active_shopping_list_note(telegram_id: int) -> dict | None:
+    """
+    Находит активную заметку-список покупок для пользователя.
+    Если такой нет, создает новую, пустую.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # 1. Попытка найти существующий активный список
+        find_query = """
+            SELECT * FROM notes
+            WHERE telegram_id = $1
+              AND category = 'Покупки'
+              AND is_archived = FALSE
+              AND is_completed = FALSE
+            ORDER BY created_at DESC LIMIT 1;
+        """
+        record = await conn.fetchrow(find_query, telegram_id)
+        if record:
+            return _process_note_record(record)
+
+        # 2. Если не найден, создаем новый
+        create_query = """
+            INSERT INTO notes (telegram_id, summary_text, corrected_text, category, llm_analysis_json, is_archived, is_completed)
+            VALUES ($1, 'Мой список покупок', 'Список товаров для покупки.', 'Покупки', '{"items": []}', FALSE, FALSE)
+            RETURNING *;
+        """
+        try:
+            new_record = await conn.fetchrow(create_query, telegram_id)
+            logger.info(f"Создан новый персистентный список покупок для пользователя {telegram_id}")
+            return _process_note_record(new_record)
+        except Exception as e:
+            logger.error(f"Не удалось создать персистентный список покупок для {telegram_id}: {e}")
+            return None
 
 async def delete_note(note_id: int, telegram_id: int) -> bool:
     pool = await get_db_pool()
@@ -408,7 +531,10 @@ async def get_notes_with_reminders() -> list[dict]:
                   AND n.due_date IS NOT NULL
                   AND n.due_date > NOW();
                 """
-        return [dict(rec) for rec in await conn.fetch(query)]
+        records = await conn.fetch(query)
+        # Обрабатываем каждую запись, чтобы распарсить JSON
+        processed_records = [_process_note_record(rec) for rec in records]
+        return processed_records
 
 
 async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> bool:
@@ -426,6 +552,16 @@ async def update_note_category(note_id: int, new_category: str, telegram_id: int
         result = await conn.execute(
             "UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", new_category,
             note_id, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def update_note_llm_json(note_id: int, new_llm_json: dict, telegram_id: int) -> bool:
+    """Обновляет только поле llm_analysis_json для заметки."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        json_str = json.dumps(new_llm_json)
+        query = "UPDATE notes SET llm_analysis_json = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3"
+        result = await conn.execute(query, json_str, note_id, telegram_id)
         return int(result.split(" ")[1]) > 0
 
 

@@ -6,11 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
 import database_setup as db
-# ИСПРАВЛЕНИЕ: Импортируем правильную функцию
 from inline_keyboards import get_undo_creation_keyboard
 from services import note_creator
-from services.tz_utils import format_datetime_for_user
-from handlers.notes import humanize_rrule
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -42,8 +39,11 @@ async def process_text_and_autosave(message: types.Message, text: str, status_me
         metadata={'note_id': new_note['note_id']}
     )
 
-    # ИСПРАВЛЕНИЕ: Вызываем правильную функцию.
-    keyboard = get_undo_creation_keyboard(new_note['note_id'])
+    # --- ИЗМЕНЕНИЕ: Проверяем категорию новой заметки ---
+    is_shopping_list = new_note.get('category') == 'Покупки'
+    keyboard = get_undo_creation_keyboard(new_note['note_id'], is_shopping_list=is_shopping_list)
+    # ---------------------------------------------------
+
     await status_message.edit_text(user_message, parse_mode="HTML", reply_markup=keyboard)
 
 
