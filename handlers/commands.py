@@ -1,25 +1,27 @@
 # handlers/commands.py
-from aiogram import Router, types
+import logging
+from aiogram import Router, types, Bot
 from aiogram import F
 from aiogram.fsm.context import FSMContext
-from aiogram.filters import Command
-from aiogram.utils.markdown import hbold, hlink, hcode
+from aiogram.filters import Command, CommandObject
+from aiogram.utils.markdown import hbold, hlink, hcode, hitalic
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from config import DONATION_URL
 
 from config import (
     MAX_NOTES_MVP, MAX_DAILY_STT_RECOGNITIONS_MVP, CREATOR_CONTACT,
-    NEWS_CHANNEL_URL, CHAT_URL
+    NEWS_CHANNEL_URL, CHAT_URL, DONATION_URL
 )
 from services.common import get_or_create_user
-from inline_keyboards import get_main_menu_keyboard, SettingsAction
+from services.scheduler import add_reminder_to_scheduler
+from inline_keyboards import get_main_menu_keyboard, SettingsAction, NoteAction
 import database_setup as db
+from handlers.notes import view_note_detail_handler, _render_shopping_list
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
-@router.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
+async def process_start_command(message: types.Message, state: FSMContext, bot: Bot):
     await state.clear()
 
     was_new_user = await db.get_user_profile(message.from_user.id) is None
@@ -75,6 +77,70 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
 
 
+@router.message(Command(commands=["start"]))
+async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command: CommandObject):
+    if command.args and command.args.startswith("share_"):
+        token = command.args.split('_', 1)[1]
+
+        recipient = message.from_user
+        token_data = await db.get_share_token_data(token)
+
+        if not token_data:
+            await message.answer("❌ Эта пригласительная ссылка недействительна, просрочена или уже была использована.")
+            await process_start_command(message, state, bot)
+            return
+
+        note_id = token_data['note_id']
+        owner_id = token_data['owner_id']
+
+        if recipient.id == owner_id:
+            await message.answer("ℹ️ Вы не можете использовать свою собственную пригласительную ссылку.")
+            await process_start_command(message, state, bot)
+            return
+
+        recipient_profile = await get_or_create_user(recipient)
+
+        success = await db.share_note_with_user(note_id, owner_id, recipient.id)
+        if not success:
+            await message.answer("🤔 Похоже, у вас уже есть доступ к этой заметке.")
+        else:
+            await db.mark_share_token_as_used(token)
+
+            owner_profile = await db.get_user_profile(owner_id)
+            note = await db.get_note_by_id(note_id, recipient.id)
+            if owner_profile and note:
+                try:
+                    await bot.send_message(
+                        owner_id,
+                        f"✅ Пользователь {hbold(recipient.first_name)} принял ваше приглашение к заметке «{hitalic(note.get('summary_text'))}»."
+                    )
+                except Exception as e:
+                    logger.warning(f"Не удалось уведомить владельца {owner_id} о принятии приглашения: {e}")
+
+        note = await db.get_note_by_id(note_id, recipient.id)
+        if note:
+            await message.answer(f"🤝 Вы получили доступ к новой заметке!")
+
+            # --- ИСПРАВЛЕНИЕ №1: Устанавливаем напоминание для получателя ---
+            if note.get('due_date'):
+                note_data_for_scheduler = {**note, **recipient_profile}
+                # Передаем telegram_id получателя
+                note_data_for_scheduler['telegram_id'] = recipient.id
+                add_reminder_to_scheduler(bot, note_data_for_scheduler)
+                logger.info(f"Напоминание для общей заметки #{note_id} установлено для получателя {recipient.id}.")
+            # -----------------------------------------------------------------
+
+            if note.get('category') == 'Покупки':
+                await _render_shopping_list(note_id, message, recipient.id)
+            else:
+                await view_note_detail_handler(message, state, note_id=note_id)
+        else:
+            await message.answer("❌ Произошла ошибка при получении доступа к заметке.")
+            await process_start_command(message, state, bot)
+    else:
+        await process_start_command(message, state, bot)
+
+
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     help_text = f"""
@@ -101,6 +167,7 @@ async def cmd_help(message: types.Message):
 ⭐ <b>Возможности VIP-статуса:</b>
 
 ✅ <b>Безлимиты:</b> Никаких ограничений на количество заметок и распознаваний.
+🤝 <b>Совместный доступ:</b> Делитесь заметками и списками покупок с другими пользователями.
 🔁 <b>Повторяющиеся задачи:</b> "Напоминай каждый понедельник сдавать отчет".
 ☀️ <b>Утренняя сводка:</b> План на день с задачами и днями рождения каждое утро в 9:00.
 🧠 <b>Умные напоминания:</b> Если в заметке только дата, бот сам поставит напоминание на удобное время.
@@ -170,7 +237,6 @@ async def show_donate_info_handler(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "go_to_main_menu")
 async def go_to_main_menu_handler(callback: types.CallbackQuery, state: FSMContext):
-    """Универсальный обработчик для возврата в главное меню."""
     await state.clear()
     user_profile = await db.get_user_profile(callback.from_user.id)
     is_vip = user_profile.get('is_vip', False) if user_profile else False

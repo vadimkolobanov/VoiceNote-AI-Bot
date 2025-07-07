@@ -1,10 +1,12 @@
 # handlers/notes.py
+import asyncio
 import logging
 from datetime import datetime, timedelta, time
 from dateutil.rrule import rrulestr
 import pytz
 
-from aiogram import Router, types, F
+from aiogram import Router, types, F, Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
@@ -48,21 +50,64 @@ async def return_to_main_menu(message: types.Message):
     await message.answer("Чем еще могу помочь?", reply_markup=get_main_menu_keyboard(is_vip=is_vip))
 
 
+async def _update_all_shared_views(note_id: int, bot: Bot):
+    note = await db.get_note_by_id(note_id, 0)  # 0 - специальное значение, чтобы получить заметку как админ
+    if not note: return
+
+    is_shopping_list = note.get('category') == 'Покупки'
+    items = note.get('llm_analysis_json', {}).get('items', []) if is_shopping_list else []
+    is_archived = note.get('is_archived', False)
+
+    message_ids_to_update = await db.get_shared_message_ids(note_id)
+
+    for record in message_ids_to_update:
+        user_id, message_id = record['user_id'], record['message_id']
+        try:
+            if is_shopping_list:
+                keyboard = get_shopping_list_keyboard(note_id, items, is_archived)
+                await bot.edit_message_reply_markup(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    reply_markup=keyboard
+                )
+        except TelegramBadRequest as e:
+            if "message is not modified" in e.message:
+                continue
+            logger.warning(f"Не удалось обновить сообщение {message_id} для пользователя {user_id}: {e}")
+            await db.delete_shared_message_id(note_id, user_id)
+        except Exception as e:
+            logger.error(f"Критическая ошибка при обновлении сообщения {message_id} для {user_id}: {e}")
+            await db.delete_shared_message_id(note_id, user_id)
+
+
 async def _render_shopping_list(note_id: int, message: types.Message, user_id: int):
-    """Вспомогательная функция для отрисовки списка покупок."""
     note = await db.get_note_by_id(note_id, user_id)
     if not note:
-        await message.edit_text("Ошибка: не удалось найти данные списка.")
+        await message.answer("Ошибка: не удалось найти данные списка.")
         return
 
     items = note.get('llm_analysis_json', {}).get('items', [])
     is_archived = note.get('is_archived', False)
+    is_owner = note.get('owner_id') == user_id
+    shared_text = "" if is_owner else f"\n{hitalic('(Список доступен вам по ссылке)')}"
     keyboard = get_shopping_list_keyboard(note_id, items, is_archived)
 
-    await message.edit_text(
-        f"🛒 {note.get('summary_text') or 'Ваш список покупок'}:",
-        reply_markup=keyboard
-    )
+    text_to_send = f"🛒 {note.get('summary_text') or 'Ваш список покупок'}:{shared_text}"
+
+    try:
+        await message.edit_text(
+            text_to_send,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await db.store_shared_message_id(note_id, user_id, message.message_id)
+    except TelegramBadRequest:
+        sent_message = await message.answer(
+            text_to_send,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await db.store_shared_message_id(note_id, user_id, sent_message.message_id)
 
 
 @router.callback_query(NoteAction.filter(F.action == "undo_create"))
@@ -108,7 +153,7 @@ async def _display_notes_list_page(
         title = "🗄️ Ваш архив" if is_archive_list else "📝 Ваши активные задачи"
         text_content = f"{hbold(f'{title} (Стр. {page_num}/{total_pages}):')}"
 
-    keyboard = get_notes_list_display_keyboard(notes_on_page, page_num, total_pages, is_archive_list)
+    keyboard = get_notes_list_display_keyboard(notes_on_page, page_num, total_pages, is_archive_list, telegram_id)
 
     try:
         await target_message.edit_text(text_content, reply_markup=keyboard, parse_mode="HTML")
@@ -124,14 +169,14 @@ async def show_shopping_list_handler(callback: CallbackQuery, callback_data: Sho
 
 
 @router.callback_query(F.data == "show_shopping_list_from_profile")
-async def show_shopping_list_from_profile_handler(callback: CallbackQuery):
+async def show_shopping_list_from_profile_handler(callback: CallbackQuery, state: FSMContext):
     active_list = await db.get_active_shopping_list(callback.from_user.id)
     if not active_list:
         await callback.answer("Активный список покупок не найден.", show_alert=True)
-        # Обновим профиль, чтобы убрать кнопку, если список уже заархивирован
+        # Обновляем профиль, чтобы убрать кнопку
         await callback.message.delete()
         from handlers.profile import user_profile_display_handler
-        await user_profile_display_handler(callback, FSMContext(storage=router.fsm.storage, key=callback.from_user.id))
+        await user_profile_display_handler(callback, state)
         return
 
     await _render_shopping_list(active_list['note_id'], callback.message, callback.from_user.id)
@@ -159,22 +204,39 @@ async def toggle_shopping_list_item_handler(callback: CallbackQuery, callback_da
         return
 
     llm_json['items'] = items
-    await db.update_note_llm_json(note_id, llm_json, user_id)
-
-    await _render_shopping_list(note_id, callback.message, user_id)
+    await db.update_note_llm_json(note_id, llm_json)
+    await _update_all_shared_views(note_id, callback.bot)
     await callback.answer(f"Отмечено: {items[item_index]['item_name']}")
 
 
 @router.callback_query(ShoppingListAction.filter(F.action == "archive"))
 async def archive_shopping_list_handler(callback: CallbackQuery, callback_data: ShoppingListAction, state: FSMContext):
-    success = await db.set_note_completed_status(callback_data.note_id, callback.from_user.id, completed=True)
-    if success:
-        remove_reminder_from_scheduler(callback_data.note_id)
-        await callback.answer("✅ Список покупок завершен и перенесен в архив.", show_alert=False)
-        await _display_notes_list_page(callback.message, callback.from_user.id, page_num=1, state=state,
-                                       is_archive_list=False)
-    else:
+    user_id = callback.from_user.id
+    note_id = callback_data.note_id
+    note = await db.get_note_by_id(note_id, user_id)
+    owner_id = note.get('owner_id')
+
+    success = await db.set_note_completed_status(note_id, True)
+    if not success:
         await callback.answer("❌ Не удалось заархивировать список.", show_alert=True)
+        return
+
+    remove_reminder_from_scheduler(note_id)
+    await callback.answer("✅ Список покупок завершен и перенесен в архив.", show_alert=False)
+
+    if owner_id != user_id:
+        completer_profile = await db.get_user_profile(user_id)
+        owner_profile = await db.get_user_profile(owner_id)
+        if owner_profile and completer_profile:
+            try:
+                await callback.bot.send_message(
+                    owner_id,
+                    f"✅ Ваш список покупок '{hitalic(note.get('summary_text'))}' был завершен пользователем {hbold(completer_profile.get('first_name'))}."
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось уведомить владельца {owner_id} о завершении списка: {e}")
+
+    await _display_notes_list_page(callback.message, user_id, page_num=1, state=state, is_archive_list=False)
 
 
 @router.callback_query(PageNavigation.filter(F.target == "notes"))
@@ -209,39 +271,58 @@ async def back_to_main_menu_from_notes_handler(callback_query: types.CallbackQue
 
 
 @router.callback_query(NoteAction.filter(F.action == "view"))
-async def view_note_detail_handler(callback_query: types.CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    note_id = callback_data.note_id
-    current_page = callback_data.page
-    target_list = callback_data.target_list
-    is_archived_view = target_list == 'archive'
-    telegram_id = callback_query.from_user.id
+async def view_note_detail_handler(event: types.Message | types.CallbackQuery, state: FSMContext,
+                                   note_id: int | None = None, page: int = 1):
+    is_callback = isinstance(event, types.CallbackQuery)
+    message = event.message if is_callback else event
+    user = event.from_user
+    bot = event.bot
+
+    if is_callback:
+        callback_data = NoteAction.unpack(event.data)
+        note_id = callback_data.note_id
+        page = callback_data.page
+        is_archived_view = callback_data.target_list == 'archive'
+    else:
+        is_archived_view = False  # При вызове из /start всегда показываем активную
 
     await state.set_state(NoteNavigationStates.browsing_notes)
-    await state.update_data(current_notes_page=current_page, is_archive_view=is_archived_view)
+    await state.update_data(current_notes_page=page, is_archive_view=is_archived_view)
 
-    user_profile = await db.get_user_profile(telegram_id)
+    user_profile = await db.get_user_profile(user.id)
     user_timezone = user_profile.get('timezone', 'UTC') if user_profile else 'UTC'
-    note = await db.get_note_by_id(note_id, telegram_id)
+    note = await db.get_note_by_id(note_id, user.id)
+
     if not note:
-        await callback_query.answer("Заметка не найдена или удалена.", show_alert=True)
-        await _display_notes_list_page(callback_query.message, telegram_id, current_page, state, is_archived_view)
+        if is_callback:
+            await event.answer("Заметка не найдена или удалена.", show_alert=True)
+        else:
+            await message.answer("Заметка не найдена или удалена.")
+        await _display_notes_list_page(message, user.id, page, state, is_archived_view)
         return
 
     updated_at_local = format_datetime_for_user(note.get('updated_at'), user_timezone)
     due_date_local = format_datetime_for_user(note.get('due_date'), user_timezone)
     recurrence_rule = note.get('recurrence_rule')
     is_vip = user_profile.get('is_vip', False)
-
     category = note.get('category', 'Общее')
     is_completed = note.get('is_completed', False)
-
     status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else ("🛒" if category == 'Покупки' else "📌"))
     status_text = "Выполнена" if is_completed else ("В архиве" if note['is_archived'] else "Активна")
-
     summary = note.get('summary_text')
     full_text = note['corrected_text']
+    owner_id = note.get('owner_id')
+    is_owner = owner_id == user.id
 
-    text = f"{status_icon} {hbold(f'Заметка #{note['note_id']}')}\n\n"
+    shared_info_text = ""
+    if not is_owner:
+        owner_profile = await db.get_user_profile(owner_id)
+        owner_name = owner_profile.get('first_name', f'ID:{owner_id}') if owner_profile else f'ID:{owner_id}'
+        shared_info_text = f"🤝 Заметка доступна вам от {hbold(owner_name)}\n"
+
+    text = f"{status_icon} {hbold(f'Заметка #{note_id}')}\n\n"
+    if shared_info_text:
+        text += f"{hitalic(shared_info_text)}"
     if recurrence_rule and is_vip:
         text += f"⭐ 🔁 Повторение: {hitalic(humanize_rrule(recurrence_rule))}\n"
     text += f"Статус: {hitalic(status_text)}\n"
@@ -258,18 +339,54 @@ async def view_note_detail_handler(callback_query: types.CallbackQuery, callback
         text += f"\n{hitalic('Полный текст:')}\n{hcode(full_text)}\n"
 
     note['is_vip'] = is_vip
+    final_keyboard = get_note_view_actions_keyboard(note, page, user.id)
 
     try:
-        await callback_query.message.edit_text(
-            text, parse_mode="HTML",
-            reply_markup=get_note_view_actions_keyboard(note, current_page)
-        )
-    except Exception as e:
-        logger.warning(f"Could not edit note view, sending new message: {e}")
-        await callback_query.message.answer(
-            text, parse_mode="HTML",
-            reply_markup=get_note_view_actions_keyboard(note, current_page)
-        )
+        if is_callback:
+            await message.edit_text(text, parse_mode="HTML", reply_markup=final_keyboard)
+            await event.answer()
+        else:
+            await message.answer(text, parse_mode="HTML", reply_markup=final_keyboard)
+        # Сохраняем ID сообщения для будущей синхронизации
+        await db.store_shared_message_id(note_id, user.id, message.message_id)
+    except TelegramBadRequest as e:
+        logger.warning(f"Could not edit/send note view, sending new message: {e}")
+        sent_message = await message.answer(text, parse_mode="HTML", reply_markup=final_keyboard)
+        await db.store_shared_message_id(note_id, user.id, sent_message.message_id)
+
+
+@router.callback_query(NoteAction.filter(F.action == "share"))
+async def generate_share_link_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
+    note_id = callback_data.note_id
+    owner_id = callback_query.from_user.id
+    bot = callback_query.bot
+
+    token = await db.create_share_token(note_id, owner_id)
+    if not token:
+        await callback_query.answer("❌ Не удалось создать ссылку для приглашения. Попробуйте позже.", show_alert=True)
+        return
+
+    bot_info = await bot.get_me()
+    bot_username = bot_info.username
+    share_link = f"https://t.me/{bot_username}?start=share_{token}"
+
+    text = (
+        f"🤝 {hbold('Ссылка для приглашения создана!')}\n\n"
+        "Отправьте эту ссылку человеку, с которым хотите поделиться заметкой. "
+        "После того как он перейдет по ней и нажмет START, заметка появится в его списке.\n\n"
+        f"🔗 {hbold('Ваша ссылка:')}\n"
+        f"{hcode(share_link)}\n\n"
+        f"{hitalic('Ссылка действительна 48 часов и может быть использована только один раз.')}"
+    )
+
+    back_button = types.InlineKeyboardButton(
+        text="⬅️ Назад к заметке",
+        callback_data=NoteAction(action="view", note_id=note_id, page=callback_data.page).pack()
+    )
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+
+    await callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard,
+                                           disable_web_page_preview=True)
     await callback_query.answer()
 
 
@@ -304,14 +421,14 @@ async def change_category_handler(callback_query: CallbackQuery, callback_data: 
 @router.callback_query(NoteAction.filter(F.action == "set_category"))
 async def set_category_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
     new_category = callback_data.category
-    success = await db.update_note_category(callback_data.note_id, new_category, callback_query.from_user.id)
+    success = await db.update_note_category(callback_data.note_id, new_category)
 
     if success:
         await callback_query.answer(f"Категория изменена на '{new_category}'")
     else:
         await callback_query.answer("❌ Ошибка при смене категории.", show_alert=True)
 
-    await view_note_detail_handler(callback_query, callback_data, state)
+    await view_note_detail_handler(callback_query, state)
 
 
 @router.callback_query(NoteAction.filter(F.action == "stop_recurrence"))
@@ -321,12 +438,12 @@ async def stop_recurrence_handler(callback_query: CallbackQuery, callback_data: 
         await callback_query.answer("✅ Повторение для этой заметки отключено.")
     else:
         await callback_query.answer("❌ Ошибка при отключении повторения.", show_alert=True)
-    await view_note_detail_handler(callback_query, callback_data, state)
+    await view_note_detail_handler(callback_query, state)
 
 
 @router.callback_query(NoteAction.filter(F.action == "archive"))
 async def archive_note_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    success = await db.set_note_archived_status(callback_data.note_id, callback_query.from_user.id, archived=True)
+    success = await db.set_note_archived_status(callback_data.note_id, True)
     if success:
         remove_reminder_from_scheduler(callback_data.note_id)
         await callback_query.answer("🗄️ Заметка перемещена в архив")
@@ -350,7 +467,7 @@ async def unarchive_note_handler(callback_query: CallbackQuery, callback_data: N
                                         show_alert=True)
             return
 
-    success = await db.set_note_archived_status(callback_data.note_id, telegram_id, archived=False)
+    success = await db.set_note_archived_status(callback_data.note_id, False)
     if success:
         note = await db.get_note_by_id(callback_data.note_id, telegram_id)
         if note and note.get('due_date'):
@@ -403,8 +520,7 @@ async def delete_note_confirmed_handler(callback_query: CallbackQuery, callback_
 @router.callback_query(NoteAction.filter(F.action == "edit"))
 async def start_note_edit_handler(callback_query: CallbackQuery, callback_data: NoteAction, state: FSMContext):
     await state.set_state(NoteEditingStates.awaiting_new_text)
-    await state.update_data(note_id_to_edit=callback_data.note_id, page_to_return_to=callback_data.page,
-                            original_message_id=callback_query.message.message_id)
+    await state.update_data(note_id_to_edit=callback_data.note_id, page_to_return_to=callback_data.page)
     await callback_query.message.edit_text(
         f"✏️ {hbold('Редактирование заметки')}\n\n"
         "Пришлите мне новый текст для этой заметки. "
@@ -420,24 +536,9 @@ async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     note_id = user_data.get("note_id_to_edit")
     page_to_return_to = user_data.get("page_to_return_to", 1)
-
     await state.clear()
     await message.answer("🚫 Редактирование отменено.")
-
-    # Создаем фейковый callback, чтобы переиспользовать view_note_detail_handler
-    # Это более надежно, чем отправлять новое сообщение, т.к. сохраняется контекст
-    fake_callback = types.CallbackQuery(
-        id=f"fake_{message.from_user.id}",
-        from_user=message.from_user,
-        message=message,
-        chat_instance="fake_chat_instance"
-    )
-    fake_callback_data = NoteAction(
-        action="view",
-        note_id=note_id,
-        page=page_to_return_to
-    )
-    await view_note_detail_handler(fake_callback, fake_callback_data, state)
+    await view_note_detail_handler(message, state, note_id=note_id, page=page_to_return_to)
 
 
 @router.message(NoteEditingStates.awaiting_new_text, F.text)
@@ -462,11 +563,16 @@ async def process_note_edit_handler(message: types.Message, state: FSMContext):
 @router.callback_query(NoteAction.filter(F.action == "complete"))
 async def complete_note_handler(callback: CallbackQuery, callback_data: NoteAction, state: FSMContext):
     note_id = callback_data.note_id
-    telegram_id = callback.from_user.id
+    completer_id = callback.from_user.id
 
-    note = await db.get_note_by_id(note_id, telegram_id)
-    user_profile = await db.get_user_profile(telegram_id)
+    note = await db.get_note_by_id(note_id, completer_id)
+    if not note:
+        await callback.answer("❌ Заметка не найдена.", show_alert=True)
+        return
+
+    user_profile = await db.get_user_profile(completer_id)
     is_recurring = note and note.get('recurrence_rule') and user_profile.get('is_vip')
+    owner_id = note.get('owner_id')
 
     if is_recurring:
         await callback.answer("✅ Отлично! Это событие отмечено, ждем следующего.", show_alert=False)
@@ -481,19 +587,38 @@ async def complete_note_handler(callback: CallbackQuery, callback_data: NoteActi
             pass
         return
 
-    success = await db.set_note_completed_status(note_id, telegram_id, completed=True)
+    success = await db.set_note_completed_status(note_id, True)
     if success:
         remove_reminder_from_scheduler(note_id)
         await callback.answer("✅ Отлично! Задача выполнена и перенесена в архив.", show_alert=False)
 
-        try:
-            await callback.message.edit_text(
-                f"{callback.message.text}\n\n{hbold('Статус: ✅ Выполнено')}",
-                parse_mode="HTML", reply_markup=None
-            )
-        except Exception:
-            pass
-        await _display_notes_list_page(callback.message, telegram_id, page_num=1, state=state, is_archive_list=False)
+        if owner_id != completer_id:
+            completer_profile = await db.get_user_profile(completer_id)
+            owner_profile = await db.get_user_profile(owner_id)
+            if owner_profile and completer_profile:
+                try:
+                    await callback.bot.send_message(
+                        owner_id,
+                        f"✅ Ваша заметка '{hitalic(note.get('summary_text'))}' была выполнена пользователем {hbold(completer_profile.get('first_name'))}."
+                    )
+                except Exception as e:
+                    logger.warning(f"Не удалось уведомить владельца {owner_id} о выполнении заметки: {e}")
+
+        participants = await db.get_shared_note_participants(note_id)
+        message_ids = await db.get_shared_message_ids(note_id)
+        message_map = {m['user_id']: m['message_id'] for m in message_ids}
+
+        for p in participants:
+            p_id = p['telegram_id']
+            msg_id = message_map.get(p_id)
+            if msg_id:
+                try:
+                    await callback.bot.edit_message_reply_markup(p_id, msg_id, reply_markup=None)
+                except Exception:
+                    pass
+
+        await _display_notes_list_page(callback.message, completer_id, page_num=1, state=state, is_archive_list=False)
+
     else:
         await callback.answer("❌ Не удалось отметить задачу как выполненную.", show_alert=True)
 

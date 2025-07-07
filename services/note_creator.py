@@ -109,7 +109,9 @@ async def process_and_save_note(
             existing_items.extend(items_to_add)
 
             shopping_note["llm_analysis_json"]["items"] = existing_items
-            await db.update_note_llm_json(shopping_note['note_id'], shopping_note["llm_analysis_json"], telegram_id)
+
+            # ИСПРАВЛЕНИЕ: Убираем лишний аргумент telegram_id
+            await db.update_note_llm_json(shopping_note['note_id'], shopping_note["llm_analysis_json"])
 
             # Обновляем дату, если она была в запросе
             if due_date_obj:

@@ -2,7 +2,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram import types  # <--- ВОТ ЭТО ИСПРАВЛЕНИЕ
+from aiogram import types
 
 import config
 from config import NOTE_CATEGORIES, MAX_NOTES_MVP
@@ -94,10 +94,11 @@ def get_profile_actions_keyboard(has_active_shopping_list: bool = False) -> Inli
 
     if has_active_shopping_list:
         builder.button(text="🛒 Список покупок", callback_data="show_shopping_list_from_profile")
+        builder.button(text="🤝 Поделиться списком", callback_data="share_active_shopping_list")
 
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
     builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
-    builder.adjust(1)
+    builder.adjust(2 if has_active_shopping_list else 1, 1)
     return builder.as_markup()
 
 
@@ -237,7 +238,7 @@ def get_shopping_list_keyboard(note_id: int, items: list, is_archived: bool) -> 
     return builder.as_markup()
 
 
-def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeyboardMarkup:
+def get_note_view_actions_keyboard(note: dict, current_page: int, current_user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     note_id = note['note_id']
     is_archived = note.get('is_archived', False)
@@ -247,6 +248,7 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
     is_vip = note.get('is_vip', False)
     target_list_str = 'archive' if is_archived else 'active'
     category = note.get('category')
+    is_owner = note.get('owner_id') == current_user_id
 
     if category == 'Покупки':
         action_text = "📖 Посмотреть архивный список" if is_archived else "🛒 Открыть список покупок"
@@ -256,33 +258,40 @@ def get_note_view_actions_keyboard(note: dict, current_page: int) -> InlineKeybo
         )
 
     if is_completed:
-        builder.button(text="🗑️ Удалить навсегда",
-                       callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
-                                                target_list=target_list_str).pack())
+        if is_owner:
+            builder.button(text="🗑️ Удалить навсегда",
+                           callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
+                                                    target_list=target_list_str).pack())
     elif not is_archived:
         if category != 'Покупки':
             builder.button(text="✅ Выполнено",
                            callback_data=NoteAction(action="complete", note_id=note_id, page=current_page,
                                                     target_list=target_list_str).pack())
-        builder.button(text="✏️ Редактировать",
-                       callback_data=NoteAction(action="edit", note_id=note_id, page=current_page,
-                                                target_list=target_list_str).pack())
+        if is_owner:
+            builder.button(text="✏️ Редактировать",
+                           callback_data=NoteAction(action="edit", note_id=note_id, page=current_page,
+                                                    target_list=target_list_str).pack())
+            builder.button(text="🤝 Поделиться",
+                           callback_data=NoteAction(action="share", note_id=note_id, page=current_page).pack())
+
         builder.button(text="🗂️ Изменить категорию",
                        callback_data=NoteAction(action="change_category", note_id=note_id, page=current_page,
                                                 target_list=target_list_str).pack())
-        if is_recurring and is_vip:
+        if is_recurring and is_vip and is_owner:
             builder.button(text="⭐ 🔁 Сделать разовой",
                            callback_data=NoteAction(action="stop_recurrence", note_id=note_id, page=current_page,
                                                     target_list=target_list_str).pack())
-        builder.button(text="🗄️ В архив", callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
-                                                                   target_list=target_list_str).pack())
-    else:
-        builder.button(text="↩️ Восстановить",
-                       callback_data=NoteAction(action="unarchive", note_id=note_id, page=current_page,
-                                                target_list=target_list_str).pack())
-        builder.button(text="🗑️ Удалить навсегда",
-                       callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
-                                                target_list=target_list_str).pack())
+        if is_owner:
+            builder.button(text="🗄️ В архив", callback_data=NoteAction(action="archive", note_id=note_id, page=current_page,
+                                                                       target_list=target_list_str).pack())
+    else: # В архиве
+        if is_owner:
+            builder.button(text="↩️ Восстановить",
+                           callback_data=NoteAction(action="unarchive", note_id=note_id, page=current_page,
+                                                    target_list=target_list_str).pack())
+            builder.button(text="🗑️ Удалить навсегда",
+                           callback_data=NoteAction(action="confirm_delete", note_id=note_id, page=current_page,
+                                                    target_list=target_list_str).pack())
 
     if has_audio and not is_completed:
         builder.button(text="🎧 Прослушать оригинал",
@@ -365,13 +374,15 @@ def get_undo_creation_keyboard(note_id: int, is_shopping_list: bool = False) -> 
 
 
 def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_pages: int,
-                                    is_archive_list: bool) -> InlineKeyboardMarkup:
+                                    is_archive_list: bool, current_user_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     target_list_str = 'archive' if is_archive_list else 'active'
     if not notes and current_page == 1:
         pass
     else:
         for note in notes:
+            is_owner = note.get('owner_id') == current_user_id
+            shared_icon = "" if is_owner else "🤝"
             category = note.get('category')
             if category == 'Покупки':
                 status_icon = "🛒"
@@ -379,7 +390,7 @@ def get_notes_list_display_keyboard(notes: list[dict], current_page: int, total_
                 status_icon = "✅" if note.get('is_completed') else "📝"
 
             text_to_show = note.get('summary_text') or note['corrected_text']
-            preview_text = f"{status_icon} #{note['note_id']} - {text_to_show[:35]}"
+            preview_text = f"{shared_icon}{status_icon} #{note['note_id']} - {text_to_show[:35]}"
             if len(text_to_show) > 35: preview_text += "..."
             builder.button(text=preview_text,
                            callback_data=NoteAction(action="view", note_id=note['note_id'], page=current_page,

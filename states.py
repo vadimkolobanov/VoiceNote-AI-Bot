@@ -27,3 +27,4 @@ class AdminStates(StatesGroup):
 class SupportStates(StatesGroup):
     """Состояния для системы поддержки."""
     awaiting_report_message = State()
+

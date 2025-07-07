@@ -1,8 +1,9 @@
 # database_setup.py
 import json
+import secrets
 import asyncpg
 import logging
-from datetime import datetime, timezone, date, time
+from datetime import datetime, timezone, date, time, timedelta
 
 from config import DATABASE_URL, NOTES_PER_PAGE
 
@@ -96,7 +97,7 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         is_completed BOOLEAN DEFAULT FALSE
         );
     """,
-    # --- Безопасное добавление нового поля в существующую таблицу ---
+    # --- Безопасное добавление поля summary_text ---
     """
     DO $$
     BEGIN
@@ -105,6 +106,110 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         END IF;
     END;
     $$;
+    """,
+
+    # --- Таблица Note Shares (Для совместного доступа) ---
+    """
+    CREATE TABLE IF NOT EXISTS note_shares
+    (
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        note_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        notes
+    (
+        note_id
+    ) ON DELETE CASCADE,
+        owner_telegram_id BIGINT NOT NULL REFERENCES users
+    (
+        telegram_id
+    )
+      ON DELETE CASCADE,
+        shared_with_telegram_id BIGINT NOT NULL REFERENCES users
+    (
+        telegram_id
+    )
+      ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
+        UNIQUE
+    (
+        note_id,
+        shared_with_telegram_id
+    )
+        );
+    """,
+
+    # --- Таблица Shared Note Messages (Для синхронизации) ---
+    """
+    CREATE TABLE IF NOT EXISTS shared_note_messages
+    (
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        note_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        notes
+    (
+        note_id
+    ) ON DELETE CASCADE,
+        user_id BIGINT NOT NULL REFERENCES users
+    (
+        telegram_id
+    )
+      ON DELETE CASCADE,
+        message_id BIGINT NOT NULL,
+        UNIQUE
+    (
+        note_id,
+        user_id
+    )
+        );
+    """,
+
+    # --- НОВАЯ ТАБЛИЦА: Share Tokens (Для deep-link шаринга) ---
+    """
+    CREATE TABLE IF NOT EXISTS share_tokens
+    (
+        id
+        SERIAL
+        PRIMARY
+        KEY,
+        token
+        TEXT
+        UNIQUE
+        NOT
+        NULL,
+        note_id
+        BIGINT
+        NOT
+        NULL
+        REFERENCES
+        notes
+    (
+        note_id
+    ) ON DELETE CASCADE,
+        owner_id BIGINT NOT NULL REFERENCES users
+    (
+        telegram_id
+    )
+      ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW
+    (
+    ),
+        expires_at TIMESTAMPTZ NOT NULL,
+        is_used BOOLEAN DEFAULT FALSE
+        );
     """,
 
     # --- Таблица Birthdays ---
@@ -159,13 +264,16 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         );
     """,
 
-    # --- Индексы для ускорения запросов ---
+    # --- Индексы ---
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_user_actions_user_id ON user_actions (user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_user_actions_action_type ON user_actions (action_type);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_alice_user_id ON users(alice_user_id) WHERE alice_user_id IS NOT NULL;",
+    "CREATE INDEX IF NOT EXISTS idx_note_shares_note_id ON note_shares (note_id);",
+    "CREATE INDEX IF NOT EXISTS idx_note_shares_shared_with ON note_shares (shared_with_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON share_tokens (token);",
 ]
 
 db_pool: asyncpg.Pool | None = None
@@ -228,6 +336,40 @@ async def get_user_profile(telegram_id: int) -> dict | None:
     async with pool.acquire() as conn:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
         return dict(user_record) if user_record else None
+
+
+# --- Функции для Share Tokens ---
+
+async def create_share_token(note_id: int, owner_id: int) -> str | None:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        token = secrets.token_urlsafe(16)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=2)  # Ссылка действует 48 часов
+        query = """
+                INSERT INTO share_tokens (token, note_id, owner_id, expires_at)
+                VALUES ($1, $2, $3, $4) RETURNING token; \
+                """
+        try:
+            return await conn.fetchval(query, token, note_id, owner_id, expires_at)
+        except Exception as e:
+            logger.error(f"Failed to create share token for note {note_id}: {e}")
+            return None
+
+
+async def get_share_token_data(token: str) -> dict | None:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT * FROM share_tokens WHERE token = $1 AND expires_at > NOW() AND is_used = FALSE"
+        record = await conn.fetchrow(query, token)
+        return dict(record) if record else None
+
+
+async def mark_share_token_as_used(token: str) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE share_tokens SET is_used = TRUE WHERE token = $1"
+        result = await conn.execute(query, token)
+        return int(result.split(" ")[1]) > 0
 
 
 async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
@@ -357,12 +499,33 @@ async def get_paginated_notes_for_user(telegram_id: int, page: int = 1, per_page
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE AND is_completed = FALSE"
-        total_items = await conn.fetchval(
-            f"SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND {archived_filter_sql}", telegram_id) or 0
+
+        count_query = f"""
+            SELECT COUNT(*) FROM (
+                SELECT note_id FROM notes
+                WHERE telegram_id = $1 AND {archived_filter_sql}
+                UNION
+                SELECT n.note_id FROM notes n
+                JOIN note_shares ns ON n.note_id = ns.note_id
+                WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}
+            ) as combined_notes;
+        """
+        total_items = await conn.fetchval(count_query, telegram_id) or 0
+
         offset = (page - 1) * per_page
-        notes_records = await conn.fetch(
-            f"SELECT * FROM notes WHERE telegram_id = $1 AND {archived_filter_sql} ORDER BY due_date ASC NULLS LAST, created_at DESC LIMIT $2 OFFSET $3;",
-            telegram_id, per_page, offset)
+        fetch_query = f"""
+            SELECT * FROM (
+                SELECT *, telegram_id as owner_id FROM notes
+                WHERE telegram_id = $1 AND {archived_filter_sql}
+                UNION
+                SELECT n.*, n.telegram_id as owner_id FROM notes n
+                JOIN note_shares ns ON n.note_id = ns.note_id
+                WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}
+            ) as combined_notes
+            ORDER BY due_date ASC NULLS LAST, created_at DESC
+            LIMIT $2 OFFSET $3;
+        """
+        notes_records = await conn.fetch(fetch_query, telegram_id, per_page, offset)
         return [dict(record) for record in notes_records], total_items
 
 
@@ -396,42 +559,116 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
 
 
 def _process_note_record(record: asyncpg.Record) -> dict | None:
-    """Вспомогательная функция для обработки записи заметки, включая парсинг JSON."""
     if not record:
         return None
-
     note_dict = dict(record)
-
     if 'llm_analysis_json' in note_dict and isinstance(note_dict['llm_analysis_json'], str):
         try:
             note_dict['llm_analysis_json'] = json.loads(note_dict['llm_analysis_json'])
         except (json.JSONDecodeError, TypeError):
             logger.warning(
                 f"Не удалось распарсить llm_analysis_json для заметки #{note_dict.get('note_id')}. Оставляем как есть.")
-
     return note_dict
 
 
 async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        record = await conn.fetchrow("SELECT * FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id,
-                                     telegram_id)
+        if telegram_id == 0:  # Админский доступ
+            query = "SELECT n.*, n.telegram_id as owner_id FROM notes n WHERE n.note_id = $1 LIMIT 1;"
+            record = await conn.fetchrow(query, note_id)
+        else:
+            query = """
+                    SELECT n.*, n.telegram_id as owner_id
+                    FROM notes n
+                             LEFT JOIN note_shares ns ON n.note_id = ns.note_id
+                    WHERE n.note_id = $1 \
+                      AND (n.telegram_id = $2 OR ns.shared_with_telegram_id = $2) LIMIT 1; \
+                    """
+            record = await conn.fetchrow(query, note_id, telegram_id)
         return _process_note_record(record)
 
 
-async def get_active_shopping_list(telegram_id: int) -> dict | None:
-    """Возвращает самую последнюю активную заметку-список покупок."""
+async def share_note_with_user(note_id: int, owner_id: int, shared_with_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        try:
+            query = """
+                    INSERT INTO note_shares (note_id, owner_telegram_id, shared_with_telegram_id)
+                    VALUES ($1, $2, $3); \
+                    """
+            await conn.execute(query, note_id, owner_id, shared_with_id)
+            return True
+        except asyncpg.UniqueViolationError:
+            logger.warning(f"Попытка повторно поделиться заметкой {note_id} с пользователем {shared_with_id}.")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка при шаринге заметки {note_id}: {e}")
+            return False
+
+
+async def get_shared_note_participants(note_id: int) -> list[dict]:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        owner_query = "SELECT telegram_id, username, first_name FROM users WHERE telegram_id = (SELECT telegram_id FROM notes WHERE note_id = $1)"
+        owner_rec = await conn.fetchrow(owner_query, note_id)
+        participants = [dict(owner_rec)] if owner_rec else []
+        owner_id = owner_rec['telegram_id'] if owner_rec else None
+
+        shared_query = """
+                       SELECT u.telegram_id, u.username, u.first_name
+                       FROM users u
+                                JOIN note_shares ns ON u.telegram_id = ns.shared_with_telegram_id
+                       WHERE ns.note_id = $1; \
+                       """
+        shared_recs = await conn.fetch(shared_query, note_id)
+        for rec in shared_recs:
+            if rec['telegram_id'] != owner_id:
+                participants.append(dict(rec))
+
+        return participants
+
+
+async def store_shared_message_id(note_id: int, user_id: int, message_id: int):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-                SELECT * \
-                FROM notes
-                WHERE telegram_id = $1
-                  AND category = 'Покупки'
-                  AND is_archived = FALSE
-                  AND is_completed = FALSE
-                ORDER BY created_at DESC LIMIT 1; \
+                INSERT INTO shared_note_messages (note_id, user_id, message_id)
+                VALUES ($1, $2, $3) ON CONFLICT (note_id, user_id) DO \
+                UPDATE SET message_id = $3; \
+                """
+        await conn.execute(query, note_id, user_id, message_id)
+
+
+async def get_shared_message_ids(note_id: int) -> list[dict]:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT user_id, message_id FROM shared_note_messages WHERE note_id = $1"
+        records = await conn.fetch(query, note_id)
+        return [dict(rec) for rec in records]
+
+
+async def delete_shared_message_id(note_id: int, user_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "DELETE FROM shared_note_messages WHERE note_id = $1 AND user_id = $2"
+        result = await conn.execute(query, note_id, user_id)
+        return int(result.split(" ")[1]) > 0
+
+
+async def get_active_shopping_list(telegram_id: int) -> dict | None:
+    """Возвращает активный список покупок, где пользователь либо владелец, либо получатель."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = """
+                SELECT n.*, n.telegram_id as owner_id
+                FROM notes n
+                         LEFT JOIN note_shares ns ON n.note_id = ns.note_id
+                WHERE (n.telegram_id = $1 OR ns.shared_with_telegram_id = $1)
+                  AND n.category = 'Покупки'
+                  AND n.is_archived = FALSE
+                  AND n.is_completed = FALSE
+                ORDER BY n.created_at DESC LIMIT 1; \
                 """
         record = await conn.fetchrow(query, telegram_id)
         return _process_note_record(record)
@@ -453,32 +690,28 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
         records = await conn.fetch(query, telegram_id, user_timezone)
         return [dict(rec) for rec in records]
 
+
 async def get_or_create_active_shopping_list_note(telegram_id: int) -> dict | None:
-    """
-    Находит активную заметку-список покупок для пользователя.
-    Если такой нет, создает новую, пустую.
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # 1. Попытка найти существующий активный список
         find_query = """
-            SELECT * FROM notes
-            WHERE telegram_id = $1
-              AND category = 'Покупки'
-              AND is_archived = FALSE
-              AND is_completed = FALSE
-            ORDER BY created_at DESC LIMIT 1;
-        """
+                     SELECT * \
+                     FROM notes
+                     WHERE telegram_id = $1
+                       AND category = 'Покупки'
+                       AND is_archived = FALSE
+                       AND is_completed = FALSE
+                     ORDER BY created_at DESC LIMIT 1; \
+                     """
         record = await conn.fetchrow(find_query, telegram_id)
         if record:
             return _process_note_record(record)
-
-        # 2. Если не найден, создаем новый
         create_query = """
-            INSERT INTO notes (telegram_id, summary_text, corrected_text, category, llm_analysis_json, is_archived, is_completed)
-            VALUES ($1, 'Мой список покупок', 'Список товаров для покупки.', 'Покупки', '{"items": []}', FALSE, FALSE)
-            RETURNING *;
-        """
+                       INSERT INTO notes (telegram_id, summary_text, corrected_text, category, llm_analysis_json, \
+                                          is_archived, is_completed)
+                       VALUES ($1, 'Мой список покупок', 'Список товаров для покупки.', 'Покупки', '{"items": []}', \
+                               FALSE, FALSE) RETURNING *; \
+                       """
         try:
             new_record = await conn.fetchrow(create_query, telegram_id)
             logger.info(f"Создан новый персистентный список покупок для пользователя {telegram_id}")
@@ -487,6 +720,7 @@ async def get_or_create_active_shopping_list_note(telegram_id: int) -> dict | No
             logger.error(f"Не удалось создать персистентный список покупок для {telegram_id}: {e}")
             return None
 
+
 async def delete_note(note_id: int, telegram_id: int) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -494,12 +728,12 @@ async def delete_note(note_id: int, telegram_id: int) -> bool:
         return int(result.split(" ")[1]) > 0
 
 
-async def set_note_completed_status(note_id: int, telegram_id: int, completed: bool) -> bool:
+async def set_note_completed_status(note_id: int, completed: bool) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "UPDATE notes SET is_completed = $1, is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3",
-            completed, note_id, telegram_id)
+            "UPDATE notes SET is_completed = $1, is_archived = $1, updated_at = NOW() WHERE note_id = $2",
+            completed, note_id)
         return int(result.split(" ")[1]) > 0
 
 
@@ -532,7 +766,6 @@ async def get_notes_with_reminders() -> list[dict]:
                   AND n.due_date > NOW();
                 """
         records = await conn.fetch(query)
-        # Обрабатываем каждую запись, чтобы распарсить JSON
         processed_records = [_process_note_record(rec) for rec in records]
         return processed_records
 
@@ -546,31 +779,30 @@ async def update_note_text(note_id: int, new_text: str, telegram_id: int) -> boo
         return int(result.split(" ")[1]) > 0
 
 
-async def update_note_category(note_id: int, new_category: str, telegram_id: int) -> bool:
+async def update_note_category(note_id: int, new_category: str) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", new_category,
-            note_id, telegram_id)
+            "UPDATE notes SET category = $1, updated_at = NOW() WHERE note_id = $2", new_category,
+            note_id)
         return int(result.split(" ")[1]) > 0
 
 
-async def update_note_llm_json(note_id: int, new_llm_json: dict, telegram_id: int) -> bool:
-    """Обновляет только поле llm_analysis_json для заметки."""
+async def update_note_llm_json(note_id: int, new_llm_json: dict) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         json_str = json.dumps(new_llm_json)
-        query = "UPDATE notes SET llm_analysis_json = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3"
-        result = await conn.execute(query, json_str, note_id, telegram_id)
+        query = "UPDATE notes SET llm_analysis_json = $1, updated_at = NOW() WHERE note_id = $2"
+        result = await conn.execute(query, json_str, note_id)
         return int(result.split(" ")[1]) > 0
 
 
-async def set_note_archived_status(note_id: int, telegram_id: int, archived: bool) -> bool:
+async def set_note_archived_status(note_id: int, archived: bool) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2 AND telegram_id = $3", archived,
-            note_id, telegram_id)
+            "UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2", archived,
+            note_id)
         return int(result.split(" ")[1]) > 0
 
 

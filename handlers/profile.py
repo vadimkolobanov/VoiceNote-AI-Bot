@@ -15,7 +15,6 @@ router = Router()
 
 @router.callback_query(F.data == "user_profile")
 async def user_profile_display_handler(callback_query: types.CallbackQuery, state: FSMContext):
-    """Отображает обновленный и красивый профиль пользователя."""
     await state.clear()
     telegram_id = callback_query.from_user.id
     user_profile_data = await db.get_user_profile(telegram_id)
@@ -31,10 +30,8 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
     reg_date_local_str = format_datetime_for_user(reg_date_utc, user_timezone)
     is_vip = user_profile_data.get('is_vip', False)
 
-    # --- НОВАЯ ЛОГИКА: Проверяем наличие активного списка покупок ---
     active_shopping_list = await db.get_active_shopping_list(telegram_id)
     has_active_shopping_list = active_shopping_list is not None
-    # -------------------------------------------------------------
 
     profile_header = f"👤 {hbold('Ваш профиль')}\n\n"
 
@@ -72,9 +69,7 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
 
     response_text = "\n\n".join([profile_header, user_info_block, stats_block, settings_block])
 
-    # --- ИЗМЕНЕНИЕ: Передаем флаг в клавиатуру ---
     keyboard = get_profile_actions_keyboard(has_active_shopping_list=has_active_shopping_list)
-    # ---------------------------------------------
 
     try:
         await callback_query.message.edit_text(
@@ -90,3 +85,39 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
             reply_markup=keyboard
         )
     await callback_query.answer()
+
+
+@router.callback_query(F.data == "share_active_shopping_list")
+async def share_shopping_list_handler(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    active_list = await db.get_active_shopping_list(user_id)
+    if not active_list:
+        await callback.answer("У вас нет активного списка покупок, чтобы поделиться.", show_alert=True)
+        return
+
+    note_id = active_list['note_id']
+    token = await db.create_share_token(note_id, user_id)
+    if not token:
+        await callback.answer("❌ Не удалось создать ссылку. Попробуйте позже.", show_alert=True)
+        return
+
+    bot_info = await callback.bot.get_me()
+    bot_username = bot_info.username
+    share_link = f"https://t.me/{bot_username}?start=share_{token}"
+
+    text = (
+        f"🤝 {hbold('Ссылка для шаринга списка покупок')}\n\n"
+        "Отправьте эту ссылку человеку, с которым хотите вести совместный список покупок.\n\n"
+        f"🔗 {hbold('Ваша ссылка:')}\n"
+        f"{hcode(share_link)}\n\n"
+        f"{hitalic('Ссылка действительна 48 часов и может быть использована только один раз.')}"
+    )
+
+    back_button = types.InlineKeyboardButton(
+        text="⬅️ Назад в профиль",
+        callback_data="user_profile"
+    )
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True)
+    await callback.answer()
