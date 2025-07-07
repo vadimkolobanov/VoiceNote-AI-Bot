@@ -1,24 +1,37 @@
-# Используем официальный образ Python
+# Используем стабильный и легковесный официальный образ Python
 FROM python:3.12-slim
 
-# Устанавливаем рабочую директорию в контейнере
+# Устанавливаем переменные окружения, чтобы Python не создавал .pyc файлы
+ENV PYTHONDONTWRITEBYTECODE 1
+# Устанавливаем переменную, чтобы Python выводил логи сразу, а не буферизировал их
+ENV PYTHONUNBUFFERED 1
+
+# Устанавливаем рабочую директорию внутри контейнера
 WORKDIR /app
 
-# Копируем файл с зависимостями в рабочую директорию
+# Копируем только файл с зависимостями для кэширования этого слоя
 COPY requirements.txt .
 
-# Устанавливаем зависимости
-# --no-cache-dir чтобы не хранить кеш pip и уменьшить размер образа
-# --trusted-host pypi.python.org --trusted-host files.pythonhosted.org --trusted-host pypi.org могут быть нужны в некоторых сетях
+# Устанавливаем зависимости.
+# Использование --no-cache-dir уменьшает размер итогового образа.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем все остальные файлы проекта в рабочую директорию
-# (main.py, inline_keyboards.py, utills.py, llm_processor.py, database_setup.py)
-COPY . .
+# Копируем всю папку 'src' в рабочую директорию контейнера.
+# Теперь все наши исходники будут лежать в /app/src/
+COPY src/ /app/src/
 
-# Указываем команду для запуска приложения
-# Предполагается, что переменные окружения (TG_BOT_TOKEN, DEEPSEEK_API_KEY, DB_USER и т.д.)
-# будут переданы в контейнер при его запуске.
-CMD ["python", "main.py"]
-LABEL authors  = "Diana Globuz"
+# Копируем файл .env, если он используется для локальной разработки
+# В продакшене переменные лучше передавать через docker-compose или оркестратор
+
+
+# Открываем порт 8000, который использует FastAPI для вебхука Алисы
 EXPOSE 8000
+
+# Указываем команду для запуска приложения.
+# Теперь точка входа - это /app/src/main.py
+CMD ["python", "src/main.py"]
+
+# Метаданные образа (опционально, но хорошая практика)
+LABEL maintainer="Diana Globuz"
+LABEL version="1.0"
+LABEL description="VoiceNote AI Telegram Bot"
