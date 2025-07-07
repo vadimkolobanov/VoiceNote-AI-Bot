@@ -1,7 +1,10 @@
-# src/database/core.py
+# src/database/connection.py
+import asyncio
 import logging
+
 import asyncpg
-from ..core.config import DATABASE_URL
+
+from src.core.config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
 

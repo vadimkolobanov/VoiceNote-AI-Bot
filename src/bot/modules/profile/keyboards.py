@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ....services.tz_utils import COMMON_TIMEZONES
-from ..common_utils.callbacks import SettingsAction, TimezoneAction, PageNavigation
+from ...common_utils.callbacks import SettingsAction, TimezoneAction, PageNavigation
 
 
 def get_profile_actions_keyboard(has_active_shopping_list: bool = False) -> InlineKeyboardMarkup:

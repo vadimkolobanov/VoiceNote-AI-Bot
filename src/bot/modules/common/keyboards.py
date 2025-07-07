@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ....core import config
-from ..common_utils.callbacks import PageNavigation, SettingsAction, InfoAction
+from ...common_utils.callbacks import PageNavigation, SettingsAction, InfoAction
 
 
 def get_main_menu_keyboard(is_vip: bool = False) -> InlineKeyboardMarkup:

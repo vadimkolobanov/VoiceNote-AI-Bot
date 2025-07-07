@@ -62,7 +62,7 @@ async def process_and_save_note(
     user_tz = pytz.timezone(user_timezone_str)
     current_user_dt_iso = datetime.now(user_tz).isoformat()
 
-    llm_result = await enhance_text_with_llm(text_to_process, current_user_datetime_iso)
+    llm_result = await enhance_text_with_llm(text_to_process, current_user_dt_iso)  # <-- ИСПРАВЛЕНИЕ ЗДЕСЬ
 
     if "error" in llm_result:
         logger.error(f"LLM error for user {telegram_id}: {llm_result['error']}")

@@ -2,8 +2,9 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from ...common_utils.callbacks import BirthdayAction, PageNavigation, SettingsAction
 from ....core import config
-from ..common_utils.callbacks import BirthdayAction, PageNavigation, SettingsAction
+
 
 
 def get_birthdays_list_keyboard(birthdays: list[dict], page: int, total_pages: int) -> InlineKeyboardMarkup:

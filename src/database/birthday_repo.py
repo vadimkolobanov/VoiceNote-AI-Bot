@@ -1,7 +1,7 @@
 # src/database/birthday_repo.py
 
 import logging
-from .core import get_db_pool
+from .connection import get_db_pool
 
 logger = logging.getLogger(__name__)
 

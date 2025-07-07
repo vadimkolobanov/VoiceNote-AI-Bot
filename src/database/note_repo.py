@@ -6,7 +6,7 @@ import logging
 import asyncpg
 from datetime import datetime, timezone, timedelta
 
-from .core import get_db_pool
+from .connection import get_db_pool
 from ..core.config import NOTES_PER_PAGE
 
 logger = logging.getLogger(__name__)

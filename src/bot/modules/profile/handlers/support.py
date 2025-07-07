@@ -8,7 +8,7 @@ from aiogram.utils.markdown import hbold, hitalic
 
 from .....core.config import ADMIN_TELEGRAM_ID
 from ...admin.handlers import IsAdmin  # Импортируем фильтр из админского модуля
-from ..common_utils.states import SupportStates
+from ....common_utils.states import SupportStates
 
 logger = logging.getLogger(__name__)
 router = Router()

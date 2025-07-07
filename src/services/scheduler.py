@@ -14,13 +14,11 @@ from apscheduler.executors.asyncio import AsyncIOExecutor
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
 from ..database import note_repo, birthday_repo, user_repo
-from ..bot.modules.notes.keyboards import get_reminder_notification_keyboard
+# УБИРАЕМ НЕПРАВИЛЬНЫЙ ИМПОРТ ОТСЮДА
+# from ..bot.modules.notes.keyboards import get_reminder_notification_keyboard
 from .tz_utils import format_datetime_for_user
-from .llm import enhance_text_with_llm  # импортируем для типа дайджеста
 
 logger = logging.getLogger(__name__)
-
-# --- Инициализация планировщика ---
 
 jobstores = {'default': MemoryJobStore()}
 executors = {'default': AsyncIOExecutor()}
@@ -129,9 +127,13 @@ def remove_reminder_from_scheduler(note_id: int):
         logger.info(f"Удалено {jobs_removed_count} напоминаний для заметки #{note_id} из планировщика.")
 
 
+# ИЗМЕНЕННАЯ ФУНКЦИЯ
 async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, note_text: str, due_date: datetime,
                                      is_pre_reminder: bool):
     """Функция, которая непосредственно отправляет сообщение с напоминанием."""
+    # ИМПОРТИРУЕМ КЛАВИАТУРУ ПРЯМО ЗДЕСЬ, ЧТОБЫ РАЗОРВАТЬ ЦИКЛ
+    from ..bot.modules.notes.keyboards import get_reminder_notification_keyboard
+
     logger.info(
         f"Отправка {'предварительного ' if is_pre_reminder else 'основного'} напоминания по заметке #{note_id} пользователю {telegram_id}")
     try:
@@ -167,7 +169,6 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         if "chat not found" in str(e).lower() or "bot was blocked by the user" in str(e).lower():
             logger.warning(
                 f"Не удалось отправить напоминание пользователю {telegram_id}. Чат не найден или бот заблокирован. Ошибка: {e}")
-            # Здесь можно добавить логику по деактивации пользователя в БД
         else:
             logger.error(f"Ошибка Telegram API при отправке напоминания {note_id} пользователю {telegram_id}: {e}",
                          exc_info=True)
@@ -175,6 +176,8 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         logger.error(f"Не удалось отправить напоминание по заметке #{note_id} пользователю {telegram_id}: {e}",
                      exc_info=True)
 
+
+# ... (остальной код scheduler.py остается без изменений) ...
 
 async def reschedule_recurring_note(bot: Bot, note: dict):
     """Пересчитывает дату следующего повторения для задачи и добавляет ее в планировщик."""
@@ -234,8 +237,6 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     notes_today = await note_repo.get_notes_for_today_digest(telegram_id, user_timezone)
     birthdays_soon = await birthday_repo.get_birthdays_for_upcoming_digest(telegram_id)
 
-    # ... (логика формирования промпта и отправки запроса в LLM, как в старом scheduler.py) ...
-    # Я скопирую ее для полноты
     notes_text_parts = []
     if notes_today:
         for note in notes_today:
@@ -291,7 +292,6 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 
 Хорошего дня! 🌟" ну или список задач. Никакого лишнего текста 
 """
-    # Здесь мы используем aiohttp, который уже есть в зависимостях aiogram
     from ..core.config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
     import aiohttp
 
@@ -364,13 +364,12 @@ async def send_birthday_reminders(bot: Bot):
             logger.info(f"Подготовлено напоминание о дне рождения '{person_name}' для пользователя {user_id}")
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        # Логируем ошибки, если не удалось отправить
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 try:
                     chat_id = tasks[i].__self__.chat_id
                     logger.error(f"Не удалось отправить напоминание о дне рождения пользователю {chat_id}: {result}")
-                except Exception:  # На случай если не удастся извлечь chat_id
+                except Exception:
                     logger.error(f"Не удалось отправить напоминание о дне рождения: {result}")
 
 
@@ -392,7 +391,7 @@ async def setup_daily_jobs(bot: Bot):
     scheduler.add_job(
         send_birthday_reminders,
         trigger='cron',
-        hour=0,  # в полночь по UTC
+        hour=0,
         minute=5,
         kwargs={'bot': bot},
         id='daily_birthday_check',
@@ -403,7 +402,7 @@ async def setup_daily_jobs(bot: Bot):
     scheduler.add_job(
         check_and_send_digests,
         trigger='cron',
-        hour='*',  # каждый час
+        hour='*',
         minute=1,
         kwargs={'bot': bot},
         id='hourly_digest_check',

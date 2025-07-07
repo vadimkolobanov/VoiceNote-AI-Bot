@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone, date, time
 from aiogram import types
 
-from .core import get_db_pool
+from .connection import get_db_pool
 
 logger = logging.getLogger(__name__)
 

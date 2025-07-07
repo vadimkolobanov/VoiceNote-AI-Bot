@@ -5,10 +5,11 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hlink, hcode, hitalic
 
+from ...common_utils.callbacks import SettingsAction, InfoAction
 from ....core import config
 from ....database import user_repo, note_repo
 from ....services.scheduler import add_reminder_to_scheduler
-from ..common_utils.callbacks import InfoAction, SettingsAction
+
 from ..notes.handlers import list_view, shopping_list  # Импортируем хендлеры из модуля notes
 from .keyboards import get_main_menu_keyboard, get_info_keyboard, get_donation_keyboard
 

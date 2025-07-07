@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hitalic
 
 from .....database import note_repo
-from ..common_utils.callbacks import ShoppingListAction
+from ....common_utils.callbacks import ShoppingListAction
 from ..keyboards import get_shopping_list_keyboard
 from .list_view import display_notes_list_page
 

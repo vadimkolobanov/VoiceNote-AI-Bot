@@ -7,10 +7,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hcode, hbold, hitalic
 
+from .....core import config
 from .....database import note_repo, user_repo
 from .....services.tz_utils import format_datetime_for_user
-from ..common_utils.callbacks import NoteAction, PageNavigation
-from ..common_utils.states import NoteNavigationStates
+from ....common_utils.callbacks import NoteAction, PageNavigation
+from ....common_utils.states import NoteNavigationStates
 from ..keyboards import get_notes_list_display_keyboard, get_note_view_actions_keyboard
 
 logger = logging.getLogger(__name__)

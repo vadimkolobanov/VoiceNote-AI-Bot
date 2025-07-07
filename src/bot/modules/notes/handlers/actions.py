@@ -7,10 +7,10 @@ from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
-from .....database import note_repo, user_repo
-from .....core.config import MAX_NOTES_MVP
-from .....services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler, reschedule_recurring_note
-from ..common_utils.callbacks import NoteAction
+from src.database import note_repo, user_repo
+from src.core.config import MAX_NOTES_MVP
+from src.services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler, reschedule_recurring_note
+from src.bot.common_utils.callbacks import NoteAction
 from ..keyboards import get_confirm_delete_keyboard
 from .list_view import display_notes_list_page, view_note_detail_handler
 

@@ -4,23 +4,22 @@ import re
 from datetime import datetime
 
 from aiogram import F, Router, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter  # <-- ИМПОРТИРУЕМ StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from aiogram.utils.markdown import hbold, hitalic, hcode
 
 from ....database import birthday_repo, user_repo
 from ....core import config
-from ..common_utils.callbacks import BirthdayAction, PageNavigation
-from ..common_utils.states import BirthdayStates
+from ...common_utils.callbacks import BirthdayAction, PageNavigation
+from ...common_utils.states import BirthdayStates
 from .keyboards import get_full_birthdays_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-# --- Вспомогательные функции ---
-
+# ... (весь код до хендлера отмены остается без изменений) ...
 def parse_date(date_str: str) -> tuple[int, int, int | None] | None:
     """Парсит дату из строки. Возвращает (день, месяц, год) или None."""
     date_str = date_str.strip()
@@ -227,8 +226,17 @@ async def process_import_file(message: types.Message, state: FSMContext):
     await show_birthdays_list(message, state)
 
 
-# Обработчик отмены для всех состояний этого модуля
-@router.message(BirthdayStates.all_states, Command("cancel"))
+
+@router.message(StateFilter(BirthdayStates), Command("cancel"))
 async def cancel_birthday_add(message: types.Message, state: FSMContext):
+    """
+    Отменяет любое действие в сценариях, связанных с днями рождения.
+    """
+    current_state = await state.get_state()
+    if current_state is None:
+        return  # Если по какой-то причине состояния уже нет, ничего не делаем
+
+    logger.info(f"Отмена состояния {current_state} для пользователя {message.from_user.id}")
     await message.answer("🚫 Действие отменено.")
+    # Возвращаем пользователя к главному экрану дней рождений
     await show_birthdays_list(message, state)

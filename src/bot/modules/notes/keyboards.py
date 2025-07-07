@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ....core.config import NOTE_CATEGORIES
-from ..common_utils.callbacks import NoteAction, ShoppingListAction, PageNavigation
+from ...common_utils.callbacks import NoteAction, ShoppingListAction, PageNavigation
 
 
 def get_undo_creation_keyboard(note_id: int, is_shopping_list: bool = False) -> InlineKeyboardMarkup:

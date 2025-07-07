@@ -11,8 +11,8 @@ from .....core.config import ADMIN_TELEGRAM_ID
 from .....database import user_repo
 from .....services.tz_utils import ALL_PYTZ_TIMEZONES
 from .....web.routes import get_link_code_for_user  # Импортируем из веб-модуля
-from ..common_utils.callbacks import SettingsAction, TimezoneAction
-from ..common_utils.states import ProfileSettingsStates
+from ....common_utils.callbacks import SettingsAction, TimezoneAction
+from ....common_utils.states import ProfileSettingsStates
 from ..keyboards import (
     get_settings_menu_keyboard,
     get_timezone_selection_keyboard,
