@@ -8,6 +8,7 @@ from .....core import config
 from .....database import user_repo, note_repo, birthday_repo
 from .....services.tz_utils import format_datetime_for_user
 from ..keyboards import get_profile_actions_keyboard
+from ...notes.handlers import shopping_list
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -26,7 +27,6 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
         await callback_query.answer("Профиль не найден. Пожалуйста, нажмите /start.", show_alert=True)
         return
 
-    # Собираем статистику асинхронно
     active_notes_count = await note_repo.count_active_notes_for_user(telegram_id)
     birthdays_count = await birthday_repo.count_birthdays_for_user(telegram_id)
     active_shopping_list = await note_repo.get_active_shopping_list(telegram_id)
@@ -36,7 +36,6 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
     is_vip = user_profile_data.get('is_vip', False)
     has_active_shopping_list = active_shopping_list is not None
 
-    # --- Формируем текст сообщения ---
     profile_header = f"👤 {hbold('Ваш профиль')}\n\n"
 
     user_info_parts = [f"▪️ {hbold('ID')}: {hcode(user_profile_data['telegram_id'])}"]
@@ -73,6 +72,18 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
         await callback_query.message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
 
     await callback_query.answer()
+
+
+@router.callback_query(F.data == "show_active_shopping_list")
+async def show_active_shopping_list_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    active_list = await note_repo.get_active_shopping_list(user_id)
+    if not active_list:
+        await callback.answer("У вас нет активного списка покупок.", show_alert=True)
+        return
+
+    await shopping_list.render_shopping_list(callback, active_list['note_id'], user_id)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "share_active_shopping_list")

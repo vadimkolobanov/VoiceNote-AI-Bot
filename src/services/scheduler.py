@@ -12,10 +12,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from aiogram.utils.markdown import hbold, hcode, hitalic
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ..database import note_repo, birthday_repo, user_repo
-# УБИРАЕМ НЕПРАВИЛЬНЫЙ ИМПОРТ ОТСЮДА
-# from ..bot.modules.notes.keyboards import get_reminder_notification_keyboard
+from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
 
 logger = logging.getLogger(__name__)
@@ -38,14 +38,11 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
     if not note_id or not due_date_utc:
         return
 
-    # Сначала удаляем все старые задачи для этой заметки
     remove_reminder_from_scheduler(note_id)
 
-    # Убеждаемся, что дата "осознанная" (aware)
     if due_date_utc.tzinfo is None:
         due_date_utc = pytz.utc.localize(due_date_utc)
 
-    # Если время не было указано (полночь), используем время по умолчанию из профиля
     is_time_ambiguous = (due_date_utc.time() == time(0, 0, 0))
     final_due_date_utc = due_date_utc
 
@@ -61,14 +58,12 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
         aware_local_due_date = user_tz.localize(local_due_date)
         final_due_date_utc = aware_local_due_date.astimezone(pytz.utc)
 
-        # Обновляем дату в БД, чтобы она была точной
         asyncio.create_task(note_repo.update_note_due_date(note_id, final_due_date_utc))
         log_msg_time = f"{default_time.strftime('%H:%M')} (Free-user default)" if not is_vip else f"{default_time.strftime('%H:%M')} (VIP-user setting)"
         logger.info(f"Для заметки #{note_id} установлено время напоминания на {log_msg_time}")
 
     now_utc = datetime.now(pytz.utc)
 
-    # Добавляем основное напоминание
     if final_due_date_utc > now_utc:
         job_id_main = f"note_reminder_{note_id}_main"
         scheduler.add_job(
@@ -86,7 +81,6 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
         )
         logger.info(f"Основное напоминание для заметки #{note_id} запланировано на {final_due_date_utc.isoformat()}")
 
-    # Добавляем предварительное напоминание для VIP
     if is_vip:
         pre_reminder_minutes = note.get('pre_reminder_minutes', 0)
         if pre_reminder_minutes > 0:
@@ -115,7 +109,6 @@ def remove_reminder_from_scheduler(note_id: int):
     if not note_id: return
     prefix = f"note_reminder_{note_id}"
     jobs_removed_count = 0
-    # Проходим по копии списка, так как будем изменять его в цикле
     for job in scheduler.get_jobs()[:]:
         if job.id.startswith(prefix):
             try:
@@ -127,17 +120,14 @@ def remove_reminder_from_scheduler(note_id: int):
         logger.info(f"Удалено {jobs_removed_count} напоминаний для заметки #{note_id} из планировщика.")
 
 
-# ИЗМЕНЕННАЯ ФУНКЦИЯ
 async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, note_text: str, due_date: datetime,
                                      is_pre_reminder: bool):
     """Функция, которая непосредственно отправляет сообщение с напоминанием."""
-    # ИМПОРТИРУЕМ КЛАВИАТУРУ ПРЯМО ЗДЕСЬ, ЧТОБЫ РАЗОРВАТЬ ЦИКЛ
     from ..bot.modules.notes.keyboards import get_reminder_notification_keyboard
 
     logger.info(
         f"Отправка {'предварительного ' if is_pre_reminder else 'основного'} напоминания по заметке #{note_id} пользователю {telegram_id}")
     try:
-        # Перепроверяем актуальность заметки перед отправкой
         note = await note_repo.get_note_by_id(note_id, telegram_id)
         if not note or note.get('is_completed') or note.get('is_archived'):
             logger.info(f"Напоминание для заметки #{note_id} отменено: заметка неактивна.")
@@ -161,7 +151,6 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         keyboard = get_reminder_notification_keyboard(note_id, is_pre_reminder=is_pre_reminder)
         await bot.send_message(chat_id=telegram_id, text=text, parse_mode="HTML", reply_markup=keyboard)
 
-        # Если это было основное напоминание для повторяющейся задачи, пересоздаем ее
         if not is_pre_reminder and note.get('recurrence_rule'):
             await reschedule_recurring_note(bot, note)
 
@@ -177,7 +166,23 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
                      exc_info=True)
 
 
-# ... (остальной код scheduler.py остается без изменений) ...
+async def send_shopping_list_ping(bot: Bot, user_id: int, note_id: int):
+    """Отправляет пользователю простое напоминание о списке покупок."""
+    logger.info(f"Отправка 'пинга' о списке покупок #{note_id} пользователю {user_id}")
+    try:
+        note = await note_repo.get_note_by_id(note_id, user_id)
+        if not note or note.get('is_archived'):
+            logger.info(f"Пи-пинг о списке #{note_id} отменен, так как список заархивирован.")
+            return
+
+        text = "🔔 Напоминаю про ваш список покупок!"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛒 Посмотреть список", callback_data=NoteAction(action="view", note_id=note_id).pack())]
+        ])
+        await bot.send_message(user_id, text, reply_markup=kb)
+    except Exception as e:
+        logger.error(f"Не удалось отправить 'пинг' о списке покупок #{note_id} пользователю {user_id}: {e}")
+
 
 async def reschedule_recurring_note(bot: Bot, note: dict):
     """Пересчитывает дату следующего повторения для задачи и добавляет ее в планировщик."""

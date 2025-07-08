@@ -27,6 +27,13 @@ class ShoppingListAction(CallbackData, prefix="shop_list"):
     item_index: int | None = None
 
 
+class ShoppingListReminder(CallbackData, prefix="shop_rem"):
+    """Действия для установки напоминания о списке покупок."""
+    action: str # 'show_options', 'set', 'cancel'
+    note_id: int
+    value: str | None = None # Используем строковое значение для гибкости
+
+
 class PageNavigation(CallbackData, prefix="pg_nav"):
     """
     Пагинация для списков.
@@ -52,8 +59,9 @@ class TimezoneAction(CallbackData, prefix="tz_act"):
 
 
 class InfoAction(CallbackData, prefix="info_act"):
-    """Действия в информационном разделе."""
-    action: str
+    """Действия в информационном/справочном разделе."""
+    action: str # main, guides, guide_..., support
+    guide_topic: str | None = None
 
 
 class BirthdayAction(CallbackData, prefix="bday_act"):

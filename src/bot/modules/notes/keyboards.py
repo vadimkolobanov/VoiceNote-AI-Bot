@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ....core.config import NOTE_CATEGORIES
-from ...common_utils.callbacks import NoteAction, ShoppingListAction, PageNavigation
+from ...common_utils.callbacks import NoteAction, ShoppingListAction, PageNavigation, ShoppingListReminder
 
 
 def get_undo_creation_keyboard(note_id: int, is_shopping_list: bool = False) -> InlineKeyboardMarkup:
@@ -62,7 +62,6 @@ def get_notes_list_display_keyboard(
         )
     builder.adjust(1)
 
-    # Пагинация
     pagination_row_items = []
     if current_page > 1:
         pagination_row_items.append(
@@ -81,7 +80,19 @@ def get_notes_list_display_keyboard(
     if pagination_row_items:
         builder.row(*pagination_row_items)
 
-    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="go_to_main_menu"))
+    # Добавляем кнопки управления списком
+    bottom_buttons = []
+    if not is_archive_list:
+        bottom_buttons.append(
+            InlineKeyboardButton(text="🗄️ Архив",
+                                 callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
+        )
+
+    bottom_buttons.append(
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="go_to_main_menu")
+    )
+    builder.row(*bottom_buttons)
+
     return builder.as_markup()
 
 
@@ -192,16 +203,19 @@ def get_reminder_notification_keyboard(note_id: int, is_pre_reminder: bool = Fal
     return builder.as_markup()
 
 
-def get_shopping_list_keyboard(note_id: int, items: list, is_archived: bool) -> InlineKeyboardMarkup:
+def get_shopping_list_keyboard(note_id: int, items: list, is_archived: bool,
+                               participants_map: dict[int, str]) -> InlineKeyboardMarkup:
     """Клавиатура для управления списком покупок."""
     builder = InlineKeyboardBuilder()
 
     for index, item in enumerate(items):
         status_icon = "✅" if item.get('checked') else "⬜️"
         item_name = item.get('item_name', 'Без названия').strip()
-        button_text = f"{status_icon} {item_name}"
+        author_id = item.get('added_by')
+        author_name = participants_map.get(author_id)
+        author_str = f" ({author_name})" if author_name else ""
+        button_text = f"{status_icon} {item_name}{author_str}"
 
-        # В архиве кнопки неактивны
         if is_archived:
             builder.button(text=button_text, callback_data="ignore")
         else:
@@ -210,10 +224,13 @@ def get_shopping_list_keyboard(note_id: int, items: list, is_archived: bool) -> 
                 callback_data=ShoppingListAction(action="toggle", note_id=note_id, item_index=index).pack()
             )
 
-    builder.adjust(1)  # Каждый товар на новой строке
+    builder.adjust(1)
 
-    # Кнопки управления списком
     if not is_archived:
+        builder.row(InlineKeyboardButton(
+            text="🔔 Напомнить о списке",
+            callback_data=ShoppingListReminder(action="show_options", note_id=note_id).pack()
+        ))
         builder.row(InlineKeyboardButton(
             text="🛒 Завершить и архивировать",
             callback_data=ShoppingListAction(action="archive", note_id=note_id).pack()
@@ -223,4 +240,35 @@ def get_shopping_list_keyboard(note_id: int, items: list, is_archived: bool) -> 
         text="⬅️ Назад к заметке",
         callback_data=NoteAction(action="view", note_id=note_id).pack()
     ))
+    return builder.as_markup()
+
+
+def get_shopping_reminder_options_keyboard(note_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура с расширенными вариантами времени для напоминания о списке покупок."""
+    builder = InlineKeyboardBuilder()
+
+    options = {
+        # Относительные
+        "Через 1 час": "in_1h",
+        "Через 3 часа": "in_3h",
+        # Абсолютные (сегодня)
+        "Сегодня в 18:00": "today_18",
+        "Сегодня в 20:00": "today_20",
+        # Абсолютные (ближайшие дни)
+        "Завтра утром (9:00)": "tomorrow_09",
+        "В субботу (12:00)": "saturday_12",
+    }
+
+    for text, value in options.items():
+        builder.button(
+            text=text,
+            callback_data=ShoppingListReminder(action="set", note_id=note_id, value=value).pack()
+        )
+
+    builder.button(
+        text="Отмена",
+        callback_data=ShoppingListAction(action="show", note_id=note_id).pack()
+    )
+
+    builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
