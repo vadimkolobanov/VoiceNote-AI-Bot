@@ -2,7 +2,7 @@
 from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# Импортируем роутеры из всех наших модулей
+# Импортируем "главные" роутеры из каждого модуля
 from .modules.admin import router as admin_router
 from .modules.birthdays import router as birthdays_router
 from .modules.common import router as common_router
@@ -25,12 +25,11 @@ def get_dispatcher() -> Dispatcher:
 
     # 2. Модули с основной функциональностью, которые срабатывают
     #    по конкретным колбэкам или командам.
-    dp.include_router(profile_router)  # Включает в себя profile, settings, support
+    dp.include_router(profile_router)
     dp.include_router(birthdays_router)
 
-    # 3. Модуль заметок. Он содержит хендлеры, которые могут реагировать
-    #    на любой текст или голос (F.text, F.voice). Поэтому он должен идти
-    #    после более специфичных хендлеров.
+    # 3. Модуль заметок. Он содержит все свои хендлеры, собранные
+    #    в правильном порядке внутри своего __init__.py.
     dp.include_router(notes_router)
 
     # 4. Общие команды (/start, /help) и колбэки (go_to_main_menu).

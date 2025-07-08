@@ -62,7 +62,7 @@ async def process_and_save_note(
     user_tz = pytz.timezone(user_timezone_str)
     current_user_dt_iso = datetime.now(user_tz).isoformat()
 
-    llm_result = await enhance_text_with_llm(text_to_process, current_user_dt_iso)  # <-- ИСПРАВЛЕНИЕ ЗДЕСЬ
+    llm_result = await enhance_text_with_llm(text_to_process, current_user_dt_iso)
 
     if "error" in llm_result:
         logger.error(f"LLM error for user {telegram_id}: {llm_result['error']}")
@@ -100,9 +100,14 @@ async def process_and_save_note(
 
         existing_items = shopping_note.get("llm_analysis_json", {}).get("items", [])
         existing_item_names = {item['item_name'].lower() for item in existing_items}
-        new_items = llm_analysis_json["items"]
+        new_items_from_llm = llm_analysis_json["items"]
 
-        items_to_add = [item for item in new_items if item['item_name'].lower() not in existing_item_names]
+        items_to_add = []
+        for item in new_items_from_llm:
+            if item['item_name'].lower() not in existing_item_names:
+                item['added_by'] = telegram_id
+                items_to_add.append(item)
+
         existing_items.extend(items_to_add)
         shopping_note["llm_analysis_json"]["items"] = existing_items
 

@@ -2,111 +2,94 @@
 import logging
 
 from aiogram import F, Router, types
-from aiogram.filters import Command, StateFilter  # <-- Добавляем StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold
 
-# Используем относительные импорты
 from .....database import note_repo
 from ....common_utils.callbacks import NoteAction
 from ....common_utils.states import NoteEditingStates
-from ..keyboards import get_category_selection_keyboard
 from .list_view import view_note_detail_handler, display_notes_list_page
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-# --- Редактирование текста заметки ---
-
 @router.callback_query(NoteAction.filter(F.action == "edit"))
 async def start_note_edit_handler(callback: types.CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    """Начинает FSM-сценарий редактирования текста заметки."""
+    """Начинает сценарий редактирования текста заметки."""
+    await state.clear()
     await state.set_state(NoteEditingStates.awaiting_new_text)
     await state.update_data(
-        note_id_to_edit=callback_data.note_id,
-        page_to_return_to=callback_data.page,
-        is_archive_view=callback_data.target_list == 'archive'
+        note_id=callback_data.note_id,
+        page=callback_data.page,
+        target_list=callback_data.target_list
     )
-    await callback.message.edit_text(
-        f"✏️ {hbold('Редактирование заметки')}\n\n"
-        "Пришлите мне новый текст для этой заметки. Я полностью заменю старый текст и попробую заново его проанализировать.\n\n"
-        "Для отмены отправьте /cancel.",
-        parse_mode="HTML"
+
+    note = await note_repo.get_note_by_id(callback_data.note_id, callback.from_user.id)
+    if not note:
+        await callback.answer("Заметка не найдена.", show_alert=True)
+        await state.clear()
+        return
+
+    text = (
+        f"✏️ {hbold('Редактирование заметки')} #{note['note_id']}\n\n"
+        f"Пришлите новый текст для этой заметки. "
+        f"Текущий текст:\n"
+        f"<code>{note['corrected_text']}</code>\n\n"
+        "Для отмены введите /cancel."
     )
+
+    await callback.message.edit_text(text, parse_mode="HTML")
     await callback.answer()
 
 
-@router.message(StateFilter(NoteEditingStates), Command("cancel"))  # <-- ИСПРАВЛЕНИЕ
-async def cancel_note_edit_handler(message: types.Message, state: FSMContext):
-    """Отменяет редактирование и возвращает к просмотру заметки."""
-    user_data = await state.get_data()
-    note_id = user_data.get("note_id_to_edit")
+@router.message(NoteEditingStates.awaiting_new_text, F.text, ~F.text.startswith('/'))
+async def process_new_note_text_handler(message: types.Message, state: FSMContext):
+    """Обрабатывает новый текст и обновляет заметку."""
+    fsm_data = await state.get_data()
+    note_id = fsm_data.get('note_id')
+    page = fsm_data.get('page', 1)
+    target_list = fsm_data.get('target_list', 'active')
 
-    current_state = await state.get_state()
-    logger.info(f"Отмена состояния {current_state} для пользователя {message.from_user.id}")
+    if not note_id:
+        await message.reply("Произошла ошибка, ID заметки не найден. Попробуйте снова.")
+        await state.clear()
+        return
+
+    new_text = message.text.strip()
+    success = await note_repo.update_note_text(note_id, new_text, message.from_user.id)
+
+    await state.clear()
+
+    if success:
+        await message.answer("✅ Текст заметки успешно обновлен!")
+        # Возвращаемся к просмотру обновленной заметки
+        await view_note_detail_handler(message, state, note_id=note_id)
+    else:
+        await message.answer("❌ Не удалось обновить текст заметки. Возможно, вы не являетесь ее владельцем.")
+        # Возвращаемся к списку
+        await display_notes_list_page(
+            message=message,
+            user_id=message.from_user.id,
+            page=page,
+            archived=(target_list == 'archive'),
+            is_callback=False
+        )
+
+
+@router.message(StateFilter(NoteEditingStates), Command("cancel"))
+async def cancel_edit_handler(message: types.Message, state: FSMContext):
+    """Отменяет процесс редактирования."""
+    fsm_data = await state.get_data()
+    note_id = fsm_data.get('note_id')
     await state.clear()
 
     await message.answer("🚫 Редактирование отменено.")
 
-    # Возвращаемся к просмотру заметки
     if note_id:
+        # Возвращаемся к просмотру заметки без изменений
         await view_note_detail_handler(message, state, note_id=note_id)
-
-
-@router.message(NoteEditingStates.awaiting_new_text, F.text)
-async def process_note_edit_handler(message: types.Message, state: FSMContext):
-    """Принимает новый текст, обновляет заметку и возвращает к списку."""
-    user_data = await state.get_data()
-    note_id = user_data.get("note_id_to_edit")
-    page = user_data.get("page_to_return_to", 1)
-    is_archive = user_data.get("is_archive_view", False)
-    new_text = message.text
-
-    if len(new_text.strip()) < 3:
-        await message.reply("Текст заметки слишком короткий. Попробуйте снова или отмените /cancel.")
-        return
-
-
-    success = await note_repo.update_note_text(note_id, new_text, message.from_user.id)
-    await state.clear()
-
-    if success:
-        await message.reply(f"✅ Текст заметки #{note_id} успешно обновлен.")
-        # Возвращаемся к списку заметок
-        await display_notes_list_page(message, message.from_user.id, page, state, is_archive)
     else:
-        await message.reply("❌ Произошла ошибка при обновлении заметки.")
-        if note_id:
-            await view_note_detail_handler(message, state, note_id=note_id)
-
-
-# --- Смена категории ---
-
-@router.callback_query(NoteAction.filter(F.action == "change_category"))
-async def change_category_handler(callback: types.CallbackQuery, callback_data: NoteAction):
-    """Показывает клавиатуру для выбора новой категории."""
-    await callback.message.edit_text(
-        "🗂️ Выберите новую категорию для заметки:",
-        reply_markup=get_category_selection_keyboard(
-            note_id=callback_data.note_id,
-            page=callback_data.page,
-            target_list=callback_data.target_list
-        )
-    )
-    await callback.answer()
-
-
-@router.callback_query(NoteAction.filter(F.action == "set_category"))
-async def set_category_handler(callback: types.CallbackQuery, callback_data: NoteAction, state: FSMContext):
-    """Устанавливает новую категорию и возвращает к просмотру заметки."""
-    new_category = callback_data.category
-    success = await note_repo.update_note_category(callback_data.note_id, new_category)
-
-    if success:
-        await callback.answer(f"Категория изменена на '{new_category}'")
-    else:
-        await callback.answer("❌ Ошибка при смене категории.", show_alert=True)
-
-    # Возвращаемся к просмотру заметки, чтобы увидеть изменения
-    await view_note_detail_handler(callback, state)
+        # Если что-то пошло не так, просто показываем список
+        await display_notes_list_page(message, message.from_user.id)

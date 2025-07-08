@@ -2,92 +2,60 @@
 import logging
 
 from aiogram import F, Router, types
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.markdown import hcode, hbold, hitalic
+from aiogram.utils.markdown import hbold, hitalic, hcode
 
-from .....core import config
 from .....database import note_repo, user_repo
 from .....services.tz_utils import format_datetime_for_user
-from ....common_utils.callbacks import NoteAction, PageNavigation
-from ....common_utils.states import NoteNavigationStates
-from ..keyboards import get_notes_list_display_keyboard, get_note_view_actions_keyboard
+from ....common_utils.callbacks import PageNavigation, NoteAction
+from ..keyboards import get_notes_list_display_keyboard, get_note_view_actions_keyboard, get_confirm_delete_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-def humanize_rrule(rule_str: str) -> str:
-    """Преобразует строку RRULE в человекочитаемый формат."""
-    try:
-        if "FREQ=DAILY" in rule_str: return "Каждый день"
-        if "FREQ=WEEKLY" in rule_str: return "Каждую неделю"
-        if "FREQ=MONTHLY" in rule_str: return "Каждый месяц"
-        if "FREQ=YEARLY" in rule_str: return "Каждый год"
-        return "Повторяющаяся"
-    except Exception:
-        return "Повторяющаяся"
+async def display_notes_list_page(message: types.Message, user_id: int, page: int = 1, archived: bool = False,
+                                  is_callback: bool = False):
+    """Отображает пагинированный список заметок (активных или архивных)."""
+    notes, total_items = await note_repo.get_paginated_notes_for_user(user_id, page=page, archived=archived)
 
-
-async def display_notes_list_page(
-        target_message: types.Message,
-        telegram_id: int,
-        page_num: int,
-        state: FSMContext,
-        is_archive_list: bool
-):
-    """
-    Основная функция для отображения страницы со списком заметок (активных или архивных).
-    """
-    await state.set_state(NoteNavigationStates.browsing_notes)
-    await state.update_data(current_notes_page=page_num, is_archive_view=is_archive_list)
-
-    notes_on_page, total_notes_count = await note_repo.get_paginated_notes_for_user(
-        telegram_id=telegram_id, page=page_num, archived=is_archive_list
-    )
-    total_pages = (total_notes_count + config.NOTES_PER_PAGE - 1) // config.NOTES_PER_PAGE
+    from .....core.config import NOTES_PER_PAGE
+    per_page = NOTES_PER_PAGE
+    total_pages = (total_items + per_page - 1) // per_page
     if total_pages == 0: total_pages = 1
 
-    # Если мы оказались на несуществующей странице, переходим на последнюю
-    if page_num > total_pages > 0:
-        page_num = total_pages
-        await state.update_data(current_notes_page=page_num)
-        notes_on_page, total_notes_count = await note_repo.get_paginated_notes_for_user(
-            telegram_id=telegram_id, page=page_num, archived=is_archive_list
-        )
-
-    # Формируем текст сообщения
-    if not notes_on_page and page_num == 1:
-        text_content = "🗄️ В архиве пусто." if is_archive_list else "📝 У вас пока нет активных задач. Создайте новую, отправив мне сообщение!"
+    if archived:
+        header = f"🗄️ {hbold('Архив заметок')}"
+        no_notes_text = "В вашем архиве пока пусто."
     else:
-        title = "🗄️ Ваш архив" if is_archive_list else "📝 Ваши активные задачи"
-        text_content = f"{hbold(f'{title} (Стр. {page_num}/{total_pages}):')}"
+        header = f"📝 {hbold('Активные заметки')}"
+        no_notes_text = "У вас пока нет активных заметок. Просто отправьте мне что-нибудь!"
 
-    keyboard = get_notes_list_display_keyboard(notes_on_page, page_num, total_pages, is_archive_list, telegram_id)
+    text = f"{header} (Стр. {page}/{total_pages}, Всего: {total_items})"
+    if not notes:
+        text = f"{header}\n\n{no_notes_text}"
 
-    try:
-        await target_message.edit_text(text_content, reply_markup=keyboard)
-    except (TelegramBadRequest, AttributeError):
-        # Если не получилось отредактировать (например, это было /my_notes), отправляем новое
-        await target_message.answer(text_content, reply_markup=keyboard)
+    keyboard = get_notes_list_display_keyboard(notes, page, total_pages, archived, user_id)
 
-
-@router.message(Command("my_notes"))
-async def cmd_my_notes(message: types.Message, state: FSMContext):
-    """Хендлер для команды /my_notes."""
-    await display_notes_list_page(message, message.from_user.id, 1, state, is_archive_list=False)
+    if is_callback:
+        try:
+            await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        except Exception:
+            await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+            await message.delete()
+    else:
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 @router.callback_query(PageNavigation.filter(F.target == "notes"))
-async def notes_list_paginated_handler(callback: types.CallbackQuery, callback_data: PageNavigation, state: FSMContext):
-    """Хендлер для пагинации по спискам заметок."""
+async def notes_list_page_handler(callback: types.CallbackQuery, callback_data: PageNavigation):
+    """Обрабатывает навигацию по страницам списка заметок."""
     await display_notes_list_page(
-        target_message=callback.message,
-        telegram_id=callback.from_user.id,
-        page_num=callback_data.page,
-        state=state,
-        is_archive_list=callback_data.archived
+        message=callback.message,
+        user_id=callback.from_user.id,
+        page=callback_data.page,
+        archived=callback_data.archived,
+        is_callback=True
     )
     await callback.answer()
 
@@ -96,93 +64,82 @@ async def notes_list_paginated_handler(callback: types.CallbackQuery, callback_d
 async def view_note_detail_handler(
         event: types.Message | types.CallbackQuery,
         state: FSMContext,
-        note_id: int | None = None
+        note_id: int | None = None,
+        callback_data: NoteAction | None = None
 ):
-    """
-    Отображает детальную информацию о заметке.
-    Может быть вызвана как по колбэку, так и напрямую из другого хендлера (например, после шаринга).
-    """
-    is_callback = isinstance(event, types.CallbackQuery)
-    message = event.message if is_callback else event
-    user = event.from_user
+    """Показывает детальную информацию о заметке."""
+    await state.clear()
 
-    if is_callback:
-        callback_data = NoteAction.unpack(event.data)
+    user_id = event.from_user.id
+    message = event if isinstance(event, types.Message) else event.message
+
+    if callback_data:
         note_id = callback_data.note_id
         page = callback_data.page
-        is_archived_view = callback_data.target_list == 'archive'
     else:
-        # При вызове из другого хендлера, возвращаемся на 1-ю страницу активных заметок
         page = 1
-        is_archived_view = False
 
-    await state.set_state(NoteNavigationStates.browsing_notes)
-    await state.update_data(current_notes_page=page, is_archive_view=is_archived_view)
-
-    user_profile = await user_repo.get_user_profile(user.id)
-    user_timezone = user_profile.get('timezone', 'UTC')
-    note = await note_repo.get_note_by_id(note_id, user.id)
+    note = await note_repo.get_note_by_id(note_id, user_id)
 
     if not note:
-        if is_callback:
-            await event.answer("Заметка не найдена или удалена.", show_alert=True)
-        else:
-            await message.answer("Заметка не найдена или удалена.")
-        # Возвращаем пользователя к списку, из которого он пришел
-        await display_notes_list_page(message, user.id, page, state, is_archived_view)
+        await message.answer("❌ Заметка не найдена или у вас нет к ней доступа.")
+        if isinstance(event, types.CallbackQuery):
+            await event.answer("Заметка не найдена.", show_alert=True)
         return
 
-    # --- Сборка текста для карточки заметки ---
-    is_completed = note.get('is_completed', False)
+    owner_profile = await user_repo.get_user_profile(note['owner_id'])
+    owner_name = owner_profile.get('first_name', 'Неизвестно') if owner_profile else 'Неизвестно'
+    is_owner = user_id == note['owner_id']
+
+    owner_info = ""
+    if not is_owner:
+        owner_info = f"Владелец: {hitalic(owner_name)}\n"
+
+    status = "Выполнена" if note.get('is_completed') else "В архиве" if note.get('is_archived') else "Активна"
     category = note.get('category', 'Общее')
-    status_icon = "✅" if is_completed else ("🗄️" if note['is_archived'] else ("🛒" if category == 'Покупки' else "📌"))
-    status_text = "Выполнена" if is_completed else ("В архиве" if note['is_archived'] else "Активна")
 
-    summary = note.get('summary_text') or note['corrected_text']
-
-    shared_info_text = ""
-    if note.get('owner_id') != user.id:
-        owner_profile = await user_repo.get_user_profile(note.get('owner_id'))
-        owner_name = owner_profile.get('first_name', f"ID:{note.get('owner_id')}") if owner_profile else 'Неизвестно'
-        shared_info_text = f"🤝 {hitalic(f'Заметка доступна вам от {hbold(owner_name)}')}\n"
+    note_date = format_datetime_for_user(note['note_taken_at'],
+                                         owner_profile.get('timezone') if owner_profile else 'UTC')
+    due_date = format_datetime_for_user(note['due_date'], owner_profile.get('timezone') if owner_profile else 'UTC')
 
     text_parts = [
-        f"{status_icon} {hbold(f'Заметка #{note_id}')}",
-        shared_info_text,
-        f"Статус: {hitalic(status_text)}",
-        f"🗂️ Категория: {hitalic(category)}"
+        f"🗒️ {hbold('Заметка')} #{note['note_id']}",
+        f"{hcode(note.get('summary_text') or note['corrected_text'])}\n",
+        f"{owner_info}"
+        f"▪️ Статус: {hbold(status)}",
+        f"▪️ Категория: {hitalic(category)}",
+        f"▪️ Создана: {note_date}"
     ]
 
-    if note.get('recurrence_rule') and user_profile.get('is_vip'):
-        text_parts.append(f"⭐ 🔁 Повторение: {hitalic(humanize_rrule(note.get('recurrence_rule')))}")
+    if due_date:
+        text_parts.append(f"▪️ Срок: {hbold(due_date)}")
+    if note.get('recurrence_rule'):
+        text_parts.append(f"▪️ Повторение: ⭐ {hitalic(note['recurrence_rule'])}")
 
-    if note.get('due_date'):
-        due_date_local = format_datetime_for_user(note.get('due_date'), user_timezone)
-        text_parts.append(f"Срок до: {hitalic(due_date_local)}")
-
-    text_parts.append(f"\n{hbold('Текст заметки:')}\n{hcode(summary)}")
-
-    # Показываем полный текст, если он отличается от краткого
-    if summary.strip() != note['corrected_text'].strip():
-        text_parts.append(f"\n{hitalic('Полный текст:')}\n{hcode(note['corrected_text'])}")
-
-    text = "\n".join(filter(None, text_parts))  # Собираем, убирая пустые строки
-
-    # --- Формирование клавиатуры и отправка ---
-    note['is_vip'] = user_profile.get('is_vip', False)
-    final_keyboard = get_note_view_actions_keyboard(note, page, user.id)
+    text = "\n".join(text_parts)
+    keyboard = get_note_view_actions_keyboard(note, page, user_id)
 
     try:
-        if is_callback:
-            await message.edit_text(text, reply_markup=final_keyboard)
-        else:
-            sent_msg = await message.answer(text, reply_markup=final_keyboard)
-            # Сохраняем ID сообщения для будущей синхронизации, если это прямой вызов
-            await note_repo.store_shared_message_id(note_id, user.id, sent_msg.message_id)
-    except TelegramBadRequest:
-        logger.warning(f"Не удалось отредактировать сообщение #{message.message_id}, отправляю новое.")
-        sent_msg = await message.answer(text, reply_markup=final_keyboard)
-        await note_repo.store_shared_message_id(note_id, user.id, sent_msg.message_id)
+        await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
-    if is_callback:
+    if isinstance(event, types.CallbackQuery):
         await event.answer()
+
+
+@router.callback_query(NoteAction.filter(F.action == "confirm_delete"))
+async def confirm_delete_handler(callback: types.CallbackQuery, callback_data: NoteAction):
+    """Запрашивает подтверждение на удаление."""
+    text = (
+        f"{callback.message.text}\n\n"
+        f"‼️ {hbold('ВЫ УВЕРЕНЫ?')}\n"
+        "Это действие необратимо. Заметка будет удалена навсегда."
+    )
+    keyboard = get_confirm_delete_keyboard(
+        note_id=callback_data.note_id,
+        page=callback_data.page,
+        target_list=callback_data.target_list
+    )
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()

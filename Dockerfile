@@ -29,7 +29,7 @@ EXPOSE 8000
 
 # Указываем команду для запуска приложения.
 # Теперь точка входа - это /app/src/main.py
-CMD ["python", "src/main.py"]
+CMD ["python", "-m", "src.main"]
 
 # Метаданные образа (опционально, но хорошая практика)
 LABEL maintainer="Diana Globuz"
