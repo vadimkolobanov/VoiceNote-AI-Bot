@@ -10,7 +10,7 @@ from aiogram.utils.markdown import hbold, hcode, hitalic
 from .....core.config import ADMIN_TELEGRAM_ID
 from .....database import user_repo
 from .....services.tz_utils import ALL_PYTZ_TIMEZONES
-from .....web.routes import get_link_code_for_user  # Импортируем из веб-модуля
+from .....web.routes import get_link_code_for_user
 from ....common_utils.callbacks import SettingsAction, TimezoneAction
 from ....common_utils.states import ProfileSettingsStates
 from ..keyboards import (
@@ -19,8 +19,9 @@ from ..keyboards import (
     get_reminder_time_keyboard,
     get_pre_reminder_keyboard,
     get_request_vip_keyboard,
+    get_digest_time_keyboard,
 )
-from ...common.keyboards import get_main_menu_keyboard  # Импортируем из модуля common для редиректа
+from ...common.keyboards import get_main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -46,16 +47,21 @@ async def get_settings_text_and_keyboard(telegram_id: int):
     current_rem_time = user_profile.get('default_reminder_time', time(9, 0))
     current_rem_time_str = current_rem_time.strftime('%H:%M')
 
+    current_digest_time = user_profile.get('daily_digest_time', time(9, 0))
+    current_digest_time_str = current_digest_time.strftime('%H:%M')
+
     text_parts = [
         f"{hbold('⚙️ Ваши настройки')}\n",
         "Здесь вы можете персонализировать работу бота.\n",
         f"▪️ Текущий часовой пояс: {hcode(user_profile.get('timezone', 'UTC'))}",
-        f"▪️ Время напоминаний по умолч.: {hcode(current_rem_time_str)} (⭐ VIP)",
-        f"▪️ Предв. напоминания: {hbold(format_pre_reminder_minutes(user_profile.get('pre_reminder_minutes', 60)))} (⭐ VIP)",
     ]
     if is_vip:
         digest_status = "Включена" if user_profile.get('daily_digest_enabled', True) else "Выключена"
-        text_parts.append(f"▪️ Утренняя сводка: {hbold(digest_status)} (⭐ VIP)")
+        text_parts.extend([
+            f"▪️ Время напоминаний по умолч.: {hcode(current_rem_time_str)} (⭐ VIP)",
+            f"▪️ Предв. напоминания: {hbold(format_pre_reminder_minutes(user_profile.get('pre_reminder_minutes', 60)))} (⭐ VIP)",
+            f"▪️ Утренняя сводка: {hbold(digest_status)} в {hcode(current_digest_time_str)} (⭐ VIP)",
+        ])
 
     text = "\n".join(text_parts)
     keyboard = get_settings_menu_keyboard(
@@ -122,6 +128,36 @@ async def toggle_daily_digest_handler(callback: CallbackQuery, state: FSMContext
 
     status_text = "включена" if new_status else "выключена"
     await callback.answer(f"✅ Утренняя сводка {status_text}", show_alert=False)
+    await show_main_settings_handler(callback, state)
+
+
+# --- Настройка времени сводки ---
+@router.callback_query(SettingsAction.filter(F.action == "go_to_digest_time"))
+async def show_digest_time_handler(callback: CallbackQuery):
+    user_profile = await user_repo.get_user_profile(callback.from_user.id)
+    if not user_profile.get('is_vip'):
+        await callback.answer("⭐ Эта функция доступна только для VIP-пользователей.", show_alert=True)
+        return
+
+    current_time = user_profile.get('daily_digest_time', time(9, 0)).strftime('%H:%M')
+    text = f"{hbold('🕘 Время утренней сводки')}\n\nВыберите, в какое время вы хотите получать ежедневный отчет.\nТекущее время: {hcode(current_time)}"
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_digest_time_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(SettingsAction.filter(F.action == "set_digest_time"))
+async def set_digest_time_from_button_handler(callback: CallbackQuery, callback_data: SettingsAction,
+                                              state: FSMContext):
+    time_str = callback_data.value.replace('-', ':')
+    try:
+        time_obj = datetime.strptime(time_str, '%H:%M').time()
+        success = await user_repo.set_user_daily_digest_time(callback.from_user.id, time_obj)
+        if success:
+            await callback.answer(f"✅ Время сводки установлено на {time_str}", show_alert=False)
+        else:
+            await callback.answer("❌ Ошибка при установке времени.", show_alert=True)
+    except ValueError:
+        await callback.answer("Неверный формат времени.", show_alert=True)
     await show_main_settings_handler(callback, state)
 
 

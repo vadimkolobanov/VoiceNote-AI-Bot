@@ -35,6 +35,8 @@ def get_settings_menu_keyboard(
     if is_vip:
         digest_btn_text = "☀️ Выключить утреннюю сводку" if daily_digest_enabled else "☀️ Включить утреннюю сводку"
         builder.button(text=digest_btn_text, callback_data=SettingsAction(action="toggle_digest").pack())
+        builder.button(text="🕘 Время утренней сводки (⭐VIP)",
+                       callback_data=SettingsAction(action="go_to_digest_time").pack())
 
     builder.button(text="⏰ Время напоминаний (⭐VIP)", callback_data=SettingsAction(action="go_to_reminders").pack())
     builder.button(text="🔔 Пред-напоминания (⭐VIP)", callback_data=SettingsAction(action="go_to_pre_reminders").pack())
@@ -44,14 +46,13 @@ def get_settings_menu_keyboard(
 
     builder.button(text="👤 Назад в профиль", callback_data="user_profile")
 
-    # Верстка
     layout = [1]
     if is_vip:
-        layout.append(1)
-    layout.append(2)
-    if not is_alice_linked:
-        layout.append(1)
-    layout.append(1)
+        layout.append(2)  # Кнопки сводки и времени в один ряд
+    layout.extend([2, 1, 1])
+    if is_alice_linked:
+        layout = layout[:-2] + [1]
+
     builder.adjust(*layout)
 
     return builder.as_markup()
@@ -87,6 +88,18 @@ def get_reminder_time_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="⌨️ Ввести вручную", callback_data=SettingsAction(action="manual_rem_time").pack())
     builder.button(text="⬅️ Назад в настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.adjust(3, 3, 1, 1)
+    return builder.as_markup()
+
+
+def get_digest_time_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора времени для утренней сводки."""
+    builder = InlineKeyboardBuilder()
+    times = ["05:00", "06:00", "07:00", "08:00", "09:00", "10:00"]
+    for t in times:
+        safe_time_value = t.replace(':', '-')
+        builder.button(text=t, callback_data=SettingsAction(action="set_digest_time", value=safe_time_value).pack())
+    builder.button(text="⬅️ Назад в настройки", callback_data=SettingsAction(action="go_to_main").pack())
+    builder.adjust(3, 3, 1)
     return builder.as_markup()
 
 

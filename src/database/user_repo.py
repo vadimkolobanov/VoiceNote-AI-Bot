@@ -19,14 +19,14 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
     async with pool.acquire() as conn:
         now = datetime.now(timezone.utc)
         query = """
-            INSERT INTO users (telegram_id, username, first_name, last_name, language_code, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT (telegram_id) DO
-            UPDATE SET
-                username = EXCLUDED.username, first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
-                updated_at = $6
-                RETURNING *;
-            """
+                INSERT INTO users (telegram_id, username, first_name, last_name, language_code, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT (telegram_id) DO
+                UPDATE SET
+                    username = EXCLUDED.username, first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
+                    updated_at = $6
+                    RETURNING *; \
+                """
         user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
         return dict(user_record) if user_record else None
 
@@ -74,7 +74,7 @@ async def reset_user_vip_settings(telegram_id: int) -> bool:
     """Сбрасывает персональные настройки VIP-пользователя к значениям по умолчанию."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        query = "UPDATE users SET default_reminder_time = DEFAULT, pre_reminder_minutes = DEFAULT, updated_at = NOW() WHERE telegram_id = $1"
+        query = "UPDATE users SET default_reminder_time = DEFAULT, pre_reminder_minutes = DEFAULT, daily_digest_time = DEFAULT, updated_at = NOW() WHERE telegram_id = $1"
         result = await conn.execute(query, telegram_id)
         return int(result.split(" ")[1]) > 0
 
@@ -111,16 +111,16 @@ async def set_user_daily_digest_status(telegram_id: int, enabled: bool) -> bool:
 
 
 async def get_vip_users_for_digest() -> list[dict]:
-    """Возвращает VIP-пользователей, для которых настало время отправки утренней сводки (9 утра в их часовом поясе)."""
+    """Возвращает VIP-пользователей, для которых настало время отправки утренней сводки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-            SELECT telegram_id, first_name, timezone
-            FROM users
-            WHERE is_vip = TRUE
-              AND daily_digest_enabled = TRUE
-              AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = 9;
-            """
+                SELECT telegram_id, first_name, timezone, daily_digest_time
+                FROM users
+                WHERE is_vip = TRUE
+                  AND daily_digest_enabled = TRUE
+                  AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = EXTRACT(HOUR FROM daily_digest_time); \
+                """
         records = await conn.fetch(query)
         return [dict(rec) for rec in records]
 
@@ -143,6 +143,15 @@ async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) 
         return int(result.split(" ")[1]) > 0
 
 
+async def set_user_daily_digest_time(telegram_id: int, digest_time: time) -> bool:
+    """Устанавливает время утренней сводки для VIP-пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET daily_digest_time = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, digest_time, telegram_id)
+        return int(result.split(" ")[1]) > 0
+
+
 async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
     """Устанавливает время предварительного напоминания (в минутах) для VIP-пользователя."""
     pool = await get_db_pool()
@@ -150,6 +159,7 @@ async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
         query = "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, minutes, telegram_id)
         return int(result.split(" ")[1]) > 0
+
 
 # --- Функции для интеграции с Алисой ---
 
@@ -187,6 +197,7 @@ async def find_user_by_alice_id(alice_id: str) -> dict | None:
         query = "SELECT * FROM users WHERE alice_user_id = $1"
         record = await conn.fetchrow(query, alice_id)
         return dict(record) if record else None
+
 
 # --- Логирование действий ---
 
