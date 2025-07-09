@@ -15,7 +15,7 @@ from aiogram.utils.markdown import hbold, hcode, hitalic
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ..database import note_repo, birthday_repo, user_repo
-from ..bot.common_utils.callbacks import NoteAction
+from ..bot.common_utils.callbacks import NoteAction, ShoppingListAction
 from .tz_utils import format_datetime_for_user
 
 logger = logging.getLogger(__name__)
@@ -236,8 +236,9 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     telegram_id = user['telegram_id']
     user_timezone = user['timezone']
     user_name = user['first_name']
+    digest_time = user.get('daily_digest_time', time(9,0))
 
-    logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone})")
+    logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone}) в {digest_time.strftime('%H:%M')}")
 
     notes_today = await note_repo.get_notes_for_today_digest(telegram_id, user_timezone)
     birthdays_soon = await birthday_repo.get_birthdays_for_upcoming_digest(telegram_id)

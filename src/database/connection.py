@@ -46,6 +46,16 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     END;
     $$;
     """,
+    # --- Поле для времени утренней сводки ---
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='daily_digest_time') THEN
+            ALTER TABLE users ADD COLUMN daily_digest_time TIME DEFAULT '09:00:00';
+        END IF;
+    END;
+    $$;
+    """,
 
     # --- Таблица Notes ---
     """
