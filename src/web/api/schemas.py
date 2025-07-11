@@ -1,11 +1,9 @@
 # src/web/api/schemas.py
 from pydantic import BaseModel, Field
+from datetime import datetime
 
+# --- Существующие схемы ---
 class TelegramLoginData(BaseModel):
-    """
-    Модель для данных, получаемых от виджета Telegram Login.
-    Ключи должны быть именно такими, как их присылает Telegram.
-    """
     id: int
     first_name: str
     username: str | None = None
@@ -14,15 +12,11 @@ class TelegramLoginData(BaseModel):
     hash: str
     last_name: str | None = None
 
-
 class Token(BaseModel):
-    """Модель для ответа с токеном доступа."""
     access_token: str
     token_type: str = "bearer"
 
-
 class UserProfile(BaseModel):
-    """Модель для отображения профиля пользователя в API."""
     telegram_id: int
     first_name: str
     username: str | None
@@ -30,3 +24,28 @@ class UserProfile(BaseModel):
     level: int
     xp: int
     timezone: str
+
+
+# --- НОВЫЕ СХЕМЫ ДЛЯ ЗАМЕТОК ---
+class Note(BaseModel):
+    """Модель для отображения одной заметки в API."""
+    note_id: int
+    summary_text: str | None
+    corrected_text: str
+    category: str | None
+    created_at: datetime
+    due_date: datetime | None
+    is_completed: bool
+
+    class Config:
+        # Pydantic v2+ использует from_attributes вместо orm_mode
+        from_attributes = True
+
+
+class PaginatedNotesResponse(BaseModel):
+    """Модель для ответа с пагинированным списком заметок."""
+    items: list[Note]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
