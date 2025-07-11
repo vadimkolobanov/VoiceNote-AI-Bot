@@ -25,14 +25,32 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     async def alice_webhook_endpoint(request: AliceRequest) -> AliceResponse:
         return await handle_alice_request(request)
 
-    # --- Роутер для проверки состояния API (health check) ---
+    # --- Подключаем все наши API-роутеры ---
+
+    # Роутер для проверки состояния API (health check)
     @app.get("/api/v1/health", tags=["Health Check"])
     async def health_check():
         return {"status": "OK"}
 
-    # --- Подключаем все остальные API-роутеры ---
-    app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
-    app.include_router(profile_router, prefix="/api/v1/profile", tags=["Profile"])
-    app.include_router(notes_router, prefix="/api/v1/notes", tags=["Notes"])
+    # Роутер для аутентификации
+    app.include_router(
+        auth_router,
+        prefix="/api/v1/auth",
+        tags=["Authentication"]
+    )
+
+    # Роутер для профиля пользователя
+    app.include_router(
+        profile_router,
+        prefix="/api/v1/profile",
+        tags=["Profile"]
+    )
+
+    # Роутер для заметок
+    app.include_router(
+        notes_router,
+        prefix="/api/v1/notes",
+        tags=["Notes"]
+    )
 
     return app
