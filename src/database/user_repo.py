@@ -2,12 +2,11 @@
 import json
 import logging
 from datetime import datetime, timezone, date, time
-
-import asyncpg
 from aiogram import types, Bot
 from aiogram.utils.markdown import hbold
 
 from .connection import get_db_pool
+from ..services import cache_service
 from ..services.gamification_service import ACHIEVEMENTS_BY_CODE
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,10 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
                     RETURNING *; \
                 """
         user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
+
+        # Инвалидация кэша при обновлении данных
+        await cache_service.delete_user_profile_from_cache(telegram_id)
+
         return dict(user_record) if user_record else None
 
 
@@ -68,40 +71,65 @@ async def get_or_create_user(tg_user: types.User) -> dict | None:
 
 
 async def get_user_profile(telegram_id: int) -> dict | None:
-    """Возвращает профиль пользователя по его telegram_id."""
+    """Возвращает профиль пользователя по его telegram_id, используя кэш."""
+    # 1. Попытаться получить из Redis
+    cached_profile = await cache_service.get_user_profile_from_cache(telegram_id)
+    if cached_profile:
+        # Восстанавливаем объекты datetime/time из строк
+        for key in ['created_at', 'updated_at', 'last_stt_reset_date', 'alice_code_expires_at']:
+            if key in cached_profile and isinstance(cached_profile[key], str):
+                try:
+                    cached_profile[key] = datetime.fromisoformat(cached_profile[key])
+                except (ValueError, TypeError):
+                    pass  # Для last_stt_reset_date, которое является date
+        if 'default_reminder_time' in cached_profile and isinstance(cached_profile['default_reminder_time'], str):
+            cached_profile['default_reminder_time'] = time.fromisoformat(cached_profile['default_reminder_time'])
+        if 'daily_digest_time' in cached_profile and isinstance(cached_profile['daily_digest_time'], str):
+            cached_profile['daily_digest_time'] = time.fromisoformat(cached_profile['daily_digest_time'])
+        return cached_profile
+
+    # 2. Если в кэше нет, идем в БД
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
-        return dict(user_record) if user_record else None
+        profile = dict(user_record) if user_record else None
+
+    # 3. Сохранить результат в Redis перед возвратом
+    if profile:
+        await cache_service.set_user_profile_to_cache(telegram_id, profile.copy())
+
+    return profile
 
 
 async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
-    """Устанавливает VIP-статус для пользователя."""
+    """Устанавливает VIP-статус для пользователя и инвалидирует кэш."""
     from ..services.gamification_service import check_and_grant_achievements
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("UPDATE users SET is_vip = $1, updated_at = NOW() WHERE telegram_id = $2", is_vip,
                                     telegram_id)
-
-        # Проверка на ачивку после смены статуса
-        if is_vip:
-            from ..main import bot_instance
-            await check_and_grant_achievements(bot_instance, telegram_id)
-
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+            if is_vip:
+                from ..main import bot_instance
+                await check_and_grant_achievements(bot_instance, telegram_id)
+        return success
 
 
 async def reset_user_vip_settings(telegram_id: int) -> bool:
-    """Сбрасывает персональные настройки VIP-пользователя к значениям по умолчанию."""
+    """Сбрасывает персональные настройки VIP-пользователя и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET default_reminder_time = DEFAULT, pre_reminder_minutes = DEFAULT, daily_digest_time = DEFAULT, updated_at = NOW() WHERE telegram_id = $1"
         result = await conn.execute(query, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def get_all_users_paginated(page: int = 1, per_page: int = 5) -> tuple[list[dict], int]:
-    """Возвращает пагинированный список пользователей для админ-панели."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         total_items = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
@@ -113,26 +141,31 @@ async def get_all_users_paginated(page: int = 1, per_page: int = 5) -> tuple[lis
 
 
 async def update_user_stt_counters(telegram_id: int, new_count: int, reset_date: date) -> bool:
-    """Обновляет счетчик STT и дату сброса для пользователя."""
+    """Обновляет счетчик STT и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
             "UPDATE users SET daily_stt_recognitions_count = $1, last_stt_reset_date = $2, updated_at = NOW() WHERE telegram_id = $3",
             new_count, reset_date, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def set_user_daily_digest_status(telegram_id: int, enabled: bool) -> bool:
-    """Включает или выключает утреннюю сводку для пользователя."""
+    """Включает или выключает утреннюю сводку и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET daily_digest_enabled = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, enabled, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def get_vip_users_for_digest() -> list[dict]:
-    """Возвращает VIP-пользователей, для которых настало время отправки утренней сводки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
@@ -147,54 +180,68 @@ async def get_vip_users_for_digest() -> list[dict]:
 
 
 async def set_user_timezone(telegram_id: int, timezone_name: str) -> bool:
-    """Устанавливает часовой пояс для пользователя."""
+    """Устанавливает часовой пояс и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, timezone_name, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def set_user_default_reminder_time(telegram_id: int, reminder_time: time) -> bool:
-    """Устанавливает время напоминаний по умолчанию для VIP-пользователя."""
+    """Устанавливает время напоминаний и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET default_reminder_time = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, reminder_time, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def set_user_daily_digest_time(telegram_id: int, digest_time: time) -> bool:
-    """Устанавливает время утренней сводки для VIP-пользователя."""
+    """Устанавливает время сводки и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET daily_digest_time = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, digest_time, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
-    """Устанавливает время предварительного напоминания (в минутах) для VIP-пользователя."""
+    """Устанавливает время пред-напоминания и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET pre_reminder_minutes = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, minutes, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 # --- Функции для интеграции с Алисой ---
 
 async def set_alice_activation_code(telegram_id: int, code: str, expires_at: datetime) -> bool:
-    """Сохраняет код активации для Алисы и срок его действия."""
+    """Сохраняет код активации и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET alice_activation_code = $1, alice_code_expires_at = $2 WHERE telegram_id = $3"
         result = await conn.execute(query, code, expires_at, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def find_user_by_alice_code(code: str) -> dict | None:
-    """Находит пользователя по действующему коду активации Алисы."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "SELECT * FROM users WHERE alice_activation_code = $1 AND alice_code_expires_at > NOW()"
@@ -203,16 +250,21 @@ async def find_user_by_alice_code(code: str) -> dict | None:
 
 
 async def link_alice_user(telegram_id: int, alice_id: str) -> bool:
-    """Привязывает ID пользователя Алисы к аккаунту в Telegram."""
+    """Привязывает ID Алисы и инвалидирует кэш."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "UPDATE users SET alice_user_id = $1, alice_activation_code = NULL, alice_code_expires_at = NULL, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, alice_id, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
 
 
 async def find_user_by_alice_id(alice_id: str) -> dict | None:
-    """Находит пользователя по его ID из Алисы."""
+    """Находит пользователя по его ID из Алисы, используя кэш."""
+    # Этот запрос редкий, кэшировать его результат может быть избыточно,
+    # но можно добавить, если вызов станет частым.
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "SELECT * FROM users WHERE alice_user_id = $1"
@@ -223,7 +275,6 @@ async def find_user_by_alice_id(alice_id: str) -> dict | None:
 # --- Логирование действий ---
 
 async def log_user_action(user_telegram_id: int, action_type: str, metadata: dict = None):
-    """Записывает действие пользователя в таблицу user_actions для аналитики."""
     pool = await get_db_pool()
     metadata_json = json.dumps(metadata) if metadata else None
     query = "INSERT INTO user_actions (user_telegram_id, action_type, metadata) VALUES ($1, $2, $3);"
@@ -239,23 +290,25 @@ async def log_user_action(user_telegram_id: int, action_type: str, metadata: dic
 async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_level_up: bool = False):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET xp = xp + $1 WHERE telegram_id = $2", amount, user_id)
+
         user = await conn.fetchrow("SELECT level, xp FROM users WHERE telegram_id = $1", user_id)
         if not user:
             return
 
         current_level, current_xp = user['level'], user['xp']
-        new_xp = current_xp + amount
-        new_level = get_level_for_xp(new_xp)
+        new_level = get_level_for_xp(current_xp)
 
-        await conn.execute("UPDATE users SET xp = $1, level = $2 WHERE telegram_id = $3", new_xp, new_level, user_id)
-
-        if new_level > current_level and not silent_level_up:
-            try:
-                level_up_text = f"🎉 {hbold('Новый уровень!')} 🎉\n\nПоздравляем, вы достигли {hbold(f'{new_level}-го уровня')}! Так держать!"
-                if bot:
-                    await bot.send_message(user_id, level_up_text)
-            except Exception as e:
-                logger.warning(f"Не удалось отправить уведомление о новом уровне пользователю {user_id}: {e}")
+        if new_level > current_level:
+            await conn.execute("UPDATE users SET level = $1 WHERE telegram_id = $2", new_level, user_id)
+            await cache_service.delete_user_profile_from_cache(user_id)  # Уровень изменился, сбрасываем кэш
+            if not silent_level_up:
+                try:
+                    level_up_text = f"🎉 {hbold('Новый уровень!')} 🎉\n\nПоздравляем, вы достигли {hbold(f'{new_level}-го уровня')}! Так держать!"
+                    if bot:
+                        await bot.send_message(user_id, level_up_text)
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить уведомление о новом уровне пользователю {user_id}: {e}")
 
 
 async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silent: bool = False):
@@ -266,14 +319,11 @@ async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silen
 
     async with pool.acquire() as conn:
         try:
-            # Сначала пытаемся вставить. Если ачивка уже есть, выйдет ошибка UniqueViolationError
             await conn.execute("INSERT INTO user_achievements (user_telegram_id, achievement_code) VALUES ($1, $2)",
                                user_id, achievement_code)
 
-            # Если вставка прошла успешно, значит ачивка новая. Начисляем XP.
             await add_xp_and_check_level_up(bot, user_id, achievement.xp_reward, silent_level_up=silent)
 
-            # Отправляем уведомление только если это не "тихая" выдача
             if not silent:
                 user_profile = await get_user_profile(user_id)
                 user_name = user_profile.get('first_name', 'пользователь')
@@ -288,8 +338,8 @@ async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silen
                 if bot:
                     await bot.send_message(user_id, text, parse_mode="HTML")
 
-        except asyncpg.UniqueViolationError:
-            pass  # Пользователь уже имеет это достижение
+        except Exception:  # asyncpg.UniqueViolationError
+            pass
         except Exception as e:
             logger.error(f"Ошибка при выдаче достижения {achievement_code} пользователю {user_id}: {e}")
 
@@ -303,7 +353,20 @@ async def get_user_achievements_codes(user_id: int) -> set:
 
 
 async def get_all_achievements() -> list[dict]:
+    """Возвращает список всех достижений, используя кэш."""
+    # 1. Попытаться получить из Redis
+    cached_achievements = await cache_service.get_all_achievements_from_cache()
+    if cached_achievements is not None:
+        return cached_achievements
+
+    # 2. Если в кэше нет, идем в БД
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         records = await conn.fetch("SELECT * FROM achievements ORDER BY id")
-        return [dict(rec) for rec in records]
+        achievements = [dict(rec) for rec in records]
+
+    # 3. Сохранить результат в Redis перед возвратом
+    if achievements:
+        await cache_service.set_all_achievements_to_cache(achievements)
+
+    return achievements

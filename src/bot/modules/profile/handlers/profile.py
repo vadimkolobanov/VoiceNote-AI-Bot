@@ -98,7 +98,7 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
 @router.callback_query(F.data == "show_achievements")
 async def show_achievements_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    all_achievements = ACHIEVEMENTS_LIST
+    all_achievements = await user_repo.get_all_achievements()
     user_achievements_codes = await user_repo.get_user_achievements_codes(user_id)
 
     header = f"🏆 {hbold('Ваши достижения')}\n\n"
@@ -107,10 +107,10 @@ async def show_achievements_handler(callback: types.CallbackQuery):
     unearned_achievements = []
 
     for ach in all_achievements:
-        if ach.code in user_achievements_codes:
-            earned_achievements.append(f"{ach.icon} {hbold(ach.name)} — {hitalic(ach.description)}")
+        if ach['code'] in user_achievements_codes:
+            earned_achievements.append(f"{ach['icon']} {hbold(ach['name'])} — {hitalic(ach['description'])}")
         else:
-            unearned_achievements.append(f"❔ {hbold(ach.name)} — {hitalic(ach.description)}")
+            unearned_achievements.append(f"❔ {hbold(ach['name'])} — {hitalic(ach['description'])}")
 
     text_parts = [header]
     if earned_achievements:

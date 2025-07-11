@@ -1,6 +1,8 @@
 # src/bot/dispatcher.py
 from aiogram import Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
+
+from src.core.config import REDIS_URL
 
 # Импортируем "главные" роутеры из каждого модуля
 from .modules.admin import router as admin_router
@@ -14,7 +16,7 @@ def get_dispatcher() -> Dispatcher:
     """
     Создает, настраивает и возвращает корневой экземпляр Dispatcher.
     """
-    storage = MemoryStorage()
+    storage = RedisStorage.from_url(REDIS_URL)
     dp = Dispatcher(storage=storage)
 
     # --- Порядок подключения роутеров (очень важен!) ---
