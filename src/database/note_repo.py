@@ -426,3 +426,29 @@ async def did_user_share_note(telegram_id: int) -> bool:
     async with pool.acquire() as conn:
         query = "SELECT 1 FROM note_shares WHERE owner_telegram_id = $1 LIMIT 1;"
         return await conn.fetchval(query, telegram_id) is not None
+
+
+async def find_conflicting_notes(telegram_id: int, due_date: datetime, note_id_to_exclude: int) -> list[dict]:
+    """
+    Ищет активные заметки пользователя, которые пересекаются по времени с новой задачей.
+    Проверяет интервал +/- 1 час от указанной due_date.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        time_window_start = due_date - timedelta(hours=1)
+        time_window_end = due_date + timedelta(hours=1)
+
+        query = """
+                SELECT note_id, summary_text, due_date
+                FROM notes
+                WHERE telegram_id = $1
+                  AND is_archived = FALSE
+                  AND is_completed = FALSE
+                  AND due_date IS NOT NULL
+                  AND note_id != $2
+                  AND due_date BETWEEN $3 \
+                  AND $4
+                ORDER BY due_date; \
+                """
+        records = await conn.fetch(query, telegram_id, note_id_to_exclude, time_window_start, time_window_end)
+        return [_process_note_record(rec) for rec in records]

@@ -27,6 +27,21 @@ DB_PORT = os.environ.get("DB_PORT", "5432")
 DB_NAME = os.environ.get("DB_NAME", "voice_notes_bot_db")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# --- Redis Configuration ---
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = os.environ.get("REDIS_PORT", 6379)
+REDIS_DB = int(os.environ.get("REDIS_DB", 0))
+REDIS_USERNAME = os.environ.get("REDIS_USERNAME")
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
+
+if REDIS_USERNAME and REDIS_PASSWORD:
+    REDIS_URL = f"redis://{REDIS_USERNAME}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+elif REDIS_PASSWORD:
+    # Для случаев, когда используется только пароль (например, Redis.com)
+    REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+else:
+    REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+
 
 # --- Application Settings ---
 MAX_NOTES_MVP = 5
