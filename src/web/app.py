@@ -6,7 +6,7 @@ from .routes import handle_alice_request, set_bot_instance
 from .models import AliceRequest, AliceResponse
 from .api.auth import router as auth_router
 from .api.profile import router as profile_router
-
+from .api.notes import router as notes_router
 
 def get_fastapi_app(bot: Bot) -> FastAPI:
     """
@@ -39,7 +39,7 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
         prefix="/api/v1/profile",
         tags=["Profile"]
     )
-
+    app.include_router(notes_router, prefix="/api/v1/notes", tags=["Notes"])
     @app.get("/api/v1/health", tags=["Health Check"])
     async def health_check():
         return {"status": "OK"}
