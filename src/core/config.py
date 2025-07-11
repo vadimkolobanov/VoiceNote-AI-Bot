@@ -1,12 +1,19 @@
 # src/core/config.py
 import os
 import logging
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # --- Telegram Bot Token ---
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
+
+# --- Секретный ключ для JWT. ВАЖНО: сгенерируйте свой! ---
+# Можно сгенерировать командой в терминале: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", secrets.token_hex(32))
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 дней
 
 # --- Admin ID ---
 ADMIN_TELEGRAM_ID = int(os.environ.get("ADMIN_TELEGRAM_ID")) if os.environ.get("ADMIN_TELEGRAM_ID") else None
@@ -77,6 +84,9 @@ def check_initial_config():
     if not TG_BOT_TOKEN:
         logger.critical("Переменная окружения TG_BOT_TOKEN не установлена!")
         exit("Критическая ошибка: TG_BOT_TOKEN не найден.")
+    if not JWT_SECRET_KEY:
+        logger.critical("Переменная окружения JWT_SECRET_KEY не установлена! Это небезопасно.")
+        exit("Критическая ошибка: JWT_SECRET_KEY не найден.")
     if not ADMIN_TELEGRAM_ID:
         logger.warning("Переменная окружения ADMIN_TELEGRAM_ID не установлена! Админ-команды будут недоступны.")
     if not DEEPSEEK_API_KEY_EXISTS:
