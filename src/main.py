@@ -17,6 +17,7 @@ setup_logging()
 check_initial_config()
 logger = logging.getLogger(__name__)
 
+bot_instance: Bot | None = None
 
 # --- Startup/Shutdown Events ---
 async def on_startup(bot: Bot):
@@ -48,6 +49,7 @@ async def on_shutdown(bot: Bot):
 
 # --- Main Execution ---
 async def main():
+    global bot_instance
     bot_instance = Bot(token=TG_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = get_dispatcher()
 

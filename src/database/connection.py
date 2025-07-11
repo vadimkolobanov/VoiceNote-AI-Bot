@@ -56,6 +56,19 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     END;
     $$;
     """,
+    # --- Поля для геймификации ---
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='xp') THEN
+            ALTER TABLE users ADD COLUMN xp BIGINT DEFAULT 0;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='level') THEN
+            ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1;
+        END IF;
+    END;
+    $$;
+    """,
 
     # --- Таблица Notes ---
     """
@@ -154,6 +167,29 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     );
     """,
 
+    # --- Таблицы для геймификации ---
+    """
+    CREATE TABLE IF NOT EXISTS achievements
+    (
+        id SERIAL PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        icon TEXT,
+        xp_reward INTEGER DEFAULT 0
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_achievements
+    (
+        id SERIAL PRIMARY KEY,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        achievement_code TEXT NOT NULL REFERENCES achievements(code) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (user_telegram_id, achievement_code)
+    );
+    """,
+
     # --- Индексы ---
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
@@ -164,6 +200,7 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_note_shares_note_id ON note_shares (note_id);",
     "CREATE INDEX IF NOT EXISTS idx_note_shares_shared_with ON note_shares (shared_with_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON share_tokens (token);",
+    "CREATE INDEX IF NOT EXISTS idx_user_achievements_user_id ON user_achievements (user_telegram_id);",
 ]
 
 
@@ -194,6 +231,7 @@ async def close_db_pool():
 
 async def init_db():
     """Инициализирует схему базы данных, выполняя все DDL-запросы."""
+    from src.services.gamification_service import ACHIEVEMENTS_LIST
     pool = await get_db_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
@@ -204,6 +242,22 @@ async def init_db():
                 except Exception as e:
                     logger.error(f"Ошибка при выполнении SQL-запроса:\n{statement}\nОшибка: {e}")
                     raise
+
+            logger.info("Синхронизация справочника достижений...")
+            for ach in ACHIEVEMENTS_LIST:
+                await connection.execute(
+                    """
+                    INSERT INTO achievements (code, name, description, icon, xp_reward)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (code) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        icon = EXCLUDED.icon,
+                        xp_reward = EXCLUDED.xp_reward;
+                    """,
+                    ach.code, ach.name, ach.description, ach.icon, ach.xp_reward
+                )
+
             logger.info("Схема базы данных актуальна.")
 
 

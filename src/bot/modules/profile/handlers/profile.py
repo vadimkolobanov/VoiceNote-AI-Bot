@@ -7,11 +7,18 @@ from aiogram.utils.markdown import hcode, hbold, hitalic
 from .....core import config
 from .....database import user_repo, note_repo, birthday_repo
 from .....services.tz_utils import format_datetime_for_user
-from ..keyboards import get_profile_actions_keyboard
+from .....services.gamification_service import ACHIEVEMENTS_LIST
+from ..keyboards import get_profile_actions_keyboard, get_achievements_keyboard
 from ...notes.handlers import shopping_list
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def get_progress_bar(current: int, total: int, length: int = 10) -> str:
+    if total == 0: return "[]"
+    progress = int((current / total) * length)
+    return "█" * progress + "░" * (length - progress)
 
 
 @router.callback_query(F.data == "user_profile")
@@ -43,6 +50,20 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
         user_info_parts.append(f"▪️ {hbold('Username')}: @{hitalic(user_profile_data['username'])}")
     user_info_block = "\n".join(user_info_parts)
 
+    # Gamification block
+    level = user_profile_data.get('level', 1)
+    xp = user_profile_data.get('xp', 0)
+    xp_for_current_level = user_repo.get_xp_for_level(level)
+    xp_for_next_level = user_repo.get_xp_for_level(level + 1)
+    progress_bar = get_progress_bar(xp - xp_for_current_level, xp_for_next_level - xp_for_current_level)
+
+    gamification_block = (
+        f"🏆 {hbold('Прогресс')}:\n"
+        f"▪️ Уровень: {hbold(level)}\n"
+        f"▪️ Опыт: {hcode(f'{xp}/{xp_for_next_level}')}\n"
+        f"▪️ Прогресс: {hcode(progress_bar)}"
+    )
+
     notes_limit_str = "Безлимитно" if is_vip else f"{config.MAX_NOTES_MVP}"
     stt_limit_str = "Безлимитно" if is_vip else f"{config.MAX_DAILY_STT_RECOGNITIONS_MVP}"
     birthdays_limit_str = "Безлимитно" if is_vip else f"{config.MAX_NOTES_MVP}"
@@ -61,7 +82,7 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
     ]
     settings_block = f"⚙️ {hbold('Данные')}:\n" + "\n".join(settings_info_parts)
 
-    response_text = "\n\n".join([profile_header, user_info_block, stats_block, settings_block])
+    response_text = "\n\n".join([profile_header, user_info_block, gamification_block, stats_block, settings_block])
 
     keyboard = get_profile_actions_keyboard(has_active_shopping_list=has_active_shopping_list)
 
@@ -72,6 +93,40 @@ async def user_profile_display_handler(callback_query: types.CallbackQuery, stat
         await callback_query.message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
 
     await callback_query.answer()
+
+
+@router.callback_query(F.data == "show_achievements")
+async def show_achievements_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    all_achievements = ACHIEVEMENTS_LIST
+    user_achievements_codes = await user_repo.get_user_achievements_codes(user_id)
+
+    header = f"🏆 {hbold('Ваши достижения')}\n\n"
+
+    earned_achievements = []
+    unearned_achievements = []
+
+    for ach in all_achievements:
+        if ach.code in user_achievements_codes:
+            earned_achievements.append(f"{ach.icon} {hbold(ach.name)} — {hitalic(ach.description)}")
+        else:
+            unearned_achievements.append(f"❔ {hbold(ach.name)} — {hitalic(ach.description)}")
+
+    text_parts = [header]
+    if earned_achievements:
+        text_parts.append(f"{hbold('Получено:')}\n" + "\n".join(earned_achievements))
+
+    if unearned_achievements:
+        text_parts.append(f"\n{hbold('Еще не открыто:')}\n" + "\n".join(unearned_achievements))
+
+    if not earned_achievements and not unearned_achievements:
+        text_parts.append("Информация о достижениях загружается...")
+
+    final_text = "\n\n".join(text_parts)
+    keyboard = get_achievements_keyboard()
+
+    await callback.message.edit_text(final_text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "show_active_shopping_list")

@@ -9,6 +9,7 @@ from aiogram.utils.markdown import hcode
 from .....core import config
 from .....database import user_repo
 from .....services import stt
+from .....services.gamification_service import XP_REWARDS, check_and_grant_achievements
 from ..keyboards import get_undo_creation_keyboard
 from ..services import process_and_save_note
 
@@ -71,11 +72,16 @@ async def _autosave_and_reply(message: types.Message, text_to_process: str, stat
         await status_msg.edit_text(user_message)
         return
 
+    action_type = 'create_note_voice_auto' if audio_file_id else 'create_note_text_auto'
+    xp_reward = XP_REWARDS['create_note_voice'] if audio_file_id else XP_REWARDS['create_note_text']
+
     await user_repo.log_user_action(
         message.from_user.id,
-        'create_note_voice_auto' if audio_file_id else 'create_note_text_auto',
+        action_type,
         metadata={'note_id': new_note['note_id']}
     )
+    await user_repo.add_xp_and_check_level_up(message.bot, message.from_user.id, xp_reward)
+    await check_and_grant_achievements(message.bot, message.from_user.id)
 
     is_shopping_list = new_note.get('category') == 'Покупки'
     keyboard = get_undo_creation_keyboard(new_note['note_id'], is_shopping_list)

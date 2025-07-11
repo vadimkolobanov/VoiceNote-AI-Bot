@@ -2,11 +2,25 @@
 import json
 import logging
 from datetime import datetime, timezone, date, time
-from aiogram import types
+
+import asyncpg
+from aiogram import types, Bot
+from aiogram.utils.markdown import hbold
 
 from .connection import get_db_pool
+from ..services.gamification_service import ACHIEVEMENTS_BY_CODE
 
 logger = logging.getLogger(__name__)
+
+
+def get_level_for_xp(xp: int) -> int:
+    return int((xp / 100) ** 0.5) + 1
+
+
+def get_xp_for_level(level: int) -> int:
+    if level <= 1:
+        return 0
+    return int(((level - 1) ** 2) * 100)
 
 
 async def add_or_update_user(telegram_id: int, username: str = None, first_name: str = None, last_name: str = None,
@@ -63,10 +77,17 @@ async def get_user_profile(telegram_id: int) -> dict | None:
 
 async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
     """Устанавливает VIP-статус для пользователя."""
+    from ..services.gamification_service import check_and_grant_achievements
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("UPDATE users SET is_vip = $1, updated_at = NOW() WHERE telegram_id = $2", is_vip,
                                     telegram_id)
+
+        # Проверка на ачивку после смены статуса
+        if is_vip:
+            from ..main import bot_instance
+            await check_and_grant_achievements(bot_instance, telegram_id)
+
         return int(result.split(" ")[1]) > 0
 
 
@@ -211,3 +232,78 @@ async def log_user_action(user_telegram_id: int, action_type: str, metadata: dic
             await conn.execute(query, user_telegram_id, action_type, metadata_json)
     except Exception as e:
         logger.error(f"Ошибка логирования действия '{action_type}' для {user_telegram_id}: {e}")
+
+
+# --- Функции для геймификации ---
+
+async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_level_up: bool = False):
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT level, xp FROM users WHERE telegram_id = $1", user_id)
+        if not user:
+            return
+
+        current_level, current_xp = user['level'], user['xp']
+        new_xp = current_xp + amount
+        new_level = get_level_for_xp(new_xp)
+
+        await conn.execute("UPDATE users SET xp = $1, level = $2 WHERE telegram_id = $3", new_xp, new_level, user_id)
+
+        if new_level > current_level and not silent_level_up:
+            try:
+                level_up_text = f"🎉 {hbold('Новый уровень!')} 🎉\n\nПоздравляем, вы достигли {hbold(f'{new_level}-го уровня')}! Так держать!"
+                if bot:
+                    await bot.send_message(user_id, level_up_text)
+            except Exception as e:
+                logger.warning(f"Не удалось отправить уведомление о новом уровне пользователю {user_id}: {e}")
+
+
+async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silent: bool = False):
+    pool = await get_db_pool()
+    achievement = ACHIEVEMENTS_BY_CODE.get(achievement_code)
+    if not achievement:
+        return
+
+    async with pool.acquire() as conn:
+        try:
+            # Сначала пытаемся вставить. Если ачивка уже есть, выйдет ошибка UniqueViolationError
+            await conn.execute("INSERT INTO user_achievements (user_telegram_id, achievement_code) VALUES ($1, $2)",
+                               user_id, achievement_code)
+
+            # Если вставка прошла успешно, значит ачивка новая. Начисляем XP.
+            await add_xp_and_check_level_up(bot, user_id, achievement.xp_reward, silent_level_up=silent)
+
+            # Отправляем уведомление только если это не "тихая" выдача
+            if not silent:
+                user_profile = await get_user_profile(user_id)
+                user_name = user_profile.get('first_name', 'пользователь')
+
+                text = (
+                    f"🏆 {hbold('Новое достижение!')} 🏆\n\n"
+                    f"{user_name}, вы получили достижение:\n"
+                    f"{achievement.icon} {hbold(achievement.name)}\n"
+                    f"«{achievement.description}»\n\n"
+                    f"Награда: +{achievement.xp_reward} XP ✨"
+                )
+                if bot:
+                    await bot.send_message(user_id, text, parse_mode="HTML")
+
+        except asyncpg.UniqueViolationError:
+            pass  # Пользователь уже имеет это достижение
+        except Exception as e:
+            logger.error(f"Ошибка при выдаче достижения {achievement_code} пользователю {user_id}: {e}")
+
+
+async def get_user_achievements_codes(user_id: int) -> set:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        records = await conn.fetch("SELECT achievement_code FROM user_achievements WHERE user_telegram_id = $1",
+                                   user_id)
+        return {rec['achievement_code'] for rec in records}
+
+
+async def get_all_achievements() -> list[dict]:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        records = await conn.fetch("SELECT * FROM achievements ORDER BY id")
+        return [dict(rec) for rec in records]

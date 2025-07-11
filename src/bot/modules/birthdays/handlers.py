@@ -11,6 +11,7 @@ from aiogram.utils.markdown import hbold, hitalic, hcode
 
 from ....database import birthday_repo, user_repo
 from ....core import config
+from ....services.gamification_service import XP_REWARDS, check_and_grant_achievements
 from ...common_utils.callbacks import BirthdayAction, PageNavigation
 from ...common_utils.states import BirthdayStates
 from .keyboards import get_full_birthdays_keyboard
@@ -131,6 +132,8 @@ async def process_birth_date(message: types.Message, state: FSMContext):
     if bday_record:
         await user_repo.log_user_action(message.from_user.id, 'add_birthday_manual',
                                         metadata={'birthday_id': bday_record['id']})
+        await user_repo.add_xp_and_check_level_up(message.bot, message.from_user.id, XP_REWARDS['add_birthday_manual'])
+        await check_and_grant_achievements(message.bot, message.from_user.id)
         await message.answer(f"✅ Готово! Напоминание о дне рождения для {hbold(person_name)} успешно добавлено.",
                              parse_mode="HTML")
     else:
@@ -215,6 +218,9 @@ async def process_import_file(message: types.Message, state: FSMContext):
     if added_count > 0:
         await user_repo.log_user_action(message.from_user.id, 'import_birthdays_file',
                                         metadata={'imported_count': added_count})
+        await user_repo.add_xp_and_check_level_up(message.bot, message.from_user.id, added_count * XP_REWARDS['add_birthday_manual'])
+        await check_and_grant_achievements(message.bot, message.from_user.id)
+
 
     report_text = (
         f"✅ {hbold('Импорт завершен!')}\n\n"
