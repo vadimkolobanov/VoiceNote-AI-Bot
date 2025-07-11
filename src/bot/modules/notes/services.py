@@ -1,6 +1,6 @@
 # src/bot/modules/notes/services.py
 import logging
-from datetime import datetime, time
+from datetime import datetime
 import pytz
 
 from aiogram import Bot
@@ -8,7 +8,7 @@ from aiogram.utils.markdown import hbold, hcode
 
 from ....database import note_repo, user_repo
 from ....core.config import DEEPSEEK_API_KEY_EXISTS, MAX_NOTES_MVP
-from ....services.llm import enhance_text_with_llm
+from ....services import llm
 from ....services.scheduler import add_reminder_to_scheduler
 from ....services.tz_utils import format_datetime_for_user
 
@@ -24,7 +24,6 @@ async def process_and_save_note(
 ) -> tuple[bool, str, dict | None, bool]:
     """
     Главная сервисная функция для обработки текста, анализа и сохранения заметки.
-    :return: (успех, сообщение_пользователю, созданная_заметка, нужен_ли_запрос_про_таймзону)
     """
     user_profile = await user_repo.get_user_profile(telegram_id)
     if not user_profile:
@@ -32,9 +31,7 @@ async def process_and_save_note(
 
     is_vip = user_profile.get('is_vip', False)
 
-    # Проверка лимита для не-VIP пользователей
     if not is_vip:
-        # Исключение для списков покупок, они обновляют одну и ту же заметку
         is_potential_shopping_list = 'купить' in text_to_process.lower() or 'покупки' in text_to_process.lower()
         if not is_potential_shopping_list:
             active_notes_count = await note_repo.count_active_notes_for_user(telegram_id)
@@ -57,42 +54,54 @@ async def process_and_save_note(
         else:
             return False, "❌ Ошибка при сохранении заметки.", None, False
 
-    # --- Логика с LLM ---
-    user_timezone_str = user_profile.get('timezone', 'UTC')
-    user_tz = pytz.timezone(user_timezone_str)
-    current_user_dt_iso = datetime.now(user_tz).isoformat()
+    # --- Новая логика с декомпозицией ---
 
-    llm_result = await enhance_text_with_llm(text_to_process, current_user_dt_iso)
+    # Этап 1: Классификация намерения
+    intent_result = await llm.classify_intent(text_to_process)
+    if "error" in intent_result:
+        return False, "❌ Ошибка AI: не удалось определить ваше намерение.", None, False
 
-    if "error" in llm_result:
-        logger.error(f"LLM error for user {telegram_id}: {llm_result['error']}")
-        # При ошибке LLM создаем простую заметку
-        corrected_text_to_save = text_to_process
-        summary_text_to_save = text_to_process[:80]
-        category_to_save = "Общее"
-        llm_analysis_json = {"error": llm_result['error']}
-        due_date_obj = None
-        recurrence_rule = None
-    else:
-        llm_analysis_json = llm_result
-        corrected_text_to_save = llm_result.get("corrected_text", text_to_process)
-        summary_text_to_save = llm_result.get("summary_text", corrected_text_to_save[:80])
-        category_to_save = llm_result.get("category", "Общее")
+    intent = llm.UserIntent(intent_result.get("intent", "неизвестно"))
+    logger.info(f"Определено намерение '{intent.value}' для пользователя {telegram_id}")
 
-        # Извлечение даты
-        due_date_obj = None
-        if llm_result.get("dates_times"):
+    # Инициализация переменных
+    llm_analysis_json = {}
+    category_to_save = "Общее"
+    due_date_obj = None
+    recurrence_rule = None
+
+    # Этап 2: Вызов соответствующего экстрактора
+    if intent == llm.UserIntent.CREATE_SHOPPING_LIST:
+        llm_analysis_json = await llm.extract_shopping_list(text_to_process)
+        category_to_save = "Покупки"
+    elif intent == llm.UserIntent.CREATE_REMINDER:
+        user_timezone_str = user_profile.get('timezone', 'UTC')
+        user_tz = pytz.timezone(user_timezone_str)
+        current_user_dt_iso = datetime.now(user_tz).isoformat()
+        llm_analysis_json = await llm.extract_reminder_details(text_to_process, current_user_dt_iso)
+        category_to_save = "Задачи"
+    else:  # CREATE_NOTE или UNKNOWN
+        llm_analysis_json = await llm.extract_note_details(text_to_process)
+
+    if "error" in llm_analysis_json:
+        return False, "❌ Ошибка AI: не удалось извлечь детали из вашего сообщения.", None, False
+
+    # --- Обработка и сохранение результата ---
+
+    corrected_text_to_save = llm_analysis_json.get("corrected_text", text_to_process)
+    summary_text_to_save = llm_analysis_json.get("summary_text", corrected_text_to_save[:80])
+
+    if intent == llm.UserIntent.CREATE_REMINDER:
+        if llm_analysis_json.get("dates_times"):
             try:
-                date_info = llm_result["dates_times"][0]
+                date_info = llm_analysis_json["dates_times"][0]
                 due_date_str_utc = date_info.get("absolute_datetime_start")
                 if due_date_str_utc:
                     due_date_obj = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
             except (ValueError, IndexError, KeyError) as e:
                 logger.error(f"Ошибка парсинга даты из LLM: {e}")
+        recurrence_rule = llm_analysis_json.get("recurrence_rule")
 
-        recurrence_rule = llm_result.get("recurrence_rule")
-
-    # --- Обработка списков покупок ---
     if category_to_save == "Покупки" and llm_analysis_json.get("items"):
         shopping_note = await note_repo.get_or_create_active_shopping_list_note(telegram_id)
         if not shopping_note:
@@ -100,23 +109,20 @@ async def process_and_save_note(
 
         existing_items = shopping_note.get("llm_analysis_json", {}).get("items", [])
         existing_item_names = {item['item_name'].lower() for item in existing_items}
-        new_items_from_llm = llm_analysis_json["items"]
+        new_items_from_llm = llm_analysis_json.get("items", [])
 
-        items_to_add = []
-        for item in new_items_from_llm:
-            if item['item_name'].lower() not in existing_item_names:
-                item['added_by'] = telegram_id
-                items_to_add.append(item)
+        items_to_add = [item for item in new_items_from_llm if item['item_name'].lower() not in existing_item_names]
+        for item in items_to_add:
+            item['added_by'] = telegram_id
 
         existing_items.extend(items_to_add)
         shopping_note["llm_analysis_json"]["items"] = existing_items
 
         await note_repo.update_note_llm_json(shopping_note['note_id'], shopping_note["llm_analysis_json"])
 
-        user_message = f"✅ Добавлено в ваш список покупок: {len(items_to_add)} поз."
+        user_message = f"✅ Добавлено в ваш список покупок: {len(items_to_add)} поз." if items_to_add else "✅ Список покупок обновлен."
         return True, user_message, shopping_note, False
 
-    # --- Обработка обычных заметок ---
     warning_message = ""
     if recurrence_rule and not is_vip:
         recurrence_rule = None
@@ -146,6 +152,7 @@ async def process_and_save_note(
     date_info = ""
     needs_tz_prompt = False
     if new_note.get('due_date'):
+        user_timezone_str = user_profile.get('timezone', 'UTC')
         formatted_date = format_datetime_for_user(new_note['due_date'], user_timezone_str)
         date_info = f"\n🗓️ Срок: {formatted_date}"
         if user_timezone_str == 'UTC':

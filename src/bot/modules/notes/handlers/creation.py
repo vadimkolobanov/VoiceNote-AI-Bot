@@ -5,13 +5,14 @@ from datetime import date, datetime
 
 from aiogram import F, Router, types, Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.utils.markdown import hcode
+from aiogram.utils.markdown import hcode, hbold
 from aiogram.exceptions import TelegramBadRequest
 
 from .....core import config
-from .....database import user_repo
-from .....services import stt
+from .....database import user_repo, note_repo
+from .....services import stt, llm
 from .....services.gamification_service import XP_REWARDS, check_and_grant_achievements
+from .....services.tz_utils import format_datetime_for_user
 from ..keyboards import get_undo_creation_keyboard
 from ..services import process_and_save_note
 
@@ -58,6 +59,51 @@ async def _increment_stt_count(telegram_id: int):
     new_count = 1 if last_reset != today else count + 1
     await user_repo.update_user_stt_counters(telegram_id, new_count, today)
 
+
+async def _check_for_proactive_suggestions(bot: Bot, user_id: int, new_note: dict):
+    """
+    Проверяет, нужно ли дать пользователю проактивный совет после создания заметки.
+    """
+    due_date = new_note.get('due_date')
+    if not due_date:
+        return
+
+    # Шаг 1: Находим потенциально конфликтующие по времени заметки
+    conflicting_notes = await note_repo.find_conflicting_notes(user_id, due_date, new_note['note_id'])
+    if not conflicting_notes:
+        return
+
+    user_profile = await user_repo.get_user_profile(user_id)
+    user_timezone = user_profile.get('timezone', 'UTC')
+
+    # Шаг 2: Для каждой найденной заметки проверяем реальный конфликт с помощью AI
+    real_conflicts = []
+    for existing_note in conflicting_notes:
+        # Передаем полный текст для лучшего анализа
+        new_note_text = new_note.get('corrected_text', new_note.get('summary_text', ''))
+        existing_note_text = existing_note.get('corrected_text', existing_note.get('summary_text', ''))
+
+        if await llm.are_tasks_conflicting(new_note_text, existing_note_text):
+            real_conflicts.append(existing_note)
+
+    # Шаг 3: Если найдены реальные конфликты, формируем и отправляем сообщение
+    if real_conflicts:
+        conflict_texts = []
+        for note in real_conflicts:
+            formatted_time = format_datetime_for_user(note['due_date'], user_timezone)
+            conflict_texts.append(f"• {hcode(note['summary_text'])} на {hbold(formatted_time)}")
+
+        conflict_list_str = "\n".join(conflict_texts)
+
+        suggestion_text = (
+            f"💡 {hbold('Обратите внимание!')}\n\n"
+            f"Я сохранил вашу задачу, но заметил, что она может конфликтовать с другими вашими планами:\n"
+            f"{conflict_list_str}\n\n"
+            f"Возможно, стоит перепроверить расписание?"
+        )
+
+        await asyncio.sleep(1)  # Небольшая пауза, чтобы сообщение не пришло мгновенно
+        await bot.send_message(user_id, suggestion_text, parse_mode="HTML")
 
 async def _background_note_processor(
         bot: Bot,
@@ -123,6 +169,11 @@ async def _background_note_processor(
         keyboard = get_undo_creation_keyboard(new_note['note_id'], is_shopping_list)
         await bot.edit_message_text(text=user_message, chat_id=chat_id, message_id=status_message_id,
                                     reply_markup=keyboard)
+
+        # <-- НАЧАЛО НОВОГО БЛОКА -->
+        # После успешного сохранения проверяем, не нужно ли дать совет
+        await _check_for_proactive_suggestions(bot, user_id, new_note)
+        # <-- КОНЕЦ НОВОГО БЛОКА -->
 
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):

@@ -13,7 +13,7 @@ def setup_logging():
     Включает обработчики для консоли, файла и опционально для Logtail.
     """
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     # Очищаем существующих обработчиков, чтобы избежать дублирования
     if logger.hasHandlers():
