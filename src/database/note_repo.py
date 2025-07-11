@@ -396,3 +396,33 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
                 """
         records = await conn.fetch(query, telegram_id, user_timezone)
         return [dict(rec) for rec in records]
+
+
+# --- Функции для геймификации ---
+
+async def count_total_and_voice_notes(telegram_id: int) -> tuple[int, int]:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = """
+            SELECT
+                COUNT(*) AS total_notes,
+                COUNT(*) FILTER (WHERE original_audio_telegram_file_id IS NOT NULL) AS voice_notes
+            FROM notes
+            WHERE telegram_id = $1;
+        """
+        record = await conn.fetchrow(query, telegram_id)
+        return (record['total_notes'] or 0, record['voice_notes'] or 0)
+
+
+async def count_completed_notes(telegram_id: int) -> int:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND is_completed = TRUE;"
+        return await conn.fetchval(query, telegram_id) or 0
+
+
+async def did_user_share_note(telegram_id: int) -> bool:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT 1 FROM note_shares WHERE owner_telegram_id = $1 LIMIT 1;"
+        return await conn.fetchval(query, telegram_id) is not None

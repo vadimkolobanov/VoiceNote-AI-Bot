@@ -7,6 +7,7 @@ from aiogram.utils.markdown import hbold, hitalic, hcode
 
 from .....database import note_repo, user_repo
 from .....services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler
+from .....services.gamification_service import XP_REWARDS, AchievCode, check_and_grant_achievements
 from ....common_utils.callbacks import NoteAction
 from ..keyboards import get_category_selection_keyboard
 from .list_view import display_notes_list_page, view_note_detail_handler
@@ -36,6 +37,10 @@ async def complete_note_handler(callback: types.CallbackQuery, callback_data: No
     note_id = callback_data.note_id
     await note_repo.set_note_completed_status(note_id, True)
     remove_reminder_from_scheduler(note_id)
+
+    await user_repo.add_xp_and_check_level_up(callback.bot, callback.from_user.id, XP_REWARDS['note_completed'])
+    await check_and_grant_achievements(callback.bot, callback.from_user.id)
+
     await callback.answer("✅ Отлично! Заметка выполнена и перенесена в архив.", show_alert=True)
     await display_notes_list_page(
         message=callback.message,
@@ -148,6 +153,12 @@ async def share_note_handler(callback: types.CallbackQuery, callback_data: NoteA
     if not token:
         await callback.answer("❌ Не удалось создать ссылку. Попробуйте позже.", show_alert=True)
         return
+
+    # Награждаем за первое действие шаринга
+    if not await note_repo.did_user_share_note(user_id):
+        await user_repo.grant_achievement(callback.bot, user_id, AchievCode.SOCIAL_CONNECTOR.value)
+
+    await user_repo.add_xp_and_check_level_up(callback.bot, user_id, XP_REWARDS['note_shared'])
 
     bot_info = await callback.bot.get_me()
     bot_username = bot_info.username

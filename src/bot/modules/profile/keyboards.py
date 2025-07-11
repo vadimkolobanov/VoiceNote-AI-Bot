@@ -1,5 +1,5 @@
 # src/bot/modules/profile/keyboards.py
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ....services.tz_utils import COMMON_TIMEZONES
@@ -14,12 +14,22 @@ def get_profile_actions_keyboard(has_active_shopping_list: bool = False) -> Inli
         builder.button(text="🛒 Активный список покупок", callback_data="show_active_shopping_list")
         builder.button(text="🤝 Поделиться списком", callback_data="share_active_shopping_list")
 
+    builder.button(text="🏆 Мои достижения", callback_data="show_achievements")
     builder.button(text="🎂 Дни рождения", callback_data=PageNavigation(target="birthdays", page=1).pack())
     builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.button(text="🏠 Главное меню", callback_data="go_to_main_menu")
 
     # Верстка: 2 кнопки в ряд для списка покупок, если он есть
-    builder.adjust(2 if has_active_shopping_list else 1, 1, 1)
+    adjust_layout = [2] if has_active_shopping_list else []
+    adjust_layout.extend([1, 2, 1])  # Достижения, ДР+Настройки, Главное меню
+    builder.adjust(*adjust_layout)
+    return builder.as_markup()
+
+
+def get_achievements_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для экрана достижений."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👤 Назад в профиль", callback_data="user_profile")
     return builder.as_markup()
 
 
