@@ -1,6 +1,7 @@
 # src/web/app.py
 from fastapi import FastAPI
 from aiogram import Bot
+from starlette.responses import HTMLResponse
 
 from .routes import handle_alice_request, set_bot_instance
 from .models import AliceRequest, AliceResponse
@@ -35,6 +36,40 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     @app.get("/api/v1/health", tags=["Health Check"])
     async def health_check():
         return {"status": "OK"}
+
+    @app.get("/auth/callback", response_class=HTMLResponse)
+    async def telegram_auth_callback():
+        return """
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>VoiceNote AI Login</title>
+          </head>
+          <body>
+            <h2>Авторизация через Telegram...</h2>
+            <script>
+              // Извлекаем параметры из URL-фрагмента
+              const hash = window.location.hash.substring(1);
+              if (hash) {
+                // Отправляем данные на API
+                fetch("/api/v1/auth/login", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(Object.fromEntries(new URLSearchParams(hash)))
+                })
+                .then(res => res.json())
+                .then(data => {
+                  if (data.access_token) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify(data));
+                  } else {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({ error: 'Login failed' }));
+                  }
+                });
+              }
+            </script>
+          </body>
+        </html>
+        """
 
     # Роутер для аутентификации
     app.include_router(
