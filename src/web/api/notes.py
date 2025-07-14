@@ -1,7 +1,8 @@
 # src/web/api/notes.py
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from datetime import datetime
 import pytz
+from aiogram import Bot
 
 from src.database import note_repo
 from src.core.config import NOTES_PER_PAGE
@@ -10,7 +11,6 @@ from .schemas import (
     PaginatedNotesResponse, Note, NoteCreateRequest, NoteUpdateRequest
 )
 from src.bot.modules.notes.services import process_and_save_note
-from ...main import bot_instance
 
 router = APIRouter()
 
@@ -22,6 +22,7 @@ async def get_notes(
         per_page: int = Query(NOTES_PER_PAGE, ge=1, le=100),
         archived: bool = False
 ):
+    """Возвращает пагинированный список заметок пользователя."""
     user_id = current_user['telegram_id']
     notes, total_items = await note_repo.get_paginated_notes_for_user(
         telegram_id=user_id,
@@ -44,12 +45,15 @@ async def get_notes(
 @router.post("", response_model=Note, status_code=status.HTTP_201_CREATED, tags=["Notes"])
 async def create_note_from_api(
         request_data: NoteCreateRequest,
-        current_user: dict = Depends(get_current_user)
+        current_user: dict = Depends(get_current_user),
+        request: Request = None,
 ):
+    """Создает новую заметку через API."""
+    bot: Bot = request.app.state.bot
     telegram_id = current_user['telegram_id']
 
     success, user_message, new_note_dict, _ = await process_and_save_note(
-        bot=bot_instance,
+        bot=bot,
         telegram_id=telegram_id,
         text_to_process=request_data.text,
         message_date=datetime.now(pytz.utc)
@@ -65,6 +69,7 @@ async def create_note_from_api(
 
 @router.get("/{note_id}", response_model=Note, tags=["Notes"])
 async def get_note_by_id(note_id: int, current_user: dict = Depends(get_current_user)):
+    """Возвращает одну заметку по ID."""
     note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found or access denied")
@@ -73,7 +78,7 @@ async def get_note_by_id(note_id: int, current_user: dict = Depends(get_current_
 
 @router.put("/{note_id}", response_model=Note, tags=["Notes"])
 async def update_note(note_id: int, request_data: NoteUpdateRequest, current_user: dict = Depends(get_current_user)):
-    # Проверяем, что заметка существует и принадлежит пользователю
+    """Обновляет текст заметки."""
     note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
     if not note or note.get('owner_id') != current_user['telegram_id']:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found or you are not the owner")
@@ -88,6 +93,7 @@ async def update_note(note_id: int, request_data: NoteUpdateRequest, current_use
 
 @router.post("/{note_id}/complete", response_model=Note, tags=["Notes"])
 async def complete_note(note_id: int, current_user: dict = Depends(get_current_user)):
+    """Помечает заметку как выполненную."""
     await note_repo.set_note_completed_status(note_id, True)
     updated_note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
     if not updated_note:
@@ -97,6 +103,7 @@ async def complete_note(note_id: int, current_user: dict = Depends(get_current_u
 
 @router.post("/{note_id}/unarchive", response_model=Note, tags=["Notes"])
 async def unarchive_note(note_id: int, current_user: dict = Depends(get_current_user)):
+    """Восстанавливает заметку из архива."""
     await note_repo.set_note_archived_status(note_id, False)
     updated_note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
     if not updated_note:
@@ -106,6 +113,7 @@ async def unarchive_note(note_id: int, current_user: dict = Depends(get_current_
 
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Notes"])
 async def delete_note(note_id: int, current_user: dict = Depends(get_current_user)):
+    """Окончательно удаляет заметку."""
     note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
     if not note or note.get('owner_id') != current_user['telegram_id']:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found or you are not the owner")

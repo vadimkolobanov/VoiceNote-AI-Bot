@@ -17,24 +17,29 @@ setup_logging()
 check_initial_config()
 logger = logging.getLogger(__name__)
 
-bot_instance: Bot | None = None
 
 # --- Startup/Shutdown Events ---
 async def on_startup(bot: Bot):
+    """Выполняется при запуске бота."""
     logger.info("Starting bot...")
     await bot.delete_webhook(drop_pending_updates=True)
     await init_db()
 
     logger.info("Starting scheduler...")
-    scheduler.configure(job_defaults={'kwargs': {'bot': bot}})
+    # --- ИСПРАВЛЕНИЕ ОШИБКИ 1 ---
+    # Передаем kwargs с ботом в функции, которые добавляют задачи.
+    # Метод modify_job_defaults удален в APScheduler 4.x
     await load_reminders_on_startup(bot)
     await setup_daily_jobs(bot)
     scheduler.start()
+    # ---------------------------
+
     logger.info("Scheduler started.")
     logger.info("Bot is running!")
 
 
 async def on_shutdown(bot: Bot):
+    """Выполняется при остановке бота."""
     logger.info("Stopping bot...")
     if scheduler.running:
         scheduler.shutdown(wait=False)
@@ -42,23 +47,30 @@ async def on_shutdown(bot: Bot):
 
     await close_db_pool()
 
-    if bot and bot.session and not bot.session.closed:
+    # --- ИСПРАВЛЕНИЕ ОШИБКИ 2 ---
+    # В Aiogram 3.x проверка сессии изменилась
+    if bot and bot.session and not bot.session.is_closed():
         await bot.session.close()
+    # ---------------------------
     logger.info("Bot stopped.")
 
 
 # --- Main Execution ---
 async def main():
-    global bot_instance
-    bot_instance = Bot(token=TG_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    """Главная функция запуска приложения."""
+    bot = Bot(token=TG_BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = get_dispatcher()
 
-    fastapi_app = get_fastapi_app(bot_instance)
-    fastapi_app.state.bot = bot_instance
+    fastapi_app = get_fastapi_app(bot)
 
+    # Сохраняем экземпляр бота в состояние приложения FastAPI
+    fastapi_app.state.bot = bot
+
+    # Регистрируем функции запуска и остановки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
+    # Конфигурация веб-сервера Uvicorn
     uvicorn_config = uvicorn.Config(
         app=fastapi_app,
         host="0.0.0.0",
@@ -69,12 +81,14 @@ async def main():
 
     try:
         logger.info("Launching Bot Polling and Web Server...")
+        # Запускаем одновременно и поллинг бота, и веб-сервер
         await asyncio.gather(
-            dp.start_polling(bot_instance, allowed_updates=dp.resolve_used_update_types()),
+            dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
             server.serve()
         )
     finally:
-        await on_shutdown(bot_instance)
+        # Корректно завершаем работу при остановке
+        await on_shutdown(bot)
 
 
 if __name__ == "__main__":
