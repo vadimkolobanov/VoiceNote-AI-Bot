@@ -13,11 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 def _process_note_record(record: asyncpg.Record) -> dict | None:
-    """Внутренняя утилита для обработки записи из БД, декодирует JSON."""
+    """Внутренняя утилита для обработки записи из БД, декодирует JSON и добавляет owner_id."""
     if not record:
         return None
     note_dict = dict(record)
-    # Поле llm_analysis_json может быть строкой, его нужно распарсить
+
+    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Гарантируем наличие поля owner_id
+    if 'owner_id' not in note_dict and 'telegram_id' in note_dict:
+        note_dict['owner_id'] = note_dict['telegram_id']
+
     if 'llm_analysis_json' in note_dict and isinstance(note_dict['llm_analysis_json'], str):
         try:
             note_dict['llm_analysis_json'] = json.loads(note_dict['llm_analysis_json'])
@@ -69,7 +73,7 @@ async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
     """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        if telegram_id == 0:  # Админский доступ без проверки прав
+        if telegram_id == 0:
             query = "SELECT n.*, n.telegram_id as owner_id FROM notes n WHERE n.note_id = $1 LIMIT 1;"
             record = await conn.fetchrow(query, note_id)
         else:
@@ -100,7 +104,6 @@ async def get_paginated_notes_for_user(telegram_id: int, page: int = 1, per_page
     async with pool.acquire() as conn:
         archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE AND is_completed = FALSE"
 
-        # Считаем общее количество заметок (своих и расшаренных)
         count_query = f"""
             SELECT COUNT(*) FROM (
                 SELECT note_id FROM notes
@@ -202,8 +205,6 @@ async def delete_note(note_id: int, telegram_id: int) -> bool:
     """Полностью удаляет заметку из БД. Проверяет, что `telegram_id` является владельцем."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # При удалении заметки, каскадное удаление (ON DELETE CASCADE) автоматически
-        # удалит связанные записи в note_shares, shared_note_messages, share_tokens.
         result = await conn.execute("DELETE FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id, telegram_id)
         return int(result.split(" ")[1]) > 0
 
@@ -226,14 +227,12 @@ async def get_notes_with_reminders() -> list[dict]:
         return processed_records
 
 
-# --- Функции для шаринга ---
-
 async def create_share_token(note_id: int, owner_id: int) -> str | None:
     """Создает одноразовый токен для шаринга заметки по ссылке."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         token = secrets.token_urlsafe(16)
-        expires_at = datetime.now(timezone.utc) + timedelta(days=2)  # Ссылка действует 48 часов
+        expires_at = datetime.now(timezone.utc) + timedelta(days=2)
         query = "INSERT INTO share_tokens (token, note_id, owner_id, expires_at) VALUES ($1, $2, $3, $4) RETURNING token;"
         try:
             return await conn.fetchval(query, token, note_id, owner_id, expires_at)
@@ -280,12 +279,10 @@ async def get_shared_note_participants(note_id: int) -> list[dict]:
     """Возвращает список всех участников заметки (владельца и тех, с кем поделились)."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Получаем владельца
         owner_query = "SELECT telegram_id, username, first_name FROM users WHERE telegram_id = (SELECT telegram_id FROM notes WHERE note_id = $1)"
         owner_rec = await conn.fetchrow(owner_query, note_id)
         participants = [dict(owner_rec)] if owner_rec else []
 
-        # Получаем тех, с кем поделились
         shared_query = """
                        SELECT u.telegram_id, u.username, u.first_name
                        FROM users u
@@ -294,7 +291,6 @@ async def get_shared_note_participants(note_id: int) -> list[dict]:
                        """
         shared_recs = await conn.fetch(shared_query, note_id)
 
-        # Собираем уникальный список
         existing_ids = {p['telegram_id'] for p in participants}
         for rec in shared_recs:
             if rec['telegram_id'] not in existing_ids:
@@ -333,8 +329,6 @@ async def delete_shared_message_id(note_id: int, user_id: int) -> bool:
         return int(result.split(" ")[1]) > 0
 
 
-# --- Функции для списков покупок и дайджестов ---
-
 async def get_active_shopping_list(telegram_id: int) -> dict | None:
     """Возвращает активный список покупок, где пользователь либо владелец, либо получатель."""
     pool = await get_db_pool()
@@ -356,13 +350,11 @@ async def get_active_shopping_list(telegram_id: int) -> dict | None:
 async def get_or_create_active_shopping_list_note(telegram_id: int) -> dict | None:
     """
     Ищет активный список покупок у пользователя. Если не находит - создает новый, пустой.
-    Это обеспечивает "персистентность" списка покупок.
     """
     active_list = await get_active_shopping_list(telegram_id)
     if active_list:
         return active_list
 
-    # Если не нашли, создаем новый
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         create_query = """
@@ -398,18 +390,15 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
         return [dict(rec) for rec in records]
 
 
-# --- Функции для геймификации ---
-
 async def count_total_and_voice_notes(telegram_id: int) -> tuple[int, int]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-            SELECT
-                COUNT(*) AS total_notes,
-                COUNT(*) FILTER (WHERE original_audio_telegram_file_id IS NOT NULL) AS voice_notes
-            FROM notes
-            WHERE telegram_id = $1;
-        """
+                SELECT COUNT(*) AS total_notes, \
+                       COUNT(*)    FILTER (WHERE original_audio_telegram_file_id IS NOT NULL) AS voice_notes
+                FROM notes
+                WHERE telegram_id = $1; \
+                """
         record = await conn.fetchrow(query, telegram_id)
         return (record['total_notes'] or 0, record['voice_notes'] or 0)
 
@@ -431,7 +420,6 @@ async def did_user_share_note(telegram_id: int) -> bool:
 async def find_conflicting_notes(telegram_id: int, due_date: datetime, note_id_to_exclude: int) -> list[dict]:
     """
     Ищет активные заметки пользователя, которые пересекаются по времени с новой задачей.
-    Проверяет интервал +/- 1 час от указанной due_date.
     """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -439,7 +427,7 @@ async def find_conflicting_notes(telegram_id: int, due_date: datetime, note_id_t
         time_window_end = due_date + timedelta(hours=1)
 
         query = """
-                SELECT note_id, summary_text, due_date
+                SELECT note_id, summary_text, corrected_text, due_date
                 FROM notes
                 WHERE telegram_id = $1
                   AND is_archived = FALSE

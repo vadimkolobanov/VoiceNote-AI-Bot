@@ -14,6 +14,9 @@ from ..notes.handlers import list_view, shopping_list
 from .keyboards import get_main_menu_keyboard, get_help_keyboard, get_donation_keyboard, get_guides_keyboard, \
     get_back_to_guides_keyboard
 
+import secrets
+import string
+from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -245,6 +248,19 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command
     else:
         await _send_welcome_message(message, state, bot)
 
+@router.message(Command(commands=["code"]))
+async def cmd_code(message: types.Message):
+    user_id = message.from_user.id
+    code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+    expires_at = datetime.now() + timedelta(minutes=10)
+
+    await user_repo.set_mobile_activation_code(user_id, code, expires_at)
+
+    await message.answer(
+        f"📱 Ваш код для входа в мобильное приложение:\n\n"
+        f"{hcode(code)}\n\n"
+        f"Код действителен 10 минут."
+    )
 
 @router.callback_query(F.data == "go_to_main_menu")
 async def go_to_main_menu_handler(callback: types.CallbackQuery, state: FSMContext, bot: Bot):

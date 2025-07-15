@@ -42,7 +42,6 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
                 """
         user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
 
-        # Инвалидация кэша при обновлении данных
         await cache_service.delete_user_profile_from_cache(telegram_id)
 
         return dict(user_record) if user_record else None
@@ -72,29 +71,25 @@ async def get_or_create_user(tg_user: types.User) -> dict | None:
 
 async def get_user_profile(telegram_id: int) -> dict | None:
     """Возвращает профиль пользователя по его telegram_id, используя кэш."""
-    # 1. Попытаться получить из Redis
     cached_profile = await cache_service.get_user_profile_from_cache(telegram_id)
     if cached_profile:
-        # Восстанавливаем объекты datetime/time из строк
         for key in ['created_at', 'updated_at', 'last_stt_reset_date', 'alice_code_expires_at']:
             if key in cached_profile and isinstance(cached_profile[key], str):
                 try:
                     cached_profile[key] = datetime.fromisoformat(cached_profile[key])
                 except (ValueError, TypeError):
-                    pass  # Для last_stt_reset_date, которое является date
+                    pass
         if 'default_reminder_time' in cached_profile and isinstance(cached_profile['default_reminder_time'], str):
             cached_profile['default_reminder_time'] = time.fromisoformat(cached_profile['default_reminder_time'])
         if 'daily_digest_time' in cached_profile and isinstance(cached_profile['daily_digest_time'], str):
             cached_profile['daily_digest_time'] = time.fromisoformat(cached_profile['daily_digest_time'])
         return cached_profile
 
-    # 2. Если в кэше нет, идем в БД
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
         profile = dict(user_record) if user_record else None
 
-    # 3. Сохранить результат в Redis перед возвратом
     if profile:
         await cache_service.set_user_profile_to_cache(telegram_id, profile.copy())
 
@@ -227,8 +222,6 @@ async def set_user_pre_reminder_minutes(telegram_id: int, minutes: int) -> bool:
         return success
 
 
-# --- Функции для интеграции с Алисой ---
-
 async def set_alice_activation_code(telegram_id: int, code: str, expires_at: datetime) -> bool:
     """Сохраняет код активации и инвалидирует кэш."""
     pool = await get_db_pool()
@@ -263,16 +256,12 @@ async def link_alice_user(telegram_id: int, alice_id: str) -> bool:
 
 async def find_user_by_alice_id(alice_id: str) -> dict | None:
     """Находит пользователя по его ID из Алисы, используя кэш."""
-    # Этот запрос редкий, кэшировать его результат может быть избыточно,
-    # но можно добавить, если вызов станет частым.
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "SELECT * FROM users WHERE alice_user_id = $1"
         record = await conn.fetchrow(query, alice_id)
         return dict(record) if record else None
 
-
-# --- Логирование действий ---
 
 async def log_user_action(user_telegram_id: int, action_type: str, metadata: dict = None):
     pool = await get_db_pool()
@@ -284,8 +273,6 @@ async def log_user_action(user_telegram_id: int, action_type: str, metadata: dic
     except Exception as e:
         logger.error(f"Ошибка логирования действия '{action_type}' для {user_telegram_id}: {e}")
 
-
-# --- Функции для геймификации ---
 
 async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_level_up: bool = False):
     pool = await get_db_pool()
@@ -301,7 +288,7 @@ async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_
 
         if new_level > current_level:
             await conn.execute("UPDATE users SET level = $1 WHERE telegram_id = $2", new_level, user_id)
-            await cache_service.delete_user_profile_from_cache(user_id)  # Уровень изменился, сбрасываем кэш
+            await cache_service.delete_user_profile_from_cache(user_id)
             if not silent_level_up:
                 try:
                     level_up_text = f"🎉 {hbold('Новый уровень!')} 🎉\n\nПоздравляем, вы достигли {hbold(f'{new_level}-го уровня')}! Так держать!"
@@ -338,7 +325,7 @@ async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silen
                 if bot:
                     await bot.send_message(user_id, text, parse_mode="HTML")
 
-        except Exception:  # asyncpg.UniqueViolationError
+        except Exception:
             pass
         except Exception as e:
             logger.error(f"Ошибка при выдаче достижения {achievement_code} пользователю {user_id}: {e}")
@@ -354,19 +341,100 @@ async def get_user_achievements_codes(user_id: int) -> set:
 
 async def get_all_achievements() -> list[dict]:
     """Возвращает список всех достижений, используя кэш."""
-    # 1. Попытаться получить из Redis
     cached_achievements = await cache_service.get_all_achievements_from_cache()
     if cached_achievements is not None:
         return cached_achievements
 
-    # 2. Если в кэше нет, идем в БД
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         records = await conn.fetch("SELECT * FROM achievements ORDER BY id")
         achievements = [dict(rec) for rec in records]
 
-    # 3. Сохранить результат в Redis перед возвратом
     if achievements:
         await cache_service.set_all_achievements_to_cache(achievements)
 
     return achievements
+
+# --- Функции для мобильного приложения ---
+
+async def set_mobile_activation_code(telegram_id: int, code: str, expires_at: datetime) -> bool:
+    """Сохраняет или обновляет код активации для мобильного приложения."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = """
+            INSERT INTO mobile_activation_codes (telegram_id, code, expires_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (telegram_id) DO UPDATE
+            SET code = $2, expires_at = $3
+        """
+        await conn.execute(query, telegram_id, code, expires_at)
+        await cache_service.delete_user_profile_from_cache(telegram_id)
+        return True
+
+
+async def find_user_by_mobile_code(code: str) -> dict | None:
+    """Находит пользователя по коду активации (если код не истёк)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        record = await conn.fetchrow(
+            "SELECT u.* FROM users u JOIN mobile_activation_codes mac ON u.telegram_id = mac.telegram_id "
+            "WHERE mac.code = $1 AND mac.expires_at > NOW()",
+            code.upper()
+        )
+        return dict(record) if record else None
+
+
+async def clear_mobile_activation_code(telegram_id: int) -> bool:
+    """Удаляет код активации для мобильного приложения после его использования."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM mobile_activation_codes WHERE telegram_id = $1",
+            telegram_id
+        )
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
+
+
+async def register_user_device(telegram_id: int, fcm_token: str, platform: str) -> bool:
+    """Сохраняет или обновляет FCM токен устройства для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Эта логика сначала пытается обновить существующий токен, если он принадлежит другому юзеру,
+        # а потом вставляет, если его не было. ON CONFLICT (fcm_token)
+        query = """
+            INSERT INTO user_devices (user_telegram_id, fcm_token, platform, last_used_at)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (fcm_token) DO UPDATE
+            SET user_telegram_id = EXCLUDED.user_telegram_id, last_used_at = NOW();
+        """
+        try:
+            await conn.execute(query, telegram_id, fcm_token, platform)
+            logger.info(f"Зарегистрирован или обновлен FCM токен для пользователя {telegram_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при регистрации FCM токена для {telegram_id}: {e}")
+            return False
+
+
+async def get_user_device_tokens(telegram_id: int) -> list[str]:
+    """Получает все активные FCM токены для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT fcm_token FROM user_devices WHERE user_telegram_id = $1"
+        records = await conn.fetch(query, telegram_id)
+        return [rec['fcm_token'] for rec in records]
+
+# ... в конце файла user_repo.py
+async def delete_user_device_token(fcm_token: str) -> bool:
+    """Удаляет конкретный FCM токен из базы данных."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM user_devices WHERE fcm_token = $1", fcm_token)
+        deleted_count = int(result.split(" ")[1])
+        if deleted_count > 0:
+            logger.info(f"Удален невалидный FCM токен: {fcm_token[:15]}...")
+            return True
+        return False
