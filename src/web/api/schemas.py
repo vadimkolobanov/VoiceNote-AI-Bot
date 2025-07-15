@@ -2,7 +2,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime, time
 
-# --- Существующие схемы ---
 class TelegramLoginData(BaseModel):
     id: int
     first_name: str
@@ -27,12 +26,12 @@ class UserProfile(BaseModel):
     default_reminder_time: time
     pre_reminder_minutes: int
     daily_digest_enabled: bool
+    daily_digest_time: time
 
     class Config:
         from_attributes = True
 
 class Note(BaseModel):
-    """Модель для отображения одной заметки в API."""
     note_id: int
     owner_id: int
     summary_text: str | None
@@ -45,19 +44,17 @@ class Note(BaseModel):
     recurrence_rule: str | None
     is_archived: bool
     is_completed: bool
+    llm_analysis_json: dict | None = None
 
     class Config:
         from_attributes = True
 
 class PaginatedNotesResponse(BaseModel):
-    """Модель для ответа с пагинированным списком заметок."""
     items: list[Note]
     total: int
     page: int
     per_page: int
     total_pages: int
-
-# --- НОВЫЕ СХЕМЫ ---
 
 class NoteCreateRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Текст для создания новой заметки")
@@ -85,3 +82,31 @@ class PaginatedBirthdaysResponse(BaseModel):
     page: int
     per_page: int
     total_pages: int
+
+class ProfileUpdateRequest(BaseModel):
+    timezone: str | None = None
+    default_reminder_time: time | None = None
+    pre_reminder_minutes: int | None = None
+    daily_digest_enabled: bool | None = None
+    daily_digest_time: time | None = None
+
+class ShoppingListItem(BaseModel):
+    item_name: str
+    checked: bool
+    added_by: int | None = None
+
+class Participant(BaseModel):
+    telegram_id: int
+    first_name: str
+
+class ShoppingListNote(Note):
+    llm_analysis_json: dict[str, list[ShoppingListItem]] | None = Field(default_factory=dict)
+    participants: list[Participant] = []
+
+class ShoppingListItemUpdate(BaseModel):
+    item_index: int
+    checked: bool
+
+class DeviceTokenRegister(BaseModel):
+    fcm_token: str
+    platform: str = "android"

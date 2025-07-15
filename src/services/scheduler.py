@@ -15,8 +15,9 @@ from aiogram.utils.markdown import hbold, hcode, hitalic
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ..database import note_repo, birthday_repo, user_repo
-from ..bot.common_utils.callbacks import NoteAction, ShoppingListAction
+from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
+from . import push_service
 
 logger = logging.getLogger(__name__)
 
@@ -127,19 +128,21 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
 
     logger.info(
         f"Отправка {'предварительного ' if is_pre_reminder else 'основного'} напоминания по заметке #{note_id} пользователю {telegram_id}")
-    try:
-        note = await note_repo.get_note_by_id(note_id, telegram_id)
-        if not note or note.get('is_completed') or note.get('is_archived'):
-            logger.info(f"Напоминание для заметки #{note_id} отменено: заметка неактивна.")
-            remove_reminder_from_scheduler(note_id)
-            return
 
+    note = await note_repo.get_note_by_id(note_id, telegram_id)
+    if not note or note.get('is_completed') or note.get('is_archived'):
+        logger.info(f"Напоминание для заметки #{note_id} отменено: заметка неактивна.")
+        remove_reminder_from_scheduler(note_id)
+        return
+
+    # --- Отправка в Telegram ---
+    try:
         user_profile = await user_repo.get_user_profile(telegram_id)
         user_timezone = user_profile.get('timezone', 'UTC') if user_profile else 'UTC'
         actual_due_date = note.get('due_date', due_date)
         formatted_due_date = format_datetime_for_user(actual_due_date, user_timezone)
 
-        header = f"🔔 {hbold('Предварительное напоминание')}" if is_pre_reminder else f"‼️ {hbold('НАПОМИНАНИЕ')}"
+        header = f"🔔 Предварительное напоминание" if is_pre_reminder else f"❗️ НАПОМИНАНИЕ"
 
         text = (
             f"{header}\n\n"
@@ -150,20 +153,23 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         )
         keyboard = get_reminder_notification_keyboard(note_id, is_pre_reminder=is_pre_reminder)
         await bot.send_message(chat_id=telegram_id, text=text, parse_mode="HTML", reply_markup=keyboard)
-
-        if not is_pre_reminder and note.get('recurrence_rule'):
-            await reschedule_recurring_note(bot, note)
-
     except (TelegramBadRequest, TelegramForbiddenError) as e:
-        if "chat not found" in str(e).lower() or "bot was blocked by the user" in str(e).lower():
-            logger.warning(
-                f"Не удалось отправить напоминание пользователю {telegram_id}. Чат не найден или бот заблокирован. Ошибка: {e}")
-        else:
-            logger.error(f"Ошибка Telegram API при отправке напоминания {note_id} пользователю {telegram_id}: {e}",
-                         exc_info=True)
+        logger.warning(f"Не удалось отправить TG-напоминание пользователю {telegram_id}. Ошибка: {e}")
     except Exception as e:
-        logger.error(f"Не удалось отправить напоминание по заметке #{note_id} пользователю {telegram_id}: {e}",
-                     exc_info=True)
+        logger.error(f"Не удалось отправить TG-напоминание по заметке #{note_id}: {e}", exc_info=True)
+
+    # --- Отправка Push-уведомления ---
+    push_title = "📌 Напоминание" if is_pre_reminder else "❗️ Напоминание"
+    await push_service.send_push_to_user(
+        telegram_id=telegram_id,
+        title=push_title,
+        body=note_text,
+        data={"noteId": str(note_id)}
+    )
+
+    # --- Перепланирование, если нужно ---
+    if not is_pre_reminder and note.get('recurrence_rule'):
+        await reschedule_recurring_note(bot, note)
 
 
 async def send_shopping_list_ping(bot: Bot, user_id: int, note_id: int):
@@ -177,7 +183,8 @@ async def send_shopping_list_ping(bot: Bot, user_id: int, note_id: int):
 
         text = "🔔 Напоминаю про ваш список покупок!"
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🛒 Посмотреть список", callback_data=NoteAction(action="view", note_id=note_id).pack())]
+            [InlineKeyboardButton(text="🛒 Посмотреть список",
+                                  callback_data=NoteAction(action="view", note_id=note_id).pack())]
         ])
         await bot.send_message(user_id, text, reply_markup=kb)
     except Exception as e:
@@ -221,8 +228,6 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
         logger.error(f"Ошибка при пересоздании повторяющейся задачи #{note['note_id']}: {e}", exc_info=True)
 
 
-# --- Ежедневные и периодические задачи ---
-
 def clean_llm_response(text: str) -> str:
     """Утилита для очистки ответа LLM от markdown-блоков."""
     cleaned_text = re.sub(r'^```(html|json|)\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
@@ -236,9 +241,8 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     telegram_id = user['telegram_id']
     user_timezone = user['timezone']
     user_name = user['first_name']
-    digest_time = user.get('daily_digest_time', time(9,0))
 
-    logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone}) в {digest_time.strftime('%H:%M')}")
+    logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone})")
 
     notes_today = await note_repo.get_notes_for_today_digest(telegram_id, user_timezone)
     birthdays_soon = await birthday_repo.get_birthdays_for_upcoming_digest(telegram_id)
@@ -320,13 +324,23 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
                     raise Exception(f"LLM API Error: {resp.status}, Body: {await resp.text()}")
     except Exception as e:
         logger.error(f"Ошибка генерации AI-дайджеста для {telegram_id}: {e}. Отправка стандартного шаблона.")
-        digest_text = f"☀️ Доброе утро, {user_name}!\n\nНе удалось сгенерировать AI-сводку. Вот ваши данные:\n\n<b>Задачи на сегодня:</b>\n{notes_for_prompt}\n\n<b>Дни рождения на неделе:</b>\n{bdays_for_prompt}"
+        notes_html = "\n".join(notes_text_parts) if notes_text_parts else "Задач нет."
+        bdays_html = "\n".join(bday_text_parts) if bday_text_parts else "Дней рождений нет."
+        digest_text = f"☀️ Доброе утро, {user_name}!\n\n<b>Задачи на сегодня:</b>\n{notes_html}\n\n<b>Дни рождения на неделе:</b>\n{bdays_html}"
 
     try:
         await bot.send_message(telegram_id, digest_text, parse_mode="HTML")
-        logger.info(f"Утренняя сводка успешно отправлена пользователю {telegram_id}.")
+        logger.info(f"Утренняя сводка успешно отправлена в Telegram пользователю {telegram_id}.")
     except Exception as e:
-        logger.error(f"Ошибка отправки утренней сводки пользователю {telegram_id}: {e}")
+        logger.error(f"Ошибка отправки утренней сводки в Telegram пользователю {telegram_id}: {e}")
+
+    push_body = re.sub('<[^<]+?>', '', digest_text)
+    await push_service.send_push_to_user(
+        telegram_id=telegram_id,
+        title="☀️ Ваша утренняя сводка",
+        body=push_body,
+        data={"action": "show_digest"}
+    )
 
 
 async def check_and_send_digests(bot: Bot):
@@ -357,7 +371,9 @@ async def send_birthday_reminders(bot: Bot):
     logger.info("Запущена ежедневная проверка дней рождений...")
     all_birthdays = await birthday_repo.get_all_birthdays_for_reminders()
     today_utc = datetime.now(pytz.utc)
-    tasks = []
+
+    user_reminders = {}
+
     for bday in all_birthdays:
         if bday['birth_day'] == today_utc.day and bday['birth_month'] == today_utc.month:
             user_id = bday['user_telegram_id']
@@ -365,21 +381,36 @@ async def send_birthday_reminders(bot: Bot):
             age_info = ""
             if bday['birth_year']:
                 age_info = " " + get_age_string(bday['birth_year'], today_utc.date())
-            text = f"🎂 Напоминание! Сегодня важный день у <b>{person_name}</b>{age_info}!"
-            tasks.append(bot.send_message(chat_id=user_id, text=text, parse_mode="HTML"))
-            logger.info(f"Подготовлено напоминание о дне рождения '{person_name}' для пользователя {user_id}")
-    if tasks:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                try:
-                    chat_id = tasks[i].__self__.chat_id
-                    logger.error(f"Не удалось отправить напоминание о дне рождения пользователю {chat_id}: {result}")
-                except Exception:
-                    logger.error(f"Не удалось отправить напоминание о дне рождения: {result}")
 
+            text = f"Сегодня важный день у <b>{person_name}</b>{age_info}!"
+            if user_id not in user_reminders:
+                user_reminders[user_id] = []
+            user_reminders[user_id].append(text)
 
-# --- Функции запуска/остановки ---
+    if not user_reminders:
+        logger.info("На сегодня нет дней рождений для напоминания.")
+        return
+
+    for user_id, reminders in user_reminders.items():
+        full_tg_text = "🎂 Напоминание о днях рождения!\n\n" + "\n".join(reminders)
+
+        push_body = reminders[0] if len(
+            reminders) == 1 else f"Сегодня {len(reminders)} важных события! Посмотрите в приложении."
+        push_body = re.sub('<[^<]+?>', '', push_body)
+
+        try:
+            await bot.send_message(chat_id=user_id, text=full_tg_text, parse_mode="HTML")
+            logger.info(f"Напоминание о {len(reminders)} ДР отправлено в Telegram пользователю {user_id}")
+        except Exception as e:
+            logger.error(f"Не удалось отправить напоминание о ДР в Telegram пользователю {user_id}: {e}")
+
+        await push_service.send_push_to_user(
+            telegram_id=user_id,
+            title="🎂 Напоминание о дне рождения!",
+            body=push_body,
+            data={"action": "show_birthdays"}
+        )
+
 
 async def load_reminders_on_startup(bot: Bot):
     """Загружает все активные напоминания из БД в планировщик при старте бота."""
