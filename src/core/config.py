@@ -73,7 +73,7 @@ DONATION_URL = os.environ.get("DONATION_URL")
 # --- Feature Flags (based on API key presence) ---
 DEEPSEEK_API_KEY_EXISTS = bool(DEEPSEEK_API_KEY)
 YANDEX_STT_CONFIGURED = bool(YANDEX_SPEECHKIT_API_KEY and YANDEX_SPEECHKIT_FOLDER_ID)
-
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
 
 def check_initial_config():
     """

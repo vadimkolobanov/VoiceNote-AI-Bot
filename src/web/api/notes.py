@@ -6,13 +6,39 @@ from aiogram import Bot
 
 from src.database import note_repo
 from src.core.config import NOTES_PER_PAGE
-from .dependencies import get_current_user
+from .dependencies import get_current_user, get_user_for_internal_api
 from .schemas import (
     PaginatedNotesResponse, Note, NoteCreateRequest, NoteUpdateRequest
 )
 from src.bot.modules.notes.services import process_and_save_note
 
 router = APIRouter()
+
+
+@router.post("", response_model=Note, status_code=status.HTTP_201_CREATED, tags=["Notes"])
+async def create_note_from_api(
+        request_data: NoteCreateRequest,
+        request: Request,
+        bot: Bot = Depends(lambda r: r.app.state.bot),
+        user_from_jwt: dict = Depends(get_current_user),
+        user_from_key: dict = Depends(get_user_for_internal_api)
+):
+    current_user = user_from_jwt or user_from_key
+    telegram_id = current_user['telegram_id']
+
+    success, user_message, new_note_dict, _ = await process_and_save_note(
+        bot=bot,
+        telegram_id=telegram_id,
+        text_to_process=request_data.text,
+        message_date=datetime.now(pytz.utc)
+    )
+
+    if not success or not new_note_dict:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=user_message
+        )
+    return new_note_dict
 
 
 @router.get("", response_model=PaginatedNotesResponse, tags=["Notes"])
