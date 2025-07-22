@@ -8,6 +8,7 @@ from aiogram.utils.markdown import hbold
 from .connection import get_db_pool
 from ..services import cache_service
 from ..services.gamification_service import ACHIEVEMENTS_BY_CODE
+from ..web.routes import bot_instance
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
         if success:
             await cache_service.delete_user_profile_from_cache(telegram_id)
             if is_vip:
-                from ..main import bot_instance
+
                 await check_and_grant_achievements(bot_instance, telegram_id)
         return success
 
@@ -438,3 +439,4 @@ async def delete_user_device_token(fcm_token: str) -> bool:
             logger.info(f"Удален невалидный FCM токен: {fcm_token[:15]}...")
             return True
         return False
+

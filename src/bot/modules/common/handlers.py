@@ -250,6 +250,7 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command
 
 @router.message(Command(commands=["code"]))
 async def cmd_code(message: types.Message):
+    """Отправляет пользователю код для входа в веб-приложение."""
     user_id = message.from_user.id
     code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     expires_at = datetime.now() + timedelta(minutes=10)
@@ -257,7 +258,7 @@ async def cmd_code(message: types.Message):
     await user_repo.set_mobile_activation_code(user_id, code, expires_at)
 
     await message.answer(
-        f"📱 Ваш код для входа в мобильное приложение:\n\n"
+        f"📱 Ваш код для входа в веб-приложение:\n\n"
         f"{hcode(code)}\n\n"
         f"Код действителен 10 минут."
     )
