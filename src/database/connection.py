@@ -190,6 +190,28 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     );
     """,
 
+    # --- Таблица для кодов активации веб/мобильного приложения ---
+    """
+    CREATE TABLE IF NOT EXISTS mobile_activation_codes (
+        telegram_id BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+        code TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL
+    );
+    """,
+
+    # --- Таблица для Push-токенов устройств ---
+    """
+    CREATE TABLE IF NOT EXISTS user_devices (
+        id SERIAL PRIMARY KEY,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        fcm_token TEXT UNIQUE NOT NULL,
+        platform TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        last_used_at TIMESTAMPTZ
+    );
+    """,
+
+
     # --- Индексы ---
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
@@ -201,6 +223,8 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_note_shares_shared_with ON note_shares (shared_with_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON share_tokens (token);",
     "CREATE INDEX IF NOT EXISTS idx_user_achievements_user_id ON user_achievements (user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_mobile_activation_codes_code ON mobile_activation_codes(code);",
+    "CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON user_devices(user_telegram_id);",
 ]
 
 

@@ -110,3 +110,6 @@ class ShoppingListItemUpdate(BaseModel):
 class DeviceTokenRegister(BaseModel):
     fcm_token: str
     platform: str = "android"
+
+class ShoppingListItemAddRequest(BaseModel):
+    item_name: str = Field(..., min_length=1)
