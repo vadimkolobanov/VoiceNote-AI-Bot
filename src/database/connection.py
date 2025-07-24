@@ -8,9 +8,7 @@ from src.core.config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
 
-# Все DDL-запросы для создания и обновления схемы БД
 CREATE_AND_UPDATE_TABLES_STATEMENTS = [
-    # --- Таблица Users ---
     """
     CREATE TABLE IF NOT EXISTS users
     (
@@ -30,7 +28,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         daily_digest_enabled BOOLEAN DEFAULT TRUE
     );
     """,
-    # --- Поля для интеграции с Алисой ---
     """
     DO $$
     BEGIN
@@ -46,7 +43,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     END;
     $$;
     """,
-    # --- Поле для времени утренней сводки ---
     """
     DO $$
     BEGIN
@@ -56,7 +52,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     END;
     $$;
     """,
-    # --- Поля для геймификации ---
     """
     DO $$
     BEGIN
@@ -69,8 +64,15 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     END;
     $$;
     """,
-
-    # --- Таблица Notes ---
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='city_name') THEN
+            ALTER TABLE users ADD COLUMN city_name TEXT;
+        END IF;
+    END;
+    $$;
+    """,
     """
     CREATE TABLE IF NOT EXISTS notes
     (
@@ -91,7 +93,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         is_completed BOOLEAN DEFAULT FALSE
     );
     """,
-    # --- Безопасное добавление поля summary_text ---
     """
     DO $$
     BEGIN
@@ -101,8 +102,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     END;
     $$;
     """,
-
-    # --- Таблица Note Shares (Для совместного доступа) ---
     """
     CREATE TABLE IF NOT EXISTS note_shares
     (
@@ -114,8 +113,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         UNIQUE(note_id, shared_with_telegram_id)
     );
     """,
-
-    # --- Таблица Shared Note Messages (Для синхронизации) ---
     """
     CREATE TABLE IF NOT EXISTS shared_note_messages
     (
@@ -126,8 +123,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         UNIQUE(note_id, user_id)
     );
     """,
-
-    # --- Таблица Share Tokens (Для deep-link шаринга) ---
     """
     CREATE TABLE IF NOT EXISTS share_tokens
     (
@@ -140,8 +135,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         is_used BOOLEAN DEFAULT FALSE
     );
     """,
-
-    # --- Таблица Birthdays ---
     """
     CREATE TABLE IF NOT EXISTS birthdays
     (
@@ -154,8 +147,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         created_at TIMESTAMPTZ DEFAULT NOW()
     );
     """,
-
-    # --- Таблица User Actions (для аналитики) ---
     """
     CREATE TABLE IF NOT EXISTS user_actions
     (
@@ -166,8 +157,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         metadata JSONB
     );
     """,
-
-    # --- Таблицы для геймификации ---
     """
     CREATE TABLE IF NOT EXISTS achievements
     (
@@ -189,8 +178,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         UNIQUE (user_telegram_id, achievement_code)
     );
     """,
-
-    # --- Таблица для кодов активации веб/мобильного приложения ---
     """
     CREATE TABLE IF NOT EXISTS mobile_activation_codes (
         telegram_id BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -198,8 +185,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         expires_at TIMESTAMPTZ NOT NULL
     );
     """,
-
-    # --- Таблица для Push-токенов устройств ---
     """
     CREATE TABLE IF NOT EXISTS user_devices (
         id SERIAL PRIMARY KEY,
@@ -210,9 +195,6 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         last_used_at TIMESTAMPTZ
     );
     """,
-
-
-    # --- Индексы ---
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",
@@ -286,10 +268,10 @@ async def init_db():
 
 
 async def setup_database_on_startup():
-    """Функция для вызова при запуске приложения."""
+    """Выполняется при запуске приложения для инициализации БД."""
     await init_db()
 
 
 async def shutdown_database_on_shutdown():
-    """Функция для вызова при остановке приложения."""
+    """Выполняется при остановке приложения для закрытия пула соединений."""
     await close_db_pool()

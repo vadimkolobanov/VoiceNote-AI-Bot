@@ -3,23 +3,17 @@ from aiogram.filters.callback_data import CallbackData
 
 
 class NoteAction(CallbackData, prefix="note_act"):
-    """
-    Действия, связанные с конкретной заметкой.
-    - action: 'view', 'edit', 'delete', 'complete', 'archive', etc.
-    - note_id: ID заметки.
-    - page: Номер страницы для возврата к списку.
-    - target_list: 'active' или 'archive' для возврата к правильному списку.
-    - category: Для установки новой категории.
-    - snooze_minutes: Для откладывания напоминания.
-    """
     action: str
     note_id: int
     page: int = 1
     target_list: str = 'active'
     category: str | None = None
     snooze_minutes: int | None = None
+    # --- НОВЫЕ ПОЛЯ ---
+    recur_freq: str | None = None  # daily, weekly, monthly
 
 
+# ... (остальные классы без изменений) ...
 class ShoppingListAction(CallbackData, prefix="shop_list"):
     """Действия, связанные со списком покупок."""
     action: str
@@ -29,9 +23,9 @@ class ShoppingListAction(CallbackData, prefix="shop_list"):
 
 class ShoppingListReminder(CallbackData, prefix="shop_rem"):
     """Действия для установки напоминания о списке покупок."""
-    action: str # 'show_options', 'set', 'cancel'
+    action: str  # 'show_options', 'set', 'cancel'
     note_id: int
-    value: str | None = None # Используем строковое значение для гибкости
+    value: str | None = None  # Используем строковое значение для гибкости
 
 
 class PageNavigation(CallbackData, prefix="pg_nav"):
@@ -60,7 +54,7 @@ class TimezoneAction(CallbackData, prefix="tz_act"):
 
 class InfoAction(CallbackData, prefix="info_act"):
     """Действия в информационном/справочном разделе."""
-    action: str # main, guides, guide_..., support
+    action: str  # main, guides, guide_..., support
     guide_topic: str | None = None
 
 

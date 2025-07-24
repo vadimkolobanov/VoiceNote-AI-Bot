@@ -4,23 +4,22 @@ import logging
 from aiogram import Router, F, types
 from aiogram.filters import Command, Filter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.markdown import hbold, hcode, hitalic
 
 from .keyboards import get_admin_users_list_keyboard, get_admin_user_panel_keyboard
-from ...common_utils.callbacks import AdminUserNav, AdminAction
+from ...common_utils.callbacks import AdminUserNav, AdminAction, SettingsAction
 from ...common_utils.states import AdminStates
-from ....core.config import ADMIN_TELEGRAM_ID
-from ....database import user_repo, note_repo  # Импортируем репозитории
+from ....core.config import ADMIN_TELEGRAM_ID, NEWS_CHANNEL_URL, DONATION_URL
+from ....database import user_repo
 from ....services.scheduler import scheduler, send_birthday_reminders, generate_and_send_daily_digest
 from ....services.tz_utils import format_datetime_for_user
-
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-# --- Кастомный фильтр для админа ---
 class IsAdmin(Filter):
     async def __call__(self, event: Message | CallbackQuery) -> bool:
         if not ADMIN_TELEGRAM_ID:
@@ -28,12 +27,26 @@ class IsAdmin(Filter):
         return event.from_user.id == ADMIN_TELEGRAM_ID
 
 
-# Применяем фильтр ко всем хендлерам в этом роутере
 router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
 
 
-# --- Вспомогательные функции ---
+def get_broadcast_footer_keyboard() -> InlineKeyboardMarkup | None:
+    """
+    Создает клавиатуру-подвал для broadcast-сообщений.
+    """
+    builder = InlineKeyboardBuilder()
+    if NEWS_CHANNEL_URL:
+        builder.button(text="📢 Новости проекта", url=NEWS_CHANNEL_URL)
+    if DONATION_URL:
+        builder.button(text="❤️ Поддержать автора", callback_data="show_donate_info")
+
+    if not builder.buttons:
+        return None
+
+    builder.adjust(1)
+    return builder.as_markup()
+
 
 async def _get_user_info_text_and_keyboard(target_user_id: int):
     """Вспомогательная функция для получения текста и клавиатуры для админ-панели."""
@@ -75,11 +88,9 @@ async def _display_users_list_page(message: Message, page: int = 1):
 
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    except Exception:  # Если сообщение не изменилось или другая ошибка
+    except Exception:
         await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
-
-# --- Хендлеры ---
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
@@ -145,8 +156,23 @@ async def toggle_vip_status_handler(callback: CallbackQuery, callback_data: Admi
 
     try:
         if new_vip_status:
-            user_notification_text = f"🎉 {hbold('Поздравляем!')}\n\nВам присвоен статус 👑 {hbold('VIP')}!\nТеперь вам доступны все эксклюзивные возможности бота."
-            await callback.bot.send_message(target_user_id, user_notification_text, parse_mode="HTML")
+            user_notification_text = (
+                f"🎉 {hbold('Поздравляем! Вам присвоен статус 👑 VIP!')} 🎉\n\n"
+                "Теперь вам доступны все эксклюзивные возможности бота:\n\n"
+                f"☀️ {hbold('Утренние сводки')} — получайте план на день каждое утро.\n"
+                f"🔔 {hbold('Предварительные напоминания')} — бот напомнит о задаче заранее.\n"
+                f"🔁 {hbold('Повторяющиеся задачи')} — для регулярных дел.\n"
+                f"📥 {hbold('Импорт дней рождения')} — загружайте все важные даты из файла.\n"
+                f"♾️ {hbold('Безлимитные заметки')} и распознавания голоса.\n\n"
+                "Все эти функции можно настроить под себя в разделе 'Профиль' -> '⚙️ Настройки'."
+            )
+            kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+                types.InlineKeyboardButton(
+                    text="🚀 Перейти к настройкам",
+                    callback_data=SettingsAction(action="go_to_main").pack()
+                )
+            ]])
+            await callback.bot.send_message(target_user_id, user_notification_text, parse_mode="HTML", reply_markup=kb)
         else:
             await user_repo.reset_user_vip_settings(target_user_id)
             user_notification_text = f"ℹ️ {hbold('Изменение статуса')}\n\nВаш VIP-статус был изменен администратором. Теперь для вашего аккаунта действуют стандартные лимиты."
@@ -189,7 +215,6 @@ async def cmd_broadcast_cancel(message: Message, state: FSMContext):
 async def process_broadcast_message(message: Message, state: FSMContext):
     """Запускает процесс рассылки сообщения всем пользователям."""
     await state.clear()
-    # Получаем всех пользователей без пагинации
     all_users, _ = await user_repo.get_all_users_paginated(page=1, per_page=1_000_000)
     user_ids = [user['telegram_id'] for user in all_users]
 
@@ -197,17 +222,20 @@ async def process_broadcast_message(message: Message, state: FSMContext):
         await message.answer("В базе данных нет пользователей для рассылки.")
         return
 
-    # Запускаем рассылку в фоновой задаче, чтобы не блокировать бота
     asyncio.create_task(broadcast_to_users(message, user_ids))
 
     await message.answer(f"✅ Рассылка запущена для {len(user_ids)} пользователей.")
 
 
 async def broadcast_to_users(source_message: Message, user_ids: list[int]):
-    """Асинхронная функция для отправки сообщения пользователям с учетом лимитов Telegram."""
+    """
+    Асинхронная функция для отправки сообщения пользователям с учетом лимитов Telegram.
+    """
     total_users = len(user_ids)
     sent_count = 0
     failed_count = 0
+
+    keyboard = get_broadcast_footer_keyboard()
 
     status_message = await source_message.bot.send_message(
         chat_id=source_message.from_user.id,
@@ -216,18 +244,17 @@ async def broadcast_to_users(source_message: Message, user_ids: list[int]):
 
     for i, user_id in enumerate(user_ids):
         try:
-            await source_message.copy_to(chat_id=user_id)
+            await source_message.copy_to(chat_id=user_id, reply_markup=keyboard)
             sent_count += 1
         except Exception as e:
             failed_count += 1
             logger.warning(f"Рассылка: не удалось отправить сообщение пользователю {user_id}. Ошибка: {e}")
 
-        # Пауза каждые 25 сообщений, чтобы не превышать лимиты Telegram
         if (i + 1) % 25 == 0:
             await asyncio.sleep(1)
             try:
                 await status_message.edit_text(f"⏳ В процессе... ({i + 1}/{total_users})")
-            except Exception:  # Может быть ошибка, если сообщение не менялось
+            except Exception:
                 pass
 
     final_report = (
@@ -239,8 +266,6 @@ async def broadcast_to_users(source_message: Message, user_ids: list[int]):
     await status_message.edit_text(final_report)
 
 
-# --- Команды для тестирования ---
-
 @router.message(Command("jobs"))
 async def cmd_show_jobs(message: Message):
     """Показывает все активные задачи в планировщике APScheduler."""
@@ -251,7 +276,7 @@ async def cmd_show_jobs(message: Message):
 
     response_lines = [f"{hbold('Активные задачи в планировщике:')}\n"]
     for job in jobs:
-        run_date_local = job.next_run_time.astimezone(None)  # В локальную зону сервера
+        run_date_local = job.next_run_time.astimezone(None)
         job_info = (
             f"▪️ {hbold('ID:')} {hcode(job.id)}\n"
             f"  - {hbold('Сработает:')} {hitalic(run_date_local.strftime('%Y-%m-%d %H:%M:%S'))}\n"
