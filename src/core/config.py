@@ -9,15 +9,13 @@ load_dotenv()
 # --- Telegram Bot Token ---
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 
-# --- Секретный ключ для JWT. ВАЖНО: сгенерируйте свой! ---
-# Можно сгенерировать командой в терминале: python -c "import secrets; print(secrets.token_hex(32))"
+# --- Секретный ключ для JWT ---
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 дней
 
 # --- Admin ID ---
 ADMIN_TELEGRAM_ID = int(os.environ.get("ADMIN_TELEGRAM_ID")) if os.environ.get("ADMIN_TELEGRAM_ID") else None
-
 
 # --- API Keys & IDs ---
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
@@ -44,7 +42,6 @@ REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
 if REDIS_USERNAME and REDIS_PASSWORD:
     REDIS_URL = f"redis://{REDIS_USERNAME}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 elif REDIS_PASSWORD:
-    # Для случаев, когда используется только пароль (например, Redis.com)
     REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 else:
     REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
@@ -69,16 +66,21 @@ CHAT_URL = os.environ.get("CHAT_URL")
 CREATOR_CONTACT = os.environ.get("CREATOR_CONTACT", "@useranybody")
 DONATION_URL = os.environ.get("DONATION_URL")
 
+# --- Конфигурация для сервиса погоды ---
+# User-Agent обязателен для соблюдения политики использования Nominatim (OSM)
+APP_USER_AGENT = os.environ.get("APP_USER_AGENT", "VoiceNoteAIBot/1.0 (Contact creator for info)")
 
 # --- Feature Flags (based on API key presence) ---
 DEEPSEEK_API_KEY_EXISTS = bool(DEEPSEEK_API_KEY)
 YANDEX_STT_CONFIGURED = bool(YANDEX_SPEECHKIT_API_KEY and YANDEX_SPEECHKIT_FOLDER_ID)
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
+# Флаг для включения/выключения функции погоды
+WEATHER_SERVICE_ENABLED = True
+
 
 def check_initial_config():
     """
-    Проверяет наличие ключевых переменных окружения при старте
-    и выводит предупреждения, если они отсутствуют.
+    Проверяет наличие ключевых переменных окружения при старте.
     """
     logger = logging.getLogger(__name__)
     if not TG_BOT_TOKEN:

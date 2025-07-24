@@ -16,6 +16,7 @@ class ProfileSettingsStates(StatesGroup):
     """Состояния для настройки профиля пользователя."""
     awaiting_timezone = State()
     awaiting_reminder_time = State()
+    awaiting_city_name = State()
 
 
 class BirthdayStates(StatesGroup):

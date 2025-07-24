@@ -13,12 +13,10 @@ logger = logging.getLogger(__name__)
 
 
 def _process_note_record(record: asyncpg.Record) -> dict | None:
-    """Внутренняя утилита для обработки записи из БД, декодирует JSON и добавляет owner_id."""
     if not record:
         return None
     note_dict = dict(record)
 
-    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Гарантируем наличие поля owner_id
     if 'owner_id' not in note_dict and 'telegram_id' in note_dict:
         note_dict['owner_id'] = note_dict['telegram_id']
 
@@ -32,11 +30,6 @@ def _process_note_record(record: asyncpg.Record) -> dict | None:
 
 
 async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | None:
-    """
-    Создает новую заметку в базе данных.
-    `kwargs` может содержать все остальные опциональные поля.
-    Возвращает ID созданной заметки.
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
@@ -66,11 +59,6 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
 
 
 async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
-    """
-    Возвращает одну заметку по ID.
-    Проверяет, что у `telegram_id` есть доступ к этой заметке (он владелец или ему поделились).
-    Если `telegram_id` равен 0, проверка доступа отключается (для админских нужд).
-    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         if telegram_id == 0:
@@ -86,6 +74,36 @@ async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
                     """
             record = await conn.fetchrow(query, note_id, telegram_id)
         return _process_note_record(record)
+
+
+# ... (остальные функции остаются без изменений) ...
+
+async def find_similar_notes(telegram_id: int, summary_text: str, days_ago: int = 90) -> list[dict]:
+    """
+    Ищет похожие по summary_text заметки пользователя за последние N дней.
+    Использует `summary_text` для грубого первичного отсева в БД, чтобы не нагружать AI.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        time_window_start = datetime.now(timezone.utc) - timedelta(days=days_ago)
+
+        # Этот запрос не идеален для поиска по схожести, но он быстрый
+        # и отсеет явный мусор. Для production можно использовать pg_trgm.
+        query = """
+                SELECT note_id, summary_text, corrected_text, due_date, recurrence_rule
+                FROM notes
+                WHERE telegram_id = $1
+                  AND recurrence_rule IS NULL
+                  AND created_at >= $2
+                  AND summary_text ILIKE $3
+                ORDER BY created_at DESC
+                    LIMIT 10; \
+                """
+        # Ищем похожие слова, %word%
+        search_pattern = f"%{summary_text.split()[0]}%"
+
+        records = await conn.fetch(query, telegram_id, time_window_start, search_pattern)
+        return [_process_note_record(rec) for rec in records]
 
 
 async def count_active_notes_for_user(telegram_id: int) -> int:

@@ -1,18 +1,109 @@
 # src/bot/modules/notes/services.py
 import logging
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 import pytz
 
 from aiogram import Bot
-from aiogram.utils.markdown import hbold, hcode
+from aiogram.utils.markdown import hbold, hcode, hitalic
 
+from .keyboards import get_suggest_recurrence_keyboard
 from ....database import note_repo, user_repo
 from ....core.config import DEEPSEEK_API_KEY_EXISTS, MAX_NOTES_MVP
 from ....services import llm
 from ....services.scheduler import add_reminder_to_scheduler
 from ....services.tz_utils import format_datetime_for_user
 
+
 logger = logging.getLogger(__name__)
+
+TYPO_CORRECTIONS = {
+    "напомин": "напомни", "напомнить": "напомни", "напомниь": "напомни",
+    "купит": "купить", "купиь": "купить",
+}
+
+
+def _preprocess_text(text: str) -> str:
+    """Применяет исправления опечаток к тексту."""
+    for typo, correction in TYPO_CORRECTIONS.items():
+        text = text.lower().replace(f"\\b{typo}\\b", correction, 1)
+    return text
+
+
+def _calculate_due_date_from_components(time_components: dict, user_tz: pytz.BaseTzInfo) -> datetime | None:
+    """
+    Вычисляет точную дату напоминания на основе компонентов от LLM.
+    Возвращает datetime объект в UTC.
+    """
+    if not time_components:
+        return None
+
+    try:
+        now_in_user_tz = datetime.now(user_tz)
+        target_dt = now_in_user_tz
+
+        relative_days = time_components.get("relative_days", 0) or 0
+        relative_hours = time_components.get("relative_hours", 0) or 0
+        relative_minutes = time_components.get("relative_minutes", 0) or 0
+        if any([relative_days, relative_hours, relative_minutes]):
+            target_dt += timedelta(days=relative_days, hours=relative_hours, minutes=relative_minutes)
+
+        replace_kwargs = {
+            k: v for k, v in {
+                'year': time_components.get("set_year"), 'month': time_components.get("set_month"),
+                'day': time_components.get("set_day"), 'hour': time_components.get("set_hour"),
+                'minute': time_components.get("set_minute"), 'second': 0, 'microsecond': 0
+            }.items() if v is not None
+        }
+        if replace_kwargs:
+            target_dt = target_dt.replace(**replace_kwargs)
+
+        is_today_explicit = time_components.get("is_today_explicit", False)
+        if not is_today_explicit and target_dt <= now_in_user_tz:
+            if time_components.get("set_hour") is not None and target_dt.time() <= now_in_user_tz.time():
+                target_dt += timedelta(days=1)
+            elif time_components.get("set_day") is not None and time_components.get(
+                    "set_month") is not None and target_dt.date() <= now_in_user_tz.date():
+                target_dt = target_dt.replace(year=target_dt.year + 1)
+        return target_dt.astimezone(pytz.utc)
+    except (TypeError, ValueError) as e:
+        logger.error(f"Ошибка при вычислении даты из компонентов: {e}. Компоненты: {time_components}")
+        return None
+
+
+async def _check_for_recurring_suggestion(bot: Bot, user_id: int, new_note: dict):
+    """
+    Проверяет, не является ли новая заметка частью рутины, и предлагает сделать ее повторяющейся.
+    """
+    await asyncio.sleep(2)
+
+    new_summary = new_note.get('summary_text')
+    if not new_summary:
+        return
+
+    candidate_notes = await note_repo.find_similar_notes(user_id, new_summary)
+
+    similar_notes_count = 0
+    for old_note in candidate_notes:
+        if old_note['note_id'] == new_note['note_id']:
+            continue
+        if await llm.are_tasks_same(new_note['corrected_text'], old_note['corrected_text']):
+            similar_notes_count += 1
+
+    if similar_notes_count >= 2:
+        logger.info(f"Найдена потенциальная рутина для пользователя {user_id} (заметка #{new_note['note_id']})")
+
+        user_profile = await user_repo.get_user_profile(user_id)
+        if not user_profile or not user_profile.get('is_vip', False):
+            logger.info(f"Пользователь {user_id} не VIP, предложение о повторении не отправлено.")
+            return
+
+        text = (
+            f"💡 Я заметил, что вы уже создавали похожую задачу: «{hitalic(new_summary)}».\n\n"
+            "Хотите, чтобы я напоминал вам об этом регулярно, чтобы не вводить задачу вручную?"
+        )
+        keyboard = get_suggest_recurrence_keyboard(new_note['note_id'])
+        await bot.send_message(user_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 
 async def process_and_save_note(
@@ -38,14 +129,12 @@ async def process_and_save_note(
             if active_notes_count >= MAX_NOTES_MVP:
                 return False, f"⚠️ Достигнут лимит в {MAX_NOTES_MVP} активных заметок. Чтобы добавить новую, удалите или заархивируйте старую.", None, False
 
+    preprocessed_text = _preprocess_text(text_to_process)
+
     if not DEEPSEEK_API_KEY_EXISTS:
-        # Логика без LLM: просто сохраняем текст как есть
         note_id = await note_repo.create_note(
-            telegram_id=telegram_id,
-            corrected_text=text_to_process,
-            summary_text=text_to_process[:80],
-            original_audio_telegram_file_id=audio_file_id,
-            note_taken_at=message_date or datetime.now(pytz.utc)
+            telegram_id=telegram_id, corrected_text=text_to_process, summary_text=text_to_process[:80],
+            original_audio_telegram_file_id=audio_file_id, note_taken_at=message_date or datetime.now(pytz.utc)
         )
         if note_id:
             note = await note_repo.get_note_by_id(note_id, telegram_id)
@@ -54,52 +143,38 @@ async def process_and_save_note(
         else:
             return False, "❌ Ошибка при сохранении заметки.", None, False
 
-    # --- Новая логика с декомпозицией ---
-
-    # Этап 1: Классификация намерения
-    intent_result = await llm.classify_intent(text_to_process)
+    intent_result = await llm.classify_intent(preprocessed_text)
     if "error" in intent_result:
         return False, "❌ Ошибка AI: не удалось определить ваше намерение.", None, False
 
     intent = llm.UserIntent(intent_result.get("intent", "неизвестно"))
     logger.info(f"Определено намерение '{intent.value}' для пользователя {telegram_id}")
 
-    # Инициализация переменных
-    llm_analysis_json = {}
-    category_to_save = "Общее"
-    due_date_obj = None
-    recurrence_rule = None
+    llm_analysis_json, category_to_save, due_date_obj, recurrence_rule = {}, "Общее", None, None
 
-    # Этап 2: Вызов соответствующего экстрактора
     if intent == llm.UserIntent.CREATE_SHOPPING_LIST:
-        llm_analysis_json = await llm.extract_shopping_list(text_to_process)
+        llm_analysis_json = await llm.extract_shopping_list(preprocessed_text)
         category_to_save = "Покупки"
     elif intent == llm.UserIntent.CREATE_REMINDER:
         user_timezone_str = user_profile.get('timezone', 'UTC')
         user_tz = pytz.timezone(user_timezone_str)
         current_user_dt_iso = datetime.now(user_tz).isoformat()
-        llm_analysis_json = await llm.extract_reminder_details(text_to_process, current_user_dt_iso)
+        llm_analysis_json = await llm.extract_reminder_details(preprocessed_text, current_user_dt_iso)
         category_to_save = "Задачи"
-    else:  # CREATE_NOTE или UNKNOWN
-        llm_analysis_json = await llm.extract_note_details(text_to_process)
+    else:
+        llm_analysis_json = await llm.extract_note_details(preprocessed_text)
 
     if "error" in llm_analysis_json:
         return False, "❌ Ошибка AI: не удалось извлечь детали из вашего сообщения.", None, False
-
-    # --- Обработка и сохранение результата ---
 
     corrected_text_to_save = llm_analysis_json.get("corrected_text", text_to_process)
     summary_text_to_save = llm_analysis_json.get("summary_text", corrected_text_to_save[:80])
 
     if intent == llm.UserIntent.CREATE_REMINDER:
-        if llm_analysis_json.get("dates_times"):
-            try:
-                date_info = llm_analysis_json["dates_times"][0]
-                due_date_str_utc = date_info.get("absolute_datetime_start")
-                if due_date_str_utc:
-                    due_date_obj = datetime.fromisoformat(due_date_str_utc.replace('Z', '+00:00'))
-            except (ValueError, IndexError, KeyError) as e:
-                logger.error(f"Ошибка парсинга даты из LLM: {e}")
+        time_components = llm_analysis_json.get("time_components")
+        user_timezone_str = user_profile.get('timezone', 'UTC')
+        user_tz = pytz.timezone(user_timezone_str)
+        due_date_obj = _calculate_due_date_from_components(time_components, user_tz)
         recurrence_rule = llm_analysis_json.get("recurrence_rule")
 
     if category_to_save == "Покупки" and llm_analysis_json.get("items"):
@@ -117,7 +192,6 @@ async def process_and_save_note(
 
         existing_items.extend(items_to_add)
         shopping_note["llm_analysis_json"]["items"] = existing_items
-
         await note_repo.update_note_llm_json(shopping_note['note_id'], shopping_note["llm_analysis_json"])
 
         user_message = f"✅ Добавлено в ваш список покупок: {len(items_to_add)} поз." if items_to_add else "✅ Список покупок обновлен."
@@ -129,16 +203,10 @@ async def process_and_save_note(
         warning_message = f"\n\n⭐ Повторяющиеся задачи — VIP-функция. Заметка сохранена как разовая."
 
     note_id = await note_repo.create_note(
-        telegram_id=telegram_id,
-        corrected_text=corrected_text_to_save,
-        summary_text=summary_text_to_save,
-        original_stt_text=text_to_process,
-        llm_analysis_json=llm_analysis_json,
-        original_audio_telegram_file_id=audio_file_id,
-        note_taken_at=message_date or datetime.now(pytz.utc),
-        due_date=due_date_obj,
-        recurrence_rule=recurrence_rule,
-        category=category_to_save
+        telegram_id=telegram_id, corrected_text=corrected_text_to_save, summary_text=summary_text_to_save,
+        original_stt_text=text_to_process, llm_analysis_json=llm_analysis_json,
+        original_audio_telegram_file_id=audio_file_id, note_taken_at=message_date or datetime.now(pytz.utc),
+        due_date=due_date_obj, recurrence_rule=recurrence_rule, category=category_to_save
     )
 
     if not note_id:
@@ -160,5 +228,7 @@ async def process_and_save_note(
             date_info += f"\n\n{hbold('⚠️ Важно!')} Укажите ваш часовой пояс в настройках, чтобы напоминание сработало вовремя."
 
     full_response = f"{user_message}\n\n{hcode(summary_text_to_save)}{date_info}"
+
+    asyncio.create_task(_check_for_recurring_suggestion(bot, telegram_id, new_note))
 
     return True, full_response, new_note, needs_tz_prompt

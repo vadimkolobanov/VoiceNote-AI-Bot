@@ -22,6 +22,7 @@ router = Router()
 MIN_TEXT_LENGTH_FOR_NOTE = 10
 MIN_WORDS_FOR_NOTE = 2
 GARBAGE_WORDS = {'привет', 'спс', 'спасибо', 'ок', 'ok', 'хорошо', 'ага', 'угу', 'hi', 'hello', 'thanks'}
+BOREDOM_TRIGGERS = {'мне скучно', 'скучно', 'скукота', 'чем заняться'}
 
 
 async def _check_and_update_stt_limit(telegram_id: int) -> tuple[bool, int]:
@@ -68,7 +69,6 @@ async def _check_for_proactive_suggestions(bot: Bot, user_id: int, new_note: dic
     if not due_date:
         return
 
-    # Шаг 1: Находим потенциально конфликтующие по времени заметки
     conflicting_notes = await note_repo.find_conflicting_notes(user_id, due_date, new_note['note_id'])
     if not conflicting_notes:
         return
@@ -76,17 +76,14 @@ async def _check_for_proactive_suggestions(bot: Bot, user_id: int, new_note: dic
     user_profile = await user_repo.get_user_profile(user_id)
     user_timezone = user_profile.get('timezone', 'UTC')
 
-    # Шаг 2: Для каждой найденной заметки проверяем реальный конфликт с помощью AI
     real_conflicts = []
     for existing_note in conflicting_notes:
-        # Передаем полный текст для лучшего анализа
         new_note_text = new_note.get('corrected_text', new_note.get('summary_text', ''))
         existing_note_text = existing_note.get('corrected_text', existing_note.get('summary_text', ''))
 
         if await llm.are_tasks_conflicting(new_note_text, existing_note_text):
             real_conflicts.append(existing_note)
 
-    # Шаг 3: Если найдены реальные конфликты, формируем и отправляем сообщение
     if real_conflicts:
         conflict_texts = []
         for note in real_conflicts:
@@ -102,7 +99,7 @@ async def _check_for_proactive_suggestions(bot: Bot, user_id: int, new_note: dic
             f"Возможно, стоит перепроверить расписание?"
         )
 
-        await asyncio.sleep(1)  # Небольшая пауза, чтобы сообщение не пришло мгновенно
+        await asyncio.sleep(1)
         await bot.send_message(user_id, suggestion_text, parse_mode="HTML")
 
 async def _background_note_processor(
@@ -170,18 +167,18 @@ async def _background_note_processor(
         await bot.edit_message_text(text=user_message, chat_id=chat_id, message_id=status_message_id,
                                     reply_markup=keyboard)
 
-        # <-- НАЧАЛО НОВОГО БЛОКА -->
-        # После успешного сохранения проверяем, не нужно ли дать совет
         await _check_for_proactive_suggestions(bot, user_id, new_note)
-        # <-- КОНЕЦ НОВОГО БЛОКА -->
 
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             logger.debug(f"Сообщение {status_message_id} не было изменено. Пропуск.")
         else:
             logger.error(f"Ошибка Telegram API в фоновом обработчике: {e}", exc_info=True)
-            await bot.edit_message_text(text="❌ Произошла ошибка при обработке.", chat_id=chat_id,
-                                        message_id=status_message_id)
+            try:
+                await bot.edit_message_text(text="❌ Произошла ошибка при обработке.", chat_id=chat_id,
+                                            message_id=status_message_id)
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Критическая ошибка в фоновом обработчике заметки: {e}", exc_info=True)
         try:
@@ -211,7 +208,6 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
 
     status_msg = await message.reply("✔️ Принято! Начинаю обработку в фоне...")
 
-    # Запускаем "тяжелую" задачу в фоне и не ждем ее завершения
     asyncio.create_task(_background_note_processor(
         bot=message.bot,
         user_id=message.from_user.id,
@@ -225,21 +221,29 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
 @router.message(F.text, ~F.text.startswith('/'))
 async def handle_text_message(message: types.Message, state: FSMContext):
     """
-    Быстро отвечает на текстовое сообщение и запускает обработку в фоне.
+    Обрабатывает текстовые сообщения: создает заметки или отвечает на "скуку".
     """
     await state.clear()
     text = message.text.strip()
+    text_lower = text.lower()
+
+    if text_lower in BOREDOM_TRIGGERS:
+        status_msg = await message.reply("Хм, скучно, говоришь? Дай-ка подумать... 🤔")
+        user_profile = await user_repo.get_user_profile(message.from_user.id)
+        user_name = user_profile.get('first_name', 'друг')
+        suggestion = await llm.get_fun_suggestion(user_name)
+        await status_msg.edit_text(suggestion)
+        return
 
     if (not message.forward_date and
             (len(text) < MIN_TEXT_LENGTH_FOR_NOTE or
              len(text.split()) < MIN_WORDS_FOR_NOTE or
-             text.lower() in GARBAGE_WORDS)):
+             text_lower in GARBAGE_WORDS)):
         logger.info(f"Ignoring short/garbage text from {message.from_user.id}: '{text}'")
         return
 
     status_msg = await message.reply("✔️ Принято! Обрабатываю...")
 
-    # Запускаем "тяжелую" задачу в фоне
     asyncio.create_task(_background_note_processor(
         bot=message.bot,
         user_id=message.from_user.id,

@@ -5,6 +5,7 @@ from datetime import datetime, time, timedelta
 import pytz
 
 from aiogram import F, Router, types, Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.utils.markdown import hbold
 
 from .....database import note_repo, user_repo
@@ -14,6 +15,26 @@ from ..keyboards import get_shopping_list_keyboard, get_shopping_reminder_option
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def get_shopping_list_text_and_keyboard(note: dict, participants_map: dict):
+    """Вспомогательная функция для генерации текста и клавиатуры списка покупок."""
+    items = note.get("llm_analysis_json", {}).get("items", [])
+    is_archived = note.get('is_archived', False)
+    note_id = note['note_id']
+
+    checked_count = sum(1 for item in items if item.get('checked'))
+    total_count = len(items)
+
+    owner_id = note.get('owner_id')
+    owner_name = participants_map.get(owner_id, "Неизвестно")
+    header = f"🛒 {hbold('Список покупок')} (владелец: {owner_name})"
+
+    text = f"{header}\n\nВыбрано: {checked_count} из {total_count}"
+
+    keyboard = get_shopping_list_keyboard(note_id, items, is_archived, participants_map)
+
+    return text, keyboard
 
 
 async def render_shopping_list(event: types.Message | types.CallbackQuery, note_id: int, user_id: int):
@@ -34,19 +55,7 @@ async def render_shopping_list(event: types.Message | types.CallbackQuery, note_
     participants = await note_repo.get_shared_note_participants(note_id)
     participants_map = {p['telegram_id']: p.get('first_name', str(p['telegram_id'])) for p in participants}
 
-    items = note.get("llm_analysis_json", {}).get("items", [])
-    is_archived = note.get('is_archived', False)
-
-    checked_count = sum(1 for item in items if item.get('checked'))
-    total_count = len(items)
-
-    owner_id = note.get('owner_id')
-    owner_name = participants_map.get(owner_id, "Неизвестно")
-    header = f"🛒 {hbold('Список покупок')} (владелец: {owner_name})"
-
-    text = f"{header}\n\nВыбрано: {checked_count} из {total_count}"
-
-    keyboard = get_shopping_list_keyboard(note_id, items, is_archived, participants_map)
+    text, keyboard = get_shopping_list_text_and_keyboard(note, participants_map)
 
     message = event.message if isinstance(event, types.CallbackQuery) else event
     try:
@@ -56,60 +65,52 @@ async def render_shopping_list(event: types.Message | types.CallbackQuery, note_
             new_message = await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
             await note_repo.store_shared_message_id(note_id, user_id, new_message.message_id)
     except Exception:
+        # Если не удалось отредактировать, отправляем новое сообщение
         new_message = await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
         await note_repo.store_shared_message_id(note_id, user_id, new_message.message_id)
 
 
-async def sync_shopping_list_for_all(bot: Bot, note_id: int):
-    """Обновляет сообщение со списком у всех участников."""
-    participants = await note_repo.get_shared_note_participants(note_id)
-    stored_messages = await note_repo.get_shared_message_ids(note_id)
-    message_map = {msg['user_id']: msg['message_id'] for msg in stored_messages}
+async def _background_sync_for_others(bot: Bot, note_id: int, initiator_id: int):
+    """Фоновая задача для синхронизации списка у всех, КРОМЕ инициатора."""
+    await asyncio.sleep(0.5) # Небольшая задержка, чтобы дать БД время обновиться
 
-    note = await note_repo.get_note_by_id(note_id, 0)
+    note = await note_repo.get_note_by_id(note_id, 0) # 0 для админского доступа
     if not note:
         return
 
-    items = note.get("llm_analysis_json", {}).get("items", [])
-    is_archived = note.get('is_archived', False)
-
+    participants = await note_repo.get_shared_note_participants(note_id)
     participants_map = {p['telegram_id']: p.get('first_name', str(p['telegram_id'])) for p in participants}
+    stored_messages = await note_repo.get_shared_message_ids(note_id)
+    message_map = {msg['user_id']: msg['message_id'] for msg in stored_messages}
 
-    checked_count = sum(1 for item in items if item.get('checked'))
-    total_count = len(items)
+    text, keyboard = get_shopping_list_text_and_keyboard(note, participants_map)
 
-    owner_id = note.get('owner_id')
-    owner_name = participants_map.get(owner_id, "Неизвестно")
-    header = f"🛒 {hbold('Список покупок')} (владелец: {owner_name})"
-
-    text = f"{header}\n\nВыбрано: {checked_count} из {total_count}"
-
-    keyboard = get_shopping_list_keyboard(note_id, items, is_archived, participants_map)
-
-    update_tasks = []
     for user in participants:
         user_id = user['telegram_id']
+        if user_id == initiator_id:
+            continue # Пропускаем того, кто нажал кнопку
+
         message_id = message_map.get(user_id)
         if message_id:
-            task = bot.edit_message_text(
-                chat_id=user_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
-            update_tasks.append(task)
-
-    results = await asyncio.gather(*update_tasks, return_exceptions=True)
-    for i, res in enumerate(results):
-        if isinstance(res, Exception):
-            logger.warning(f"Ошибка при синхронизации списка покупок: {res}")
-            if "message to edit not found" in str(res).lower():
-                failed_task = update_tasks[i]
-                if hasattr(failed_task, 'cr_frame') and 'chat_id' in failed_task.cr_frame.f_locals:
-                    chat_id_to_delete = failed_task.cr_frame.f_locals['chat_id']
-                    await note_repo.delete_shared_message_id(note_id, chat_id_to_delete)
-                    logger.info(f"Удалена запись о сообщении для пользователя {chat_id_to_delete} и заметки {note_id}")
+            try:
+                await bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except TelegramForbiddenError:
+                logger.warning(f"Не удалось обновить список для {user_id} (заблокировал бота). Удаляем запись.")
+                await note_repo.delete_shared_message_id(note_id, user_id)
+            except TelegramBadRequest as e:
+                if "message to edit not found" in str(e).lower():
+                    logger.warning(f"Сообщение для {user_id} не найдено. Удаляем запись из БД.")
+                    await note_repo.delete_shared_message_id(note_id, user_id)
+                else:
+                    logger.error(f"Ошибка обновления списка для {user_id}: {e}")
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка обновления списка для {user_id}: {e}")
 
 
 @router.callback_query(ShoppingListAction.filter(F.action.in_({"show", "toggle", "archive"})))
@@ -132,14 +133,30 @@ async def shopping_list_actions_handler(callback: types.CallbackQuery, callback_
     if action == "toggle":
         item_index = callback_data.item_index
         items = note.get("llm_analysis_json", {}).get("items", [])
-        if 0 <= item_index < len(items):
-            items[item_index]['checked'] = not items[item_index].get('checked', False)
-            note["llm_analysis_json"]["items"] = items
-            await note_repo.update_note_llm_json(note_id, note["llm_analysis_json"])
-            await callback.answer("Отмечено!")
-            await sync_shopping_list_for_all(bot, note_id)
-        else:
+        if not (0 <= item_index < len(items)):
             await callback.answer("Элемент не найден.", show_alert=True)
+            return
+
+        # Обновляем данные в БД
+        items[item_index]['checked'] = not items[item_index].get('checked', False)
+        note["llm_analysis_json"]["items"] = items
+        await note_repo.update_note_llm_json(note_id, note["llm_analysis_json"])
+
+        # Оптимистичное обновление: сначала для себя, потом для всех в фоне
+        participants = await note_repo.get_shared_note_participants(note_id)
+        participants_map = {p['telegram_id']: p.get('first_name', str(p['telegram_id'])) for p in participants}
+
+        text, keyboard = get_shopping_list_text_and_keyboard(note, participants_map)
+
+        try:
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+            await callback.answer("Отмечено!")
+        except Exception as e:
+            logger.warning(f"Не удалось обновить сообщение для инициатора {user_id}: {e}")
+            await callback.answer("Отмечено!", show_alert=True) # Все равно даем обратную связь
+
+        # Запускаем фоновую синхронизацию для остальных
+        asyncio.create_task(_background_sync_for_others(bot, note_id, user_id))
         return
 
     if action == "archive":

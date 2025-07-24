@@ -6,7 +6,8 @@ import asyncio
 from src.database import note_repo
 from .dependencies import get_current_user
 from .schemas import ShoppingListNote, ShoppingListItemUpdate, ShoppingListItemAddRequest
-from src.bot.modules.notes.handlers import shopping_list as bot_shopping_list_handler
+# Убираем прямой импорт хендлера, будем импортировать новый сервис
+from src.bot.modules.notes.handlers.shopping_list import _background_sync_for_others
 
 router = APIRouter()
 
@@ -58,7 +59,8 @@ async def toggle_shopping_list_item(
 
     bot: Bot = request.app.state.bot
     if bot:
-        asyncio.create_task(bot_shopping_list_handler.sync_shopping_list_for_all(bot, note_id))
+        # Запускаем синхронизацию в фоне, чтобы не ждать ее завершения
+        asyncio.create_task(_background_sync_for_others(bot, note_id, user_id))
 
     return await get_full_shopping_list(user_id)
 
@@ -72,7 +74,6 @@ async def add_shopping_list_item(
     """Добавляет новый пункт в список покупок."""
     user_id = current_user['telegram_id']
 
-    # Получаем или создаем активный список
     active_list = await note_repo.get_or_create_active_shopping_list_note(user_id)
     if not active_list:
         raise HTTPException(status_code=500, detail="Не удалось получить или создать список покупок.")
@@ -92,7 +93,8 @@ async def add_shopping_list_item(
 
     bot: Bot = request.app.state.bot
     if bot:
-        asyncio.create_task(bot_shopping_list_handler.sync_shopping_list_for_all(bot, note_id))
+        # Запускаем синхронизацию в фоне
+        asyncio.create_task(_background_sync_for_others(bot, note_id, user_id))
 
     return await get_full_shopping_list(user_id)
 

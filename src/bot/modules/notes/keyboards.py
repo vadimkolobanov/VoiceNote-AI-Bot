@@ -272,3 +272,25 @@ def get_shopping_reminder_options_keyboard(note_id: int) -> InlineKeyboardMarkup
 
     builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
+
+def get_suggest_recurrence_keyboard(note_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура с предложением сделать задачу повторяющейся."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Каждый день",
+        callback_data=NoteAction(action="set_recur", note_id=note_id, recur_freq="DAILY").pack()
+    )
+    builder.button(
+        text="Каждую неделю",
+        callback_data=NoteAction(action="set_recur", note_id=note_id, recur_freq="WEEKLY").pack()
+    )
+    builder.button(
+        text="Каждый месяц",
+        callback_data=NoteAction(action="set_recur", note_id=note_id, recur_freq="MONTHLY").pack()
+    )
+    builder.button(
+        text="Нет, спасибо",
+        callback_data=NoteAction(action="decline_recur", note_id=note_id).pack()
+    )
+    builder.adjust(1)
+    return builder.as_markup()

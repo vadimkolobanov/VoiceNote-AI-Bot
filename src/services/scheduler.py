@@ -17,7 +17,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from ..database import note_repo, birthday_repo, user_repo
 from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
-from . import push_service
+from . import push_service, weather_service
+from ..core.config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME, WEATHER_SERVICE_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,9 @@ executors = {'default': AsyncIOExecutor()}
 scheduler = AsyncIOScheduler(jobstores=jobstores, executors=executors, timezone=pytz.utc)
 
 
-# --- Управление задачами для напоминаний о заметках ---
-
 def add_reminder_to_scheduler(bot: Bot, note: dict):
     """
-    Добавляет или обновляет напоминания (основное и предварительное) для заметки в планировщик.
+    Добавляет или обновляет напоминания для заметки в планировщик.
     """
     note_id = note.get('note_id')
     due_date_utc = note.get('due_date')
@@ -123,7 +122,7 @@ def remove_reminder_from_scheduler(note_id: int):
 
 async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, note_text: str, due_date: datetime,
                                      is_pre_reminder: bool):
-    """Функция, которая непосредственно отправляет сообщение с напоминанием."""
+    """Отправляет сообщение с напоминанием о заметке."""
     from ..bot.modules.notes.keyboards import get_reminder_notification_keyboard
 
     logger.info(
@@ -135,7 +134,6 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         remove_reminder_from_scheduler(note_id)
         return
 
-    # --- Отправка в Telegram ---
     try:
         user_profile = await user_repo.get_user_profile(telegram_id)
         user_timezone = user_profile.get('timezone', 'UTC') if user_profile else 'UTC'
@@ -158,7 +156,6 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
     except Exception as e:
         logger.error(f"Не удалось отправить TG-напоминание по заметке #{note_id}: {e}", exc_info=True)
 
-    # --- Отправка Push-уведомления ---
     push_title = "📌 Напоминание" if is_pre_reminder else "❗️ Напоминание"
     await push_service.send_push_to_user(
         telegram_id=telegram_id,
@@ -167,13 +164,12 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         data={"noteId": str(note_id)}
     )
 
-    # --- Перепланирование, если нужно ---
     if not is_pre_reminder and note.get('recurrence_rule'):
         await reschedule_recurring_note(bot, note)
 
 
 async def send_shopping_list_ping(bot: Bot, user_id: int, note_id: int):
-    """Отправляет пользователю простое напоминание о списке покупок."""
+    """Отправляет пользователю напоминание о списке покупок."""
     logger.info(f"Отправка 'пинга' о списке покупок #{note_id} пользователю {user_id}")
     try:
         note = await note_repo.get_note_by_id(note_id, user_id)
@@ -229,11 +225,23 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
 
 
 def clean_llm_response(text: str) -> str:
-    """Утилита для очистки ответа LLM от markdown-блоков."""
-    cleaned_text = re.sub(r'^```(html|json|)\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
+    """
+    Утилита для очистки ответа LLM от markdown-блоков, вступительных фраз
+    и невалидных для Telegram HTML-тегов.
+    """
+    text = text.strip()
+    cleaned_text = re.sub(r'^```(html|json|)\s*|\s*```$', '', text, flags=re.MULTILINE)
+    cleaned_text = re.sub(r'^(вот|конечно,?\s*вот|готовое\s*сообщение|html-сообщение\s*для\s*telegram).*?:?\s*', '',
+                          cleaned_text, flags=re.IGNORECASE | re.DOTALL).strip()
+    cleaned_text = cleaned_text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
     if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
         cleaned_text = cleaned_text[1:-1]
-    return cleaned_text.strip()
+
+    lines = cleaned_text.splitlines()
+    if lines and "telegram" in lines[0].lower() and ":" in lines[0]:
+        cleaned_text = "\n".join(lines[1:]).strip()
+
+    return cleaned_text
 
 
 async def generate_and_send_daily_digest(bot: Bot, user: dict):
@@ -241,35 +249,41 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     telegram_id = user['telegram_id']
     user_timezone = user['timezone']
     user_name = user['first_name']
+    city = user.get('city_name')
 
     logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone})")
+
+    weather_forecast = "Прогноз погоды недоступен."
+    if city and WEATHER_SERVICE_ENABLED:
+        weather_forecast = await weather_service.get_weather_for_city(city) or "Не удалось получить прогноз."
 
     notes_today = await note_repo.get_notes_for_today_digest(telegram_id, user_timezone)
     birthdays_soon = await birthday_repo.get_birthdays_for_upcoming_digest(telegram_id)
 
-    notes_text_parts = []
+    notes_for_prompt = "На сегодня задач нет."
     if notes_today:
+        notes_text_parts = []
         for note in notes_today:
             time_str = note['due_date'].astimezone(pytz.timezone(user_timezone)).strftime('%H:%M')
             notes_text_parts.append(f"- {time_str}: {note['corrected_text']}")
         notes_for_prompt = "\n".join(notes_text_parts)
-    else:
-        notes_for_prompt = "На сегодня задач нет."
 
-    bday_text_parts = []
+    bdays_for_prompt = "Нет дней рождений в ближайшую неделю."
     if birthdays_soon:
+        bday_text_parts = []
         for bday in birthdays_soon:
             date_str = f"{bday['birth_day']:02}.{bday['birth_month']:02}"
             bday_text_parts.append(f"- {date_str}: {bday['person_name']}")
         bdays_for_prompt = "\n".join(bday_text_parts)
-    else:
-        bdays_for_prompt = "Нет дней рождений в ближайшую неделю."
 
     prompt = f"""
 Ты — дружелюбный и мотивирующий AI-ассистент. Твоя задача — составить короткое, бодрое и информативное утреннее сообщение для пользователя по имени {user_name}.
 Сообщение должно быть в формате HTML для Telegram.
 
 Вот данные для сводки:
+
+**Прогноз погоды:**
+{weather_forecast}
 
 **Задачи на сегодня:**
 {notes_for_prompt}
@@ -280,31 +294,15 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 ---
 ИНСТРУКЦИИ ПО ФОРМИРОВАНИЮ ОТВЕТА:
 
-1.  **Если есть задачи на сегодня:**
-    - Поприветствуй пользователя.
-    - Перечисли задачи в виде списка.
-    - Если есть дни рождения, упомяни их с иконкой 🎂.
-    - Закончи мотивирующей фразой, например: "Продуктивного дня! 💪".
-
-2.  **Если задач на сегодня НЕТ:**
-    - Поприветствуй пользователя и пожелай хорошего дня.
-    - Мягко подтолкни его к планированию. Используй фразы вроде "Отличный день, чтобы всё спланировать! Просто отправь мне голосовое или текстовое сообщение с твоими планами."
-    - Если при этом есть дни рождения, обязательно упомяни их.
-    - Если дней рождений тоже нет, предложи пользователю добавить их, например: "Кстати, чтобы не забыть поздравить близких, ты можешь добавить их дни рождения в разделе 'Профиль' -> '🎂 Дни рождения'."
-
-3.  Будь кратким, позитивным и используй HTML-теги `<b>` для выделения и `<i>` для акцентов. Не используй markdown НЕ ПИШИ Вот HTML-сообщение для Telegram: в ответе.
-
-4. Формат сводки только такой "Доброе утро, {user_name}! ☀️
-
-Сегодня у тебя нет запланированных задач — отличный день, чтобы всё спланировать! Просто отправь мне голосовое или текстовое сообщение с твоими планами.  
-
-Кстати, чтобы не забыть поздравить близких, ты можешь добавить их дни рождения в разделе "Профиль" -> "🎂 Дни рождения".  
-
-Хорошего дня! 🌟" ну или список задач. Никакого лишнего текста 
+1.  Начни с погоды, если она доступна и не является ошибкой. Используй иконку 🌦️. Например: "🌦️ Погода {weather_forecast}".
+2.  Далее, если есть задачи, перечисли их.
+3.  Если есть дни рождения, упомяни их.
+4.  Закончи мотивирующей фразой.
+5.  Если задач нет, после погоды пожелай хорошего дня и мягко подтолкни к планированию.
+6.  Будь кратким, позитивным и используй HTML-теги `<b>` и `<i>`. Не используй `<br>`. Используй `\n` для переноса строки. Не пиши ничего лишнего.
 """
-    from ..core.config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
-    import aiohttp
 
+    import aiohttp
     digest_text = ""
     try:
         if not all([DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME]):
@@ -324,9 +322,12 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
                     raise Exception(f"LLM API Error: {resp.status}, Body: {await resp.text()}")
     except Exception as e:
         logger.error(f"Ошибка генерации AI-дайджеста для {telegram_id}: {e}. Отправка стандартного шаблона.")
-        notes_html = "\n".join(notes_text_parts) if notes_text_parts else "Задач нет."
-        bdays_html = "\n".join(bday_text_parts) if bday_text_parts else "Дней рождений нет."
-        digest_text = f"☀️ Доброе утро, {user_name}!\n\n<b>Задачи на сегодня:</b>\n{notes_html}\n\n<b>Дни рождения на неделе:</b>\n{bdays_html}"
+        notes_html_list = notes_for_prompt.splitlines()
+        notes_html = "\n".join(notes_html_list) if notes_today else "Задач нет."
+        bdays_html_list = bdays_for_prompt.splitlines()
+        bdays_html = "\n".join(bdays_html_list) if birthdays_soon else "Дней рождений нет."
+        weather_html = f"🌦️ {weather_forecast}\n\n" if city and WEATHER_SERVICE_ENABLED and "Не удалось" not in weather_forecast else ""
+        digest_text = f"☀️ Доброе утро, {user_name}!\n\n{weather_html}<b>Задачи на сегодня:</b>\n{notes_html}\n\n<b>Дни рождения на неделе:</b>\n{bdays_html}"
 
     try:
         await bot.send_message(telegram_id, digest_text, parse_mode="HTML")

@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_level_for_xp(xp: int) -> int:
+    """Вычисляет уровень на основе накопленного опыта."""
     return int((xp / 100) ** 0.5) + 1
 
 
 def get_xp_for_level(level: int) -> int:
+    """Вычисляет необходимое количество опыта для достижения уровня."""
     if level <= 1:
         return 0
     return int(((level - 1) ** 2) * 100)
@@ -39,7 +41,7 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
                     username = EXCLUDED.username, first_name = EXCLUDED.first_name,
                     last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
                     updated_at = $6
-                    RETURNING *; \
+                    RETURNING *;
                 """
         user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
 
@@ -50,7 +52,7 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
 
 async def get_or_create_user(tg_user: types.User) -> dict | None:
     """
-    Упрощенная функция: проверяет наличие пользователя в БД. Если нет - добавляет.
+    Проверяет наличие пользователя в БД. Если нет - добавляет.
     Если есть - обновляет его данные. Возвращает запись о пользователе из БД.
     """
     user_profile_before_upsert = await get_user_profile(tg_user.id)
@@ -108,7 +110,6 @@ async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
         if success:
             await cache_service.delete_user_profile_from_cache(telegram_id)
             if is_vip:
-
                 await check_and_grant_achievements(bot_instance, telegram_id)
         return success
 
@@ -126,6 +127,7 @@ async def reset_user_vip_settings(telegram_id: int) -> bool:
 
 
 async def get_all_users_paginated(page: int = 1, per_page: int = 5) -> tuple[list[dict], int]:
+    """Возвращает пагинированный список пользователей для админ-панели."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         total_items = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
@@ -162,14 +164,15 @@ async def set_user_daily_digest_status(telegram_id: int, enabled: bool) -> bool:
 
 
 async def get_vip_users_for_digest() -> list[dict]:
+    """Возвращает VIP-пользователей для отправки утренней сводки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
-                SELECT telegram_id, first_name, timezone, daily_digest_time
+                SELECT telegram_id, first_name, timezone, daily_digest_time, city_name
                 FROM users
                 WHERE is_vip = TRUE
                   AND daily_digest_enabled = TRUE
-                  AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = EXTRACT(HOUR FROM daily_digest_time); \
+                  AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE timezone)) = EXTRACT(HOUR FROM daily_digest_time);
                 """
         records = await conn.fetch(query)
         return [dict(rec) for rec in records]
@@ -181,6 +184,21 @@ async def set_user_timezone(telegram_id: int, timezone_name: str) -> bool:
     async with pool.acquire() as conn:
         query = "UPDATE users SET timezone = $1, updated_at = NOW() WHERE telegram_id = $2"
         result = await conn.execute(query, timezone_name, telegram_id)
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
+
+
+async def set_user_city(telegram_id: int, city_name: str | None) -> bool:
+    """
+    Устанавливает или удаляет город пользователя для прогноза погоды.
+    Инвалидирует кэш профиля.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET city_name = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, city_name, telegram_id)
         success = int(result.split(" ")[1]) > 0
         if success:
             await cache_service.delete_user_profile_from_cache(telegram_id)
@@ -236,6 +254,7 @@ async def set_alice_activation_code(telegram_id: int, code: str, expires_at: dat
 
 
 async def find_user_by_alice_code(code: str) -> dict | None:
+    """Находит пользователя по коду активации Алисы."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "SELECT * FROM users WHERE alice_activation_code = $1 AND alice_code_expires_at > NOW()"
@@ -256,7 +275,7 @@ async def link_alice_user(telegram_id: int, alice_id: str) -> bool:
 
 
 async def find_user_by_alice_id(alice_id: str) -> dict | None:
-    """Находит пользователя по его ID из Алисы, используя кэш."""
+    """Находит пользователя по его ID из Алисы."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "SELECT * FROM users WHERE alice_user_id = $1"
@@ -265,6 +284,7 @@ async def find_user_by_alice_id(alice_id: str) -> dict | None:
 
 
 async def log_user_action(user_telegram_id: int, action_type: str, metadata: dict = None):
+    """Логирует действие пользователя для аналитики."""
     pool = await get_db_pool()
     metadata_json = json.dumps(metadata) if metadata else None
     query = "INSERT INTO user_actions (user_telegram_id, action_type, metadata) VALUES ($1, $2, $3);"
@@ -276,6 +296,7 @@ async def log_user_action(user_telegram_id: int, action_type: str, metadata: dic
 
 
 async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_level_up: bool = False):
+    """Добавляет опыт пользователю и проверяет повышение уровня."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute("UPDATE users SET xp = xp + $1 WHERE telegram_id = $2", amount, user_id)
@@ -300,6 +321,7 @@ async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_
 
 
 async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silent: bool = False):
+    """Присваивает пользователю достижение и начисляет опыт."""
     pool = await get_db_pool()
     achievement = ACHIEVEMENTS_BY_CODE.get(achievement_code)
     if not achievement:
@@ -333,6 +355,7 @@ async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silen
 
 
 async def get_user_achievements_codes(user_id: int) -> set:
+    """Возвращает множество кодов достижений, полученных пользователем."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         records = await conn.fetch("SELECT achievement_code FROM user_achievements WHERE user_telegram_id = $1",
@@ -356,7 +379,6 @@ async def get_all_achievements() -> list[dict]:
 
     return achievements
 
-# --- Функции для мобильного приложения ---
 
 async def set_mobile_activation_code(telegram_id: int, code: str, expires_at: datetime) -> bool:
     """Сохраняет или обновляет код активации для мобильного приложения."""
@@ -403,8 +425,6 @@ async def register_user_device(telegram_id: int, fcm_token: str, platform: str) 
     """Сохраняет или обновляет FCM токен устройства для пользователя."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Эта логика сначала пытается обновить существующий токен, если он принадлежит другому юзеру,
-        # а потом вставляет, если его не было. ON CONFLICT (fcm_token)
         query = """
             INSERT INTO user_devices (user_telegram_id, fcm_token, platform, last_used_at)
             VALUES ($1, $2, $3, NOW())
@@ -428,7 +448,7 @@ async def get_user_device_tokens(telegram_id: int) -> list[str]:
         records = await conn.fetch(query, telegram_id)
         return [rec['fcm_token'] for rec in records]
 
-# ... в конце файла user_repo.py
+
 async def delete_user_device_token(fcm_token: str) -> bool:
     """Удаляет конкретный FCM токен из базы данных."""
     pool = await get_db_pool()
@@ -439,4 +459,3 @@ async def delete_user_device_token(fcm_token: str) -> bool:
             logger.info(f"Удален невалидный FCM токен: {fcm_token[:15]}...")
             return True
         return False
-
