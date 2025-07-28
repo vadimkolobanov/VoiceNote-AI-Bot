@@ -458,3 +458,24 @@ async def find_conflicting_notes(telegram_id: int, due_date: datetime, note_id_t
                 """
         records = await conn.fetch(query, telegram_id, note_id_to_exclude, time_window_start, time_window_end)
         return [_process_note_record(rec) for rec in records]
+
+
+async def get_all_notes_for_user(telegram_id: int, archived: bool = False) -> list[dict]:
+    """
+    Возвращает все заметки пользователя (активные или архивные) без пагинации.
+    Используется для поиска по ИИ.
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE AND is_completed = FALSE"
+        fetch_query = f"""
+            SELECT *, telegram_id as owner_id FROM notes
+            WHERE telegram_id = $1 AND {archived_filter_sql}
+            UNION
+            SELECT n.*, n.telegram_id as owner_id FROM notes n
+            JOIN note_shares ns ON n.note_id = ns.note_id
+            WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}
+            ORDER BY due_date ASC NULLS LAST, created_at DESC;
+        """
+        notes_records = await conn.fetch(fetch_query, telegram_id)
+        return [_process_note_record(rec) for rec in notes_records]

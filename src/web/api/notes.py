@@ -1,5 +1,5 @@
 # src/web/api/notes.py
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from datetime import datetime
 import pytz
 from aiogram import Bot
@@ -11,6 +11,7 @@ from .schemas import (
     PaginatedNotesResponse, Note, NoteCreateRequest, NoteUpdateRequest
 )
 from src.bot.modules.notes.services import process_and_save_note
+from src.services.llm import search_notes_with_llm
 
 router = APIRouter()
 
@@ -124,3 +125,19 @@ async def delete_note(note_id: int, current_user: dict = Depends(get_current_use
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete note")
     return None
+
+
+@router.post("/search", tags=["Notes"])
+async def search_notes(
+    query: str = Body(..., embed=True, min_length=1, description="Поисковый запрос пользователя"),
+    current_user: dict = Depends(get_current_user),
+    archived: bool = False,
+    max_results: int = 10
+):
+    """
+    Ищет заметки пользователя по запросу с помощью ИИ (DeepSeek).
+    Возвращает список релевантных заметок с кратким описанием.
+    """
+    notes = await note_repo.get_all_notes_for_user(current_user["telegram_id"], archived=archived)
+    found = await search_notes_with_llm(notes, query, max_results=max_results)
+    return {"results": found}

@@ -218,3 +218,60 @@ async def are_tasks_same(task1_text: str, task2_text: str) -> bool:
     if "error" in result:
         return False
     return result.get("is_same", False)
+
+
+async def search_notes_with_llm(notes: list[dict], query: str, max_results: int = 10) -> list[dict]:
+    """
+    Ищет релевантные заметки с помощью DeepSeek LLM.
+    Возвращает список заметок с id, заголовком, кратким фрагментом.
+    """
+    if not notes:
+        return []
+    # Формируем компактный список заметок для передачи в LLM
+    notes_for_llm = [
+        {
+            "id": n["note_id"],
+            "title": n.get("summary_text") or n.get("corrected_text", "")[:30],
+            "text": n.get("corrected_text", "")
+        }
+        for n in notes
+    ]
+    system_prompt = (
+        "Ты — интеллектуальный помощник. Пользователь ищет среди своих заметок. "
+        "Твоя задача — выбрать наиболее релевантные заметки по запросу пользователя. "
+        "Верни JSON-массив с объектами: id, title, snippet (короткий фрагмент из текста заметки, объясняющий релевантность). "
+        "Сортируй по убыванию релевантности. Максимум {max_results} результатов."
+    )
+    user_prompt = (
+        f"Запрос пользователя: {query}\n"
+        f"Список заметок (каждая на новой строке):\n" +
+        "\n".join([f"id: {n['id']}, title: {n['title']}, text: {n['text']}" for n in notes_for_llm])
+    )
+    llm_response = await _call_deepseek_api(system_prompt, user_prompt, is_json_output=True)
+    if "error" in llm_response:
+        return []
+    # Ожидаем, что llm_response — это список объектов с ключами id, title, snippet
+    results = llm_response.get("results")
+    if not results and isinstance(llm_response, list):
+        results = llm_response
+    if not results:
+        return []
+    # Сопоставляем найденные id с оригинальными заметками для возврата метаданных
+    id_to_note = {n["note_id"]: n for n in notes}
+    found = []
+    for item in results:
+        note_id = item.get("id")
+        if note_id in id_to_note:
+            note = id_to_note[note_id]
+            found.append({
+                "id": note_id,
+                "title": item.get("title") or note.get("summary_text") or note.get("corrected_text", "")[:30],
+                "snippet": item.get("snippet") or note.get("corrected_text", "")[:100],
+                "created_at": note.get("created_at"),
+                "category": note.get("category"),
+                "is_archived": note.get("is_archived"),
+                "is_completed": note.get("is_completed"),
+            })
+            if len(found) >= max_results:
+                break
+    return found

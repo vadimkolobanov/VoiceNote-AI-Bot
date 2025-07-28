@@ -87,6 +87,10 @@ def get_notes_list_display_keyboard(
             InlineKeyboardButton(text="🗄️ Архив",
                                  callback_data=PageNavigation(target="notes", page=1, archived=True).pack())
         )
+        # Кнопка поиска по заметкам
+        bottom_buttons.append(
+            InlineKeyboardButton(text="🔎 Поиск по заметкам", callback_data="search_notes")
+        )
 
     bottom_buttons.append(
         InlineKeyboardButton(text="🏠 Главное меню", callback_data="go_to_main_menu")
@@ -293,4 +297,21 @@ def get_suggest_recurrence_keyboard(note_id: int) -> InlineKeyboardMarkup:
         callback_data=NoteAction(action="decline_recur", note_id=note_id).pack()
     )
     builder.adjust(1)
+    return builder.as_markup()
+
+def get_notes_search_results_keyboard(results: list[dict]) -> InlineKeyboardMarkup:
+    """
+    Формирует клавиатуру с результатами поиска по заметкам (кнопки для выбора заметки).
+    """
+    builder = InlineKeyboardBuilder()
+    for note in results:
+        preview = f"🔎 {note.get('title', '')[:35]}"
+        if note.get('snippet'):
+            preview += f" — {note['snippet'][:40]}"
+        builder.button(
+            text=preview,
+            callback_data=NoteAction(action="view", note_id=note["id"], page=1, target_list="search").pack()
+        )
+    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="go_to_main_menu"))
     return builder.as_markup()
