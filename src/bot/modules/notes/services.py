@@ -58,13 +58,21 @@ def _calculate_due_date_from_components(time_components: dict, user_tz: pytz.Bas
         if replace_kwargs:
             target_dt = target_dt.replace(**replace_kwargs)
 
+        # Новая, более умная логика для обработки прошедших дат/времени
         is_today_explicit = time_components.get("is_today_explicit", False)
         if not is_today_explicit and target_dt <= now_in_user_tz:
-            if time_components.get("set_hour") is not None and target_dt.time() <= now_in_user_tz.time():
-                target_dt += timedelta(days=1)
-            elif time_components.get("set_day") is not None and time_components.get(
-                    "set_month") is not None and target_dt.date() <= now_in_user_tz.date():
-                target_dt = target_dt.replace(year=target_dt.year + 1)
+            # Если установили только время, и оно уже прошло сегодня -> переносим на завтра
+            if time_components.get("set_hour") is not None and time_components.get("set_day") is None:
+                if target_dt.time() <= now_in_user_tz.time():
+                    target_dt += timedelta(days=1)
+            # Если установили дату, и она уже прошла в этом году -> переносим на следующий год
+            elif time_components.get("set_day") is not None and time_components.get("set_month") is not None:
+                if target_dt.date() < now_in_user_tz.date():
+                    target_dt = target_dt.replace(year=target_dt.year + 1)
+                # Если дата сегодня, но время уже прошло
+                elif target_dt.date() == now_in_user_tz.date() and target_dt.time() <= now_in_user_tz.time():
+                    target_dt += timedelta(days=1)
+
         return target_dt.astimezone(pytz.utc)
     except (TypeError, ValueError) as e:
         logger.error(f"Ошибка при вычислении даты из компонентов: {e}. Компоненты: {time_components}")

@@ -180,8 +180,7 @@
                         <h3 class="text-xl font-bold mb-3">1. Отправляйте что угодно</h3>
                         <p class="text-gray-600">Надиктуйте голосовое сообщение или просто перешлите боту текст из любого чата — он поймет и то, и другое.</p>
                     </div>
-                    <div class="bg-white rounded-2xl p-8 shadow-lg feature-card text-center reveal" style="transition-delay: 200ms;">
-                        <div class="bg-purple-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-6 feature-icon">
+                    <div class="bg-purple-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-6 feature-icon">
                             <i class="fas fa-wand-magic-sparkles text-purple-600 text-2xl"></i>
                         </div>
                         <h3 class="text-xl font-bold mb-3">2. Наблюдайте магию</h3>
@@ -220,23 +219,33 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- НОВЫЙ БЛОК -->
                     <div class="flex flex-col md:flex-row items-center gap-12 reveal">
                         <div class="md:w-1/2">
-                            <div class="text-pink-500 font-bold text-sm mb-2 uppercase tracking-wider">Важные даты</div>
-                            <h3 class="text-3xl font-bold mb-4">Будьте тем, кто всегда помнит</h3>
-                            <p class="text-gray-600 mb-6">Запишите дни рождения друзей и близких, чтобы всегда вовремя отправлять поздравления. Базовый функционал доступен всем.</p>
-                            <p class="text-gray-600 font-semibold">⭐ VIP-пользователи могут хранить неограниченное количество дат и импортировать весь список из файла за один раз.</p>
+                           <div class="text-teal-500 font-bold text-sm mb-2 uppercase tracking-wider">Совместная работа</div>
+                           <h3 class="text-3xl font-bold mb-4">Ведите общие списки с кем угодно</h3>
+                           <p class="text-gray-600 mb-6">Создайте список покупок, отправляя боту сообщения со словом "купить". Поделитесь им с семьей по специальной ссылке, и все участники смогут добавлять и вычеркивать товары в реальном времени. Больше никаких "забыл купить хлеб!".</p>
+                           <p class="text-gray-600 font-semibold">Эта функция доступна всем пользователям для одного активного списка.</p>
                         </div>
                         <div class="md:w-1/2 flex justify-center">
-                             <div class="bg-gradient-to-br from-pink-400 to-orange-400 rounded-2xl w-full max-w-sm p-6 shadow-xl text-white">
-                                <h4 class="font-bold mb-4">Ближайшие дни рождения:</h4>
-                                <div class="space-y-3">
-                                    <div class="bg-white/20 p-3 rounded-lg flex justify-between items-center"><span>Екатерина С.</span><span class="font-semibold">через 3 дня</span></div>
-                                    <div class="bg-white/20 p-3 rounded-lg flex justify-between items-center"><span>Алексей Петров</span><span class="font-semibold">через неделю</span></div>
-                                </div>
-                            </div>
+                            <div class="bg-white border rounded-2xl w-full max-w-sm p-6 shadow-xl">
+                               <h4 class="font-bold mb-4 text-slate-800"><i class="fas fa-shopping-cart text-teal-500 mr-2"></i> Общий список покупок</h4>
+                               <div class="space-y-3">
+                                   <div class="bg-slate-100 p-3 rounded-lg flex items-center">
+                                       <i class="far fa-square mr-3 text-slate-400"></i><span>Молоко <span class="text-xs text-slate-500">(Мама)</span></span>
+                                   </div>
+                                   <div class="bg-slate-100 p-3 rounded-lg flex items-center">
+                                       <i class="far fa-check-square mr-3 text-green-500"></i><span class="line-through text-slate-500">Хлеб <span class="text-xs">(Папа)</span></span>
+                                   </div>
+                                   <div class="bg-slate-100 p-3 rounded-lg flex items-center">
+                                       <i class="far fa-square mr-3 text-slate-400"></i><span>Яйца <span class="text-xs text-slate-500">(Папа)</span></span>
+                                   </div>
+                               </div>
+                           </div>
                         </div>
                     </div>
+
                     <div class="flex flex-col md:flex-row-reverse items-center gap-12 reveal">
                         <div class="md:w-1/2">
                            <div class="text-green-600 font-bold text-sm mb-2 uppercase tracking-wider">⭐ VIP-Фишка</div>
@@ -255,6 +264,25 @@
                            </div>
                         </div>
                     </div>
+
+                    <div class="flex flex-col md:flex-row items-center gap-12 reveal">
+                        <div class="md:w-1/2">
+                            <div class="text-pink-500 font-bold text-sm mb-2 uppercase tracking-wider">Важные даты</div>
+                            <h3 class="text-3xl font-bold mb-4">Будьте тем, кто всегда помнит</h3>
+                            <p class="text-gray-600 mb-6">Запишите дни рождения друзей и близких, чтобы всегда вовремя отправлять поздравления. Базовый функционал доступен всем.</p>
+                            <p class="text-gray-600 font-semibold">⭐ VIP-пользователи могут хранить неограниченное количество дат и импортировать весь список из файла за один раз.</p>
+                        </div>
+                        <div class="md:w-1/2 flex justify-center">
+                             <div class="bg-gradient-to-br from-pink-400 to-orange-400 rounded-2xl w-full max-w-sm p-6 shadow-xl text-white">
+                                <h4 class="font-bold mb-4">Ближайшие дни рождения:</h4>
+                                <div class="space-y-3">
+                                    <div class="bg-white/20 p-3 rounded-lg flex justify-between items-center"><span>Екатерина С.</span><span class="font-semibold">через 3 дня</span></div>
+                                    <div class="bg-white/20 p-3 rounded-lg flex justify-between items-center"><span>Алексей Петров</span><span class="font-semibold">через неделю</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </section>
@@ -268,16 +296,16 @@
                 <div class="flex flex-wrap justify-center -mx-4">
                     <div class="w-full md:w-1/2 lg:w-2/5 px-4 mb-8 reveal">
                         <div class="bg-white rounded-2xl shadow-lg p-8 h-full pricing-card border">
-                            <h3 class="text-xl font-bold text-slate-900">Бесплатный</h3>
+                            <h3 class="text-xl font-bold text-slate-900">Базовый</h3>
                             <p class="text-gray-500 mt-2 mb-6">Идеально, чтобы начать и оценить магию.</p>
                             <div class="text-4xl font-extrabold my-4">0 ₽</div>
                             <ul class="space-y-4 mb-8 text-slate-600">
                                 <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span><b>5</b> активных заметок</span></li>
                                 <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span><b>15</b> распознаваний в день</span></li>
                                 <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span><b>5</b> записей дней рождения</span></li>
-                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span>Базовые напоминания</span></li>
-                                <li class="flex items-center text-gray-400"><i class="fas fa-times text-gray-400 mr-3"></i><span>Утренние сводки</span></li>
-                                <li class="flex items-center text-gray-400"><i class="fas fa-times text-gray-400 mr-3"></i><span>Импорт/Экспорт данных</span></li>
+                                <li class="flex items-center"><i class="fas fa-check text-green-500 mr-3"></i><span>Совместный список покупок</span></li>
+                                <li class="flex items-center text-gray-400"><i class="fas fa-times text-gray-400 mr-3"></i><span>Утренние сводки (VIP)</span></li>
+                                <li class="flex items-center text-gray-400"><i class="fas fa-times text-gray-400 mr-3"></i><span>Повторяющиеся задачи (VIP)</span></li>
                             </ul>
                             <a href="https://t.me/tgnote_by_bot" target="_blank" class="block w-full bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-4 rounded-lg text-center transition">Начать бесплатно</a>
                         </div>
@@ -287,13 +315,13 @@
                             <div class="absolute -top-3 right-6 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">⭐ VIP</div>
                             <h3 class="text-xl font-bold">Полный доступ</h3>
                             <p class="opacity-80 mt-2 mb-6">Снимите все лимиты и откройте полный потенциал AI-ассистента.</p>
-                            <div class="text-4xl font-extrabold my-4">По заявке</div>
+                            <div class="text-4xl font-extrabold my-4">Бесплатно новичкам</div>
                             <ul class="space-y-4 mb-8">
                                 <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Безлимит на заметки и распознавания</li>
                                 <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Безлимит на дни рождения + импорт</li>
                                 <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Умные и предварительные напоминания</li>
-                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Ежедневные утренние сводки</li>
-                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Отложенные напоминания (Snooze)</li>
+                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Ежедневные утренние сводки с погодой</li>
+                                <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Повторяющиеся задачи</li>
                                 <li class="flex items-center"><i class="fas fa-star text-yellow-300 mr-3"></i>Приоритетная поддержка</li>
                             </ul>
                             <a href="https://t.me/tgnote_by_bot" target="_blank" class="block w-full bg-white text-blue-600 font-bold py-4 rounded-lg text-center hover:bg-slate-100 transition">Получить VIP</a>
@@ -356,8 +384,12 @@
             const mobileMenuButton = document.getElementById('mobile-menu-button');
             const mobileMenu = document.getElementById('mobile-menu');
             mobileMenuButton.addEventListener('click', () => { mobileMenu.classList.toggle('hidden'); });
-            document.querySelectorAll('#mobile-menu a').forEach(link => {
-                link.addEventListener('click', () => mobileMenu.classList.add('hidden'));
+            document.querySelectorAll('#mobile-menu a, nav a').forEach(link => {
+                link.addEventListener('click', () => {
+                     if(!link.hasAttribute('target')) { // Don't hide for external links
+                        mobileMenu.classList.add('hidden')
+                     }
+                });
             });
 
             // Smooth scrolling for navigation

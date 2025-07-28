@@ -29,6 +29,7 @@ class BirthdayStates(StatesGroup):
 class AdminStates(StatesGroup):
     """Состояния для админ-функций, таких как рассылка."""
     awaiting_broadcast_message = State()
+    awaiting_direct_message = State()  # <-- НОВОЕ СОСТОЯНИЕ
 
 
 class SupportStates(StatesGroup):

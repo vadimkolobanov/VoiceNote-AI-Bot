@@ -165,26 +165,31 @@ async def extract_reminder_details(raw_text: str, current_user_datetime_iso: str
     "relative_days": <int | null>,
     "relative_hours": <int | null>,
     "relative_minutes": <int | null>,
+    "set_year": <int | null>,
+    "set_month": <int | null>,
+    "set_day": <int | null>,
     "set_hour": <int | null>,
-    "set_minute": <int | null>
+    "set_minute": <int | null>,
+    "is_today_explicit": <boolean | null>
   }},
   "recurrence_rule": "Строка iCalendar RRULE или null."
 }}
 
 **ПРАВИЛА:**
 - Используй `relative_` поля для фраз "через...", "послезавтра".
-- Используй `set_` поля для фраз "в 10 утра", "в 15:30".
+- Используй `set_` поля для фраз "в 10 утра", "в 15:30", "31 июля".
+- `is_today_explicit` ставь в `true`, если в тексте явно было слово "сегодня".
 - Если время не упомянуто, `time_components` должен быть `null`.
 
 **ПРИМЕРЫ:**
 - **Вход:** "пойти за водой через пол часа"
 - **Выход:** {{"summary_text": "Пойти за водой", "corrected_text": "Пойти за водой через полчаса.", "time_components": {{"original_mention": "через пол часа", "relative_minutes": 30}}}}
 
-- **Вход:** "пойти за водой через час"
-- **Выход:** {{"summary_text": "Пойти за водой", "corrected_text": "Пойти за водой через час.", "time_components": {{"original_mention": "через час", "relative_hours": 1}}}}
-
 - **Вход:** "встреча с командой завтра в 10:00"
 - **Выход:** {{"summary_text": "Встреча с командой", "corrected_text": "Встреча с командой завтра в 10:00.", "time_components": {{"original_mention": "завтра в 10:00", "relative_days": 1, "set_hour": 10, "set_minute": 0}}}}
+
+- **Вход:** "Напомни мне 31.07 пойти в театр"
+- **Выход:** {{"summary_text": "Пойти в театр", "corrected_text": "Напомни мне 31.07 пойти в театр.", "time_components": {{"original_mention": "31.07", "set_day": 31, "set_month": 7}}}}
 
 - **Вход:** "просто мысль"
 - **Выход:** {{"summary_text": "Просто мысль", "corrected_text": "Просто мысль.", "time_components": null}}
