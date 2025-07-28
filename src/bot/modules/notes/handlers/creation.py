@@ -15,6 +15,8 @@ from .....services.gamification_service import XP_REWARDS, check_and_grant_achie
 from .....services.tz_utils import format_datetime_for_user
 from ..keyboards import get_undo_creation_keyboard
 from ..services import process_and_save_note
+from ....common_utils.states import NotesSearchStates
+from aiogram.filters import StateFilter
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -218,7 +220,7 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     ))
 
 
-@router.message(F.text, ~F.text.startswith('/'))
+@router.message(~StateFilter(NotesSearchStates.waiting_for_query), F.text, ~F.text.startswith('/'))
 async def handle_text_message(message: types.Message, state: FSMContext):
     """
     Обрабатывает текстовые сообщения: создает заметки или отвечает на "скуку".

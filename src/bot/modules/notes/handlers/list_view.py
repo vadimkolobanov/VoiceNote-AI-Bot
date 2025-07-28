@@ -4,11 +4,14 @@ import logging
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hitalic, hcode
+from aiogram.filters import Command, StateFilter
 
 from .....database import note_repo, user_repo
+from .....services.llm import search_notes_with_llm
 from .....services.tz_utils import format_datetime_for_user
 from ....common_utils.callbacks import PageNavigation, NoteAction
-from ..keyboards import get_notes_list_display_keyboard, get_note_view_actions_keyboard, get_confirm_delete_keyboard
+from ..keyboards import get_notes_list_display_keyboard, get_note_view_actions_keyboard, get_confirm_delete_keyboard, get_notes_search_results_keyboard
+from ....common_utils.states import NotesSearchStates
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -142,4 +145,32 @@ async def confirm_delete_handler(callback: types.CallbackQuery, callback_data: N
         target_list=callback_data.target_list
     )
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.message(Command("search_note"))
+async def start_search_note(message: types.Message, state: FSMContext):
+    await state.set_state(NotesSearchStates.waiting_for_query)
+    await message.answer("Введите текст для поиска по вашим заметкам:")
+
+@router.message(StateFilter(NotesSearchStates.waiting_for_query), F.text)
+async def process_search_note_query(message: types.Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    query = message.text.strip()
+    await message.answer("🔎 Ищу подходящие заметки... Это может занять несколько секунд.")
+    notes = await note_repo.get_all_notes_for_user(user_id)
+    results = await search_notes_with_llm(notes, query, max_results=10)
+    if not results:
+        await message.answer("Ничего не найдено по вашему запросу.")
+        return
+    await message.answer(
+        "Вот что удалось найти:",
+        reply_markup=get_notes_search_results_keyboard(results)
+    )
+
+@router.callback_query(F.data == "search_notes")
+async def search_notes_callback(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(NotesSearchStates.waiting_for_query)
+    await callback.message.answer("Введите текст для поиска по вашим заметкам:")
     await callback.answer()
