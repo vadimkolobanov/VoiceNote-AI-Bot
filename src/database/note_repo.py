@@ -76,8 +76,6 @@ async def get_note_by_id(note_id: int, telegram_id: int) -> dict | None:
         return _process_note_record(record)
 
 
-# ... (остальные функции остаются без изменений) ...
-
 async def find_similar_notes(telegram_id: int, summary_text: str, days_ago: int = 90) -> list[dict]:
     """
     Ищет похожие по summary_text заметки пользователя за последние N дней.
@@ -87,8 +85,6 @@ async def find_similar_notes(telegram_id: int, summary_text: str, days_ago: int 
     async with pool.acquire() as conn:
         time_window_start = datetime.now(timezone.utc) - timedelta(days=days_ago)
 
-        # Этот запрос не идеален для поиска по схожести, но он быстрый
-        # и отсеет явный мусор. Для production можно использовать pg_trgm.
         query = """
                 SELECT note_id, summary_text, corrected_text, due_date, recurrence_rule
                 FROM notes
@@ -99,7 +95,6 @@ async def find_similar_notes(telegram_id: int, summary_text: str, days_ago: int 
                 ORDER BY created_at DESC
                     LIMIT 10; \
                 """
-        # Ищем похожие слова, %word%
         search_pattern = f"%{summary_text.split()[0]}%"
 
         records = await conn.fetch(query, telegram_id, time_window_start, search_pattern)
@@ -199,6 +194,18 @@ async def set_note_completed_status(note_id: int, completed: bool) -> bool:
             "UPDATE notes SET is_completed = $1, is_archived = $1, updated_at = NOW() WHERE note_id = $2",
             completed, note_id)
         return int(result.split(" ")[1]) > 0
+
+
+# --- ИЗМЕНЕНИЕ: Новая функция для корректного восстановления ---
+async def restore_note_from_archive(note_id: int) -> bool:
+    """Восстанавливает заметку из архива, сбрасывая флаги архивации и выполнения."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Сбрасываем оба флага
+        query = "UPDATE notes SET is_archived = FALSE, is_completed = FALSE, updated_at = NOW() WHERE note_id = $1"
+        result = await conn.execute(query, note_id)
+        return int(result.split(" ")[1]) > 0
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 async def update_note_due_date(note_id: int, new_due_date: datetime) -> bool:

@@ -9,11 +9,15 @@ class NoteAction(CallbackData, prefix="note_act"):
     target_list: str = 'active'
     category: str | None = None
     snooze_minutes: int | None = None
-    # --- НОВЫЕ ПОЛЯ ---
     recur_freq: str | None = None  # daily, weekly, monthly
 
 
-# ... (остальные классы без изменений) ...
+class OnboardingAction(CallbackData, prefix="onboarding"):
+    """Действия, связанные с процессом обучения пользователя."""
+    action: str  # next_step, skip, finish, set_tz, get_vip
+    tz_name: str | None = None
+
+
 class ShoppingListAction(CallbackData, prefix="shop_list"):
     """Действия, связанные со списком покупок."""
     action: str

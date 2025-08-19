@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hlink, hcode, hitalic
 
 from ...common_utils.callbacks import SettingsAction, InfoAction
+from ...common_utils.states import OnboardingStates
 from ....core import config
 from ....database import user_repo, note_repo
 from ....services.scheduler import add_reminder_to_scheduler
@@ -17,6 +18,7 @@ from .keyboards import get_main_menu_keyboard, get_help_keyboard, get_donation_k
 import secrets
 import string
 from datetime import datetime, timedelta
+
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -146,8 +148,8 @@ DONATE_TEXT = f"""
 
 # --- Хендлеры ---
 
-async def _send_welcome_message(message: types.Message, state: FSMContext, bot: Bot):
-    """Отправляет приветственное сообщение."""
+async def _send_initial_welcome(message: types.Message, state: FSMContext, bot: Bot):
+    """Отправляет приветствие СТАРЫМ пользователям или при диплинке."""
     await state.clear()
 
     user_profile = await user_repo.get_or_create_user(message.from_user)
@@ -157,7 +159,8 @@ async def _send_welcome_message(message: types.Message, state: FSMContext, bot: 
     has_active_list = active_shopping_list is not None
 
     timezone_warning = ""
-    if user_profile.get('timezone', 'UTC') == 'UTC':
+    # Это предупреждение теперь нужно только тем, кто НЕ прошел обучение и еще не настроил
+    if not user_profile.get('has_completed_onboarding') and user_profile.get('timezone', 'UTC') == 'UTC':
         timezone_warning = (
             f"\n\n{hbold('⚠️ ВАЖНО: Настройте ваш часовой пояс!')}\n"
             f"Без этого напоминания могут приходить в неправильное время. "
@@ -190,17 +193,47 @@ async def _send_welcome_message(message: types.Message, state: FSMContext, bot: 
     await message.answer(start_text, reply_markup=reply_markup, disable_web_page_preview=True)
 
 
+async def show_main_menu(message: types.Message, state: FSMContext, bot: Bot):
+    """
+    Чистое отображение главного меню. Вызывается из других модулей, например, после обучения.
+    """
+    await state.clear()
+    user_profile = await user_repo.get_user_profile(message.from_user.id)
+    is_vip = user_profile.get('is_vip', False)
+    active_shopping_list = await note_repo.get_active_shopping_list(message.from_user.id)
+    has_active_list = active_shopping_list is not None
+
+    text = (
+        f"🏠 {hbold('Главное меню')}\n\n"
+        f"Отправьте мне любую мысль, голосовое или текстовое сообщение, "
+        f"и я превращу его в умную заметку."
+    )
+    keyboard = get_main_menu_keyboard(is_vip=is_vip, has_active_list=has_active_list)
+
+    # Редактируем последнее сообщение или отправляем новое
+    try:
+        await message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        await message.answer(text, reply_markup=keyboard)
+
+
 @router.message(Command(commands=["start"]))
 async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command: CommandObject):
-    """Обрабатывает команду /start, включая диплинки для шаринга."""
+    """Обрабатывает команду /start, включая диплинки и запуск обучения."""
+    # Отложенный импорт для избежания циклической зависимости
+    from ..onboarding.handlers import start_onboarding
+
     args = command.args
+    user_profile = await user_repo.get_or_create_user(message.from_user)
+
+    # Логика для диплинков шаринга
     if args and args.startswith("share_"):
         token = args.split('_', 1)[1]
         token_data = await note_repo.get_share_token_data(token)
 
         if not token_data:
             await message.answer("❌ Эта пригласительная ссылка недействительна или уже была использована.")
-            await _send_welcome_message(message, state, bot)
+            await _send_initial_welcome(message, state, bot)
             return
 
         note_id = token_data['note_id']
@@ -208,7 +241,7 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command
 
         if message.from_user.id == owner_id:
             await message.answer("ℹ️ Вы не можете использовать свою собственную пригласительную ссылку.")
-            await _send_welcome_message(message, state, bot)
+            await _send_initial_welcome(message, state, bot)
             return
 
         recipient_profile = await user_repo.get_or_create_user(message.from_user)
@@ -244,9 +277,15 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command
                 await list_view.view_note_detail_handler(message, state, note_id=note_id)
         else:
             await message.answer("❌ Произошла ошибка при получении доступа к заметке.")
-            await _send_welcome_message(message, state, bot)
+            await _send_initial_welcome(message, state, bot)
+
+    # Логика для обычного /start и запуска обучения
     else:
-        await _send_welcome_message(message, state, bot)
+        if not user_profile.get('has_completed_onboarding'):
+            await start_onboarding(message, state)
+        else:
+            await show_main_menu(message, state, bot)
+
 
 @router.message(Command(commands=["code"]))
 async def cmd_code(message: types.Message):
@@ -263,32 +302,10 @@ async def cmd_code(message: types.Message):
         f"Код действителен 10 минут."
     )
 
+
 @router.callback_query(F.data == "go_to_main_menu")
 async def go_to_main_menu_handler(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
-    await state.clear()
-    user_profile = await user_repo.get_user_profile(callback.from_user.id)
-    is_vip = user_profile.get('is_vip', False) if user_profile else False
-
-    active_shopping_list = await note_repo.get_active_shopping_list(callback.from_user.id)
-    has_active_list = active_shopping_list is not None
-
-    welcome_text = (
-        f"🏠 {hbold(callback.from_user.first_name)}, вы в главном меню!\n\n"
-        f"Отправьте мне голосовое или текстовое сообщение, и я превращу его в умную заметку с напоминанием."
-    )
-
-    try:
-        await callback.message.edit_text(
-            welcome_text,
-            reply_markup=get_main_menu_keyboard(is_vip=is_vip, has_active_list=has_active_list),
-            parse_mode="HTML"
-        )
-    except Exception:
-        await callback.message.answer(
-            welcome_text,
-            reply_markup=get_main_menu_keyboard(is_vip=is_vip, has_active_list=has_active_list),
-            parse_mode="HTML"
-        )
+    await show_main_menu(callback.message, state, bot)
     await callback.answer()
 
 

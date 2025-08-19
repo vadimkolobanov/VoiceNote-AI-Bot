@@ -6,6 +6,7 @@ from src.core.config import REDIS_URL
 
 # Импортируем "главные" роутеры из каждого модуля
 from .modules.admin import router as admin_router
+from .modules.onboarding import router as onboarding_router  # <-- НОВЫЙ ИМПОРТ
 from .modules.birthdays import router as birthdays_router
 from .modules.common import router as common_router
 from .modules.notes import router as notes_router
@@ -21,20 +22,24 @@ def get_dispatcher() -> Dispatcher:
 
     # --- Порядок подключения роутеров (очень важен!) ---
     #
-    # 1. Админские команды. Они должны иметь высший приоритет, чтобы
-    #    перехватывать команды до того, как их обработают другие хендлеры.
+    # 1. Админские команды. Они должны иметь высший приоритет.
     dp.include_router(admin_router)
 
-    # 2. Модули с основной функциональностью, которые срабатывают
+    # 2. Обучение. Оно должно перехватывать ввод пользователя,
+    #    если он находится в состоянии обучения, ДО основной логики.
+    dp.include_router(onboarding_router)
+
+    # 3. Модули с основной функциональностью, которые срабатывают
     #    по конкретным колбэкам или командам.
     dp.include_router(profile_router)
     dp.include_router(birthdays_router)
 
-    # 3. Модуль заметок. Он содержит все свои хендлеры, собранные
+    # 4. Модуль заметок. Он содержит все свои хендлеры, собранные
     #    в правильном порядке внутри своего __init__.py.
+    #    Он должен идти ПОСЛЕ обучения, чтобы не перехватывать сообщения.
     dp.include_router(notes_router)
 
-    # 4. Общие команды (/start, /help) и колбэки (go_to_main_menu).
+    # 5. Общие команды (/start, /help) и колбэки (go_to_main_menu).
     #    Они должны иметь самый низкий приоритет, чтобы не мешать
     #    FSM-состояниям и другим командам.
     dp.include_router(common_router)

@@ -31,6 +31,15 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     """
     DO $$
     BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='has_completed_onboarding') THEN
+            ALTER TABLE users ADD COLUMN has_completed_onboarding BOOLEAN DEFAULT FALSE;
+        END IF;
+    END;
+    $$;
+    """,
+    """
+    DO $$
+    BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='alice_user_id') THEN
             ALTER TABLE users ADD COLUMN alice_user_id TEXT;
         END IF;

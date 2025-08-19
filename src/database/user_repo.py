@@ -99,6 +99,18 @@ async def get_user_profile(telegram_id: int) -> dict | None:
     return profile
 
 
+async def set_onboarding_status(telegram_id: int, status: bool) -> bool:
+    """Устанавливает статус прохождения обучения для пользователя."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE users SET has_completed_onboarding = $1, updated_at = NOW() WHERE telegram_id = $2"
+        result = await conn.execute(query, status, telegram_id)
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
+
+
 async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
     """Устанавливает VIP-статус для пользователя и инвалидирует кэш."""
     from ..services.gamification_service import check_and_grant_achievements

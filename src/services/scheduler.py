@@ -213,9 +213,16 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
             logger.info(
                 f"Пересоздание повторяющейся задачи #{note['note_id']}. Старая дата: {last_due_date}, Новая дата: {next_occurrence}")
 
+            # Шаг 1: Обновляем дату в базе данных
             await note_repo.update_note_due_date(note['note_id'], next_occurrence)
 
-            note_data_for_scheduler = {**note, **user_profile, 'due_date': next_occurrence}
+            # --- ИСПРАВЛЕНИЕ: Обновляем дату в локальном объекте `note` ---
+            # Это гарантирует, что `add_reminder_to_scheduler` получит актуальную дату для планирования
+            note['due_date'] = next_occurrence
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+            # Шаг 2: Собираем данные для планировщика уже с обновленным объектом
+            note_data_for_scheduler = {**note, **user_profile}
             add_reminder_to_scheduler(bot, note_data_for_scheduler)
         else:
             logger.info(f"Повторяющаяся задача #{note['note_id']} завершила свой цикл.")
@@ -353,7 +360,7 @@ async def check_and_send_digests(bot: Bot):
         return
     logger.info(f"Найдено {len(users_to_notify)} пользователей для отправки сводки.")
     tasks = [generate_and_send_daily_digest(bot, user) for user in users_to_notify]
-    await asyncio.gather(*tasks)
+    await asyncio.gather(tasks)
 
 
 def get_age_string(year: int, today: date) -> str:
