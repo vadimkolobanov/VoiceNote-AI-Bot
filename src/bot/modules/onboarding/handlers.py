@@ -10,7 +10,7 @@ from aiogram.utils.markdown import hbold, hitalic
 from ....database import user_repo, note_repo
 from ...common_utils.callbacks import OnboardingAction
 from ...common_utils.states import OnboardingStates
-from ....services import llm  # --- ИЗМЕНЕНИЕ: Импортируем LLM сервис
+from ....services import llm
 from .keyboards import (
     get_welcome_keyboard,
     get_next_step_keyboard,
@@ -28,7 +28,19 @@ async def _show_main_menu(message: types.Message, state: FSMContext):
     from ..common.handlers import get_main_menu_keyboard
 
     await state.clear()
-    user_profile = await user_repo.get_user_profile(message.from_user.id)
+
+    # --- ИЗМЕНЕНИЕ: Используем get_or_create_user для 100% гарантии наличия профиля ---
+    user_profile = await user_repo.get_or_create_user(message.from_user)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+    # Добавляем проверку на случай, если даже создание пользователя по какой-то причине не удалось
+    if not user_profile:
+        logger.error(
+            f"Не удалось получить или создать профиль для пользователя {message.from_user.id} в _show_main_menu")
+        await message.answer(
+            "Произошла ошибка при загрузке вашего профиля. Пожалуйста, попробуйте нажать /start еще раз.")
+        return
+
     is_vip = user_profile.get('is_vip', False)
     active_shopping_list = await note_repo.get_active_shopping_list(message.from_user.id)
     has_active_list = active_shopping_list is not None
@@ -91,13 +103,10 @@ async def onboarding_step_3_handler(event: types.Message | types.CallbackQuery, 
     """Шаг 3: Демонстрация результата и переход к настройке часового пояса."""
     message = event if isinstance(event, types.Message) else event.message
 
-    # --- ИЗМЕНЕНИЕ: Полноценная, но "демонстрационная" обработка ---
     feedback_text = ""
     if isinstance(event, types.Message) and event.text:
-        # Показываем пользователю, что мы "думаем"
         status_msg = await message.answer("🧠 Анализирую ваше сообщение...")
 
-        # Используем реальный LLM-анализ, но не сохраняем в БД
         current_time_iso = datetime.now(pytz.utc).isoformat()
         llm_result = await llm.extract_reminder_details(event.text, current_time_iso)
 
@@ -117,11 +126,9 @@ async def onboarding_step_3_handler(event: types.Message | types.CallbackQuery, 
                 f"<b>{summary}</b>\n"
                 f"<i>{corrected}</i>{reminder_part}\n\n"
             )
-        await status_msg.delete()  # Удаляем сообщение "Анализирую..."
+        await status_msg.delete()
     else:
-        # Если пользователь пропустил шаг или отправил голос (обработка голоса в онбординге усложнит его)
         feedback_text = f"✅ {hbold('Отлично!')}\n\n"
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     await state.set_state(OnboardingStates.step_3_timezone)
     text = (
@@ -129,10 +136,9 @@ async def onboarding_step_3_handler(event: types.Message | types.CallbackQuery, 
         f"2️⃣ {hbold('Часовой пояс')} (Шаг 2/5)\n\n"
         f"Чтобы напоминания приходили вовремя, "
         f"мне нужно знать ваш {hbold('часовой пояс')}. Это самая важная настройка!\n\n"
-        f"Пожалуйста, выберите город, который в вашем часовом поясе из списка:"
+        f"Пожалуйста, выберите ваш город из списка:"
     )
 
-    # Редактируем исходное сообщение, если это был колбэк, или отправляем новое, если это было сообщение
     if isinstance(event, types.CallbackQuery):
         await message.edit_text(text, reply_markup=get_timezone_keyboard())
         await event.answer()
