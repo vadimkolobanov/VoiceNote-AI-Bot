@@ -68,7 +68,12 @@ def format_datetime_for_user(
     # %Z показывает аббревиатуру часового пояса (например, MSK)
     return local_dt.strftime('%d.%m.%Y %H:%M (%Z)')
 
+from datetime import datetime
 
+def get_day_of_week_str(dt: datetime) -> str:
+    """Возвращает название дня недели на русском."""
+    days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    return days[dt.weekday()]
 # Пример использования (для самопроверки и отладки)
 if __name__ == '__main__':
     # Время в UTC, как оно было бы извлечено из БД
