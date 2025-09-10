@@ -86,6 +86,8 @@ async def get_user_profile(telegram_id: int) -> dict | None:
             cached_profile['default_reminder_time'] = time.fromisoformat(cached_profile['default_reminder_time'])
         if 'daily_digest_time' in cached_profile and isinstance(cached_profile['daily_digest_time'], str):
             cached_profile['daily_digest_time'] = time.fromisoformat(cached_profile['daily_digest_time'])
+        if 'viewed_guides' in cached_profile and isinstance(cached_profile['viewed_guides'], str):
+             cached_profile['viewed_guides'] = json.loads(cached_profile['viewed_guides'])
         return cached_profile
 
     pool = await get_db_pool()
@@ -471,3 +473,38 @@ async def delete_user_device_token(fcm_token: str) -> bool:
             logger.info(f"Удален невалидный FCM токен: {fcm_token[:15]}...")
             return True
         return False
+
+
+async def mark_guide_as_viewed(telegram_id: int, guide_topic: str) -> bool:
+    """Добавляет топик гайда в список просмотренных пользователем."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Используем оператор || для конкатенации JSONB массивов,
+        # а затем преобразуем в set и обратно, чтобы убрать дубликаты.
+        query = """
+                UPDATE users
+                SET viewed_guides = (
+                    SELECT jsonb_agg(DISTINCT value)
+                    FROM jsonb_array_elements_text(viewed_guides || $2::jsonb)
+                )
+                WHERE telegram_id = $1;
+                """
+        result = await conn.execute(query, telegram_id, json.dumps([guide_topic]))
+        success = int(result.split(" ")[1]) > 0
+        if success:
+            await cache_service.delete_user_profile_from_cache(telegram_id)
+        return success
+
+
+async def has_self_birthday_record(telegram_id: int) -> bool:
+    """Проверяет, добавил ли пользователь свой день рождения."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Ищем по ключевым словам в имени
+        query = """
+                SELECT 1 FROM birthdays
+                WHERE user_telegram_id = $1
+                  AND (person_name ILIKE '%мой др%' OR person_name ILIKE '%моё др%' OR person_name ILIKE 'я')
+                LIMIT 1;
+                """
+        return await conn.fetchval(query, telegram_id) is not None

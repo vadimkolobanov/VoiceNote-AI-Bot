@@ -13,6 +13,7 @@ from ....core.config import DEEPSEEK_API_KEY_EXISTS, MAX_NOTES_MVP
 from ....services import llm
 from ....services.scheduler import add_reminder_to_scheduler
 from ....services.tz_utils import format_datetime_for_user
+from ....services.gamification_service import check_and_grant_achievements
 
 
 logger = logging.getLogger(__name__)
@@ -58,18 +59,14 @@ def _calculate_due_date_from_components(time_components: dict, user_tz: pytz.Bas
         if replace_kwargs:
             target_dt = target_dt.replace(**replace_kwargs)
 
-        # Новая, более умная логика для обработки прошедших дат/времени
         is_today_explicit = time_components.get("is_today_explicit", False)
         if not is_today_explicit and target_dt <= now_in_user_tz:
-            # Если установили только время, и оно уже прошло сегодня -> переносим на завтра
             if time_components.get("set_hour") is not None and time_components.get("set_day") is None:
                 if target_dt.time() <= now_in_user_tz.time():
                     target_dt += timedelta(days=1)
-            # Если установили дату, и она уже прошла в этом году -> переносим на следующий год
             elif time_components.get("set_day") is not None and time_components.get("set_month") is not None:
                 if target_dt.date() < now_in_user_tz.date():
                     target_dt = target_dt.replace(year=target_dt.year + 1)
-                # Если дата сегодня, но время уже прошло
                 elif target_dt.date() == now_in_user_tz.date() and target_dt.time() <= now_in_user_tz.time():
                     target_dt += timedelta(days=1)
 
@@ -219,6 +216,9 @@ async def process_and_save_note(
 
     if not note_id:
         return False, "❌ Ошибка при сохранении заметки в базу.", None, False
+
+    if recurrence_rule:
+        await check_and_grant_achievements(bot, telegram_id)
 
     new_note = await note_repo.get_note_by_id(note_id, telegram_id)
     if new_note.get('due_date'):

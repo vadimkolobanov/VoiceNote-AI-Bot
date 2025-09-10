@@ -83,6 +83,15 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     $$;
     """,
     """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='viewed_guides') THEN
+            ALTER TABLE users ADD COLUMN viewed_guides JSONB DEFAULT '[]'::jsonb;
+        END IF;
+    END;
+    $$;
+    """,
+    """
     CREATE TABLE IF NOT EXISTS notes
     (
         note_id SERIAL PRIMARY KEY,
@@ -99,7 +108,8 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         due_date TIMESTAMPTZ,
         recurrence_rule TEXT,
         is_archived BOOLEAN DEFAULT FALSE,
-        is_completed BOOLEAN DEFAULT FALSE
+        is_completed BOOLEAN DEFAULT FALSE,
+        snooze_count INTEGER DEFAULT 0
     );
     """,
     """

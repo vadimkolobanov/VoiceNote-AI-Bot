@@ -196,7 +196,6 @@ async def set_note_completed_status(note_id: int, completed: bool) -> bool:
         return int(result.split(" ")[1]) > 0
 
 
-# --- ИЗМЕНЕНИЕ: Новая функция для корректного восстановления ---
 async def restore_note_from_archive(note_id: int) -> bool:
     """Восстанавливает заметку из архива, сбрасывая флаги архивации и выполнения."""
     pool = await get_db_pool()
@@ -205,7 +204,6 @@ async def restore_note_from_archive(note_id: int) -> bool:
         query = "UPDATE notes SET is_archived = FALSE, is_completed = FALSE, updated_at = NOW() WHERE note_id = $1"
         result = await conn.execute(query, note_id)
         return int(result.split(" ")[1]) > 0
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 async def update_note_due_date(note_id: int, new_due_date: datetime) -> bool:
@@ -415,7 +413,6 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
         return [dict(rec) for rec in records]
 
 
-# --- НОВЫЙ КОД НАЧАЛО ---
 async def get_notes_for_upcoming_digest(telegram_id: int, user_timezone: str, days: int) -> list[dict]:
     """Возвращает заметки на ближайшие N дней (не включая сегодня) для утренней сводки."""
     pool = await get_db_pool()
@@ -452,7 +449,6 @@ async def get_overdue_notes_for_digest(telegram_id: int, limit: int) -> list[dic
                 """
         records = await conn.fetch(query, telegram_id, limit)
         return [dict(rec) for rec in records]
-# --- НОВЫЙ КОД КОНЕЦ ---
 
 
 async def count_total_and_voice_notes(telegram_id: int) -> tuple[int, int]:
@@ -472,6 +468,29 @@ async def count_completed_notes(telegram_id: int) -> int:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = "SELECT COUNT(*) FROM notes WHERE telegram_id = $1 AND is_completed = TRUE;"
+        return await conn.fetchval(query, telegram_id) or 0
+
+
+async def increment_snooze_count(note_id: int) -> int:
+    """Увеличивает счетчик откладываний для заметки и возвращает новое значение."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "UPDATE notes SET snooze_count = snooze_count + 1 WHERE note_id = $1 RETURNING snooze_count;"
+        new_count = await conn.fetchval(query, note_id)
+        return new_count or 0
+
+
+async def count_recurring_notes(telegram_id: int) -> int:
+    """Считает количество активных повторяющихся заметок."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = """
+                SELECT COUNT(*) FROM notes
+                WHERE telegram_id = $1
+                  AND is_archived = FALSE
+                  AND is_completed = FALSE
+                  AND recurrence_rule IS NOT NULL;
+                """
         return await conn.fetchval(query, telegram_id) or 0
 
 

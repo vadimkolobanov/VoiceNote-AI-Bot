@@ -1,5 +1,6 @@
 # src/bot/modules/notes/handlers/actions.py
 import logging
+from datetime import timedelta
 from dateutil.rrule import rrulestr, DAILY, WEEKLY, MONTHLY
 
 from aiogram import F, Router, types
@@ -32,7 +33,42 @@ async def undo_note_creation_handler(callback: types.CallbackQuery, callback_dat
     await callback.answer()
 
 
-# --- ИЗМЕНЕНИЕ: Полностью переработанный хендлер ---
+@router.callback_query(NoteAction.filter(F.action == "snooze"))
+async def snooze_note_handler(callback: types.CallbackQuery, callback_data: NoteAction):
+    """Откладывает напоминание."""
+    note_id = callback_data.note_id
+    minutes = callback_data.snooze_minutes
+    user_id = callback.from_user.id
+
+    note = await note_repo.get_note_by_id(note_id, user_id)
+    if not note or not note.get('due_date'):
+        await callback.answer("❌ Не удалось отложить: заметка не найдена.", show_alert=True)
+        return
+
+    new_due_date = note['due_date'] + timedelta(minutes=minutes)
+    await note_repo.update_note_due_date(note_id, new_due_date)
+
+    user_profile = await user_repo.get_user_profile(user_id)
+    note['due_date'] = new_due_date  # Обновляем локальный объект для планировщика
+    add_reminder_to_scheduler(callback.bot, {**note, **user_profile})
+
+    # Логика ачивки
+    new_snooze_count = await note_repo.increment_snooze_count(note_id)
+    await user_repo.add_xp_and_check_level_up(callback.bot, user_id, XP_REWARDS['snooze_note'])
+
+    if new_snooze_count >= 3:
+        # Проверяем, есть ли уже ачивка, чтобы не спамить
+        user_achievements = await user_repo.get_user_achievements_codes(user_id)
+        if AchievCode.PROCRASTINATOR.value not in user_achievements:
+            await user_repo.grant_achievement(callback.bot, user_id, AchievCode.PROCRASTINATOR.value)
+
+    await callback.answer(f"✅ Напоминание отложено на {minutes} минут.", show_alert=True)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+
+
 @router.callback_query(NoteAction.filter(F.action == "complete"))
 async def complete_note_handler(callback: types.CallbackQuery, callback_data: NoteAction, state: FSMContext):
     """
@@ -82,9 +118,6 @@ async def complete_note_handler(callback: types.CallbackQuery, callback_data: No
             await callback.answer("❌ Ошибка при архивации.", show_alert=True)
 
 
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
-
 @router.callback_query(NoteAction.filter(F.action == "archive"))
 async def archive_note_handler(callback: types.CallbackQuery, callback_data: NoteAction, state: FSMContext):
     """Архивирует заметку."""
@@ -101,13 +134,11 @@ async def archive_note_handler(callback: types.CallbackQuery, callback_data: Not
     )
 
 
-# --- ИЗМЕНЕНИЕ: Переименован и использует новую функцию ---
 @router.callback_query(NoteAction.filter(F.action == "unarchive"))
 async def restore_note_handler(callback: types.CallbackQuery, callback_data: NoteAction, state: FSMContext):
     """Восстанавливает заметку из архива."""
     note_id = callback_data.note_id
 
-    # Используем новую функцию, которая сбрасывает is_completed и is_archived
     success = await note_repo.restore_note_from_archive(note_id)
     if not success:
         await callback.answer("❌ Ошибка при восстановлении.", show_alert=True)
@@ -125,13 +156,9 @@ async def restore_note_handler(callback: types.CallbackQuery, callback_data: Not
         message=callback.message,
         user_id=callback.from_user.id,
         page=callback_data.page,
-        # Мы были в архиве, поэтому обновляем архивный список
         archived=True,
         is_callback=True
     )
-
-
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 @router.callback_query(NoteAction.filter(F.action == "delete"))
@@ -142,7 +169,6 @@ async def delete_note_handler(callback: types.CallbackQuery, callback_data: Note
     if success:
         remove_reminder_from_scheduler(note_id)
         await callback.answer("🗑️ Заметка удалена навсегда.", show_alert=True)
-        # Предполагаем, что удаление происходит из архива
         await display_notes_list_page(
             message=callback.message,
             user_id=callback.from_user.id,
@@ -238,7 +264,6 @@ async def stop_note_recurrence_handler(callback: types.CallbackQuery, callback_d
     success = await note_repo.set_note_recurrence_rule(note_id, user_id, rule=None)
     if success:
         await callback.answer("✅ Повторение отключено. Заметка стала разовой.", show_alert=True)
-        # Обновляем вид заметки
         await view_note_detail_handler(callback, state, callback_data=callback_data)
     else:
         await callback.answer("❌ Не удалось отключить повторение.", show_alert=True)
@@ -257,19 +282,13 @@ async def set_suggested_recurrence_handler(callback: types.CallbackQuery, callba
         await callback.answer("Ошибка", show_alert=True)
         return
 
-    # Формируем правило RRULE
     freq_map = {"DAILY": "DAILY", "WEEKLY": "WEEKLY", "MONTHLY": "MONTHLY"}
     freq_str = freq_map.get(freq.upper())
-
-    # Получаем день недели из due_date
     weekday = note['due_date'].strftime('%A')[:2].upper()
-
     rule_str = f"RRULE:FREQ={freq_str};BYDAY={weekday}" if freq_str == "WEEKLY" else f"RRULE:FREQ={freq_str}"
-
     success = await note_repo.set_note_recurrence_rule(note_id, user_id, rule=rule_str)
 
     if success:
-        # Обновляем задачу в планировщике, чтобы она стала повторяющейся
         user_profile = await user_repo.get_user_profile(user_id)
         if user_profile:
             note_for_scheduler = {**note, **user_profile, 'recurrence_rule': rule_str}
@@ -280,6 +299,7 @@ async def set_suggested_recurrence_handler(callback: types.CallbackQuery, callba
             reply_markup=None
         )
         await callback.answer("Повторение установлено!")
+        await check_and_grant_achievements(callback.bot, user_id)
     else:
         await callback.message.edit_text("❌ Не удалось установить повторение.")
         await callback.answer("Ошибка", show_alert=True)

@@ -10,6 +10,7 @@ from ...common_utils.states import OnboardingStates
 from ....core import config
 from ....database import user_repo, note_repo
 from ....services.scheduler import add_reminder_to_scheduler
+from ....services.gamification_service import check_and_grant_achievements
 
 from ..notes.handlers import list_view, shopping_list
 from .keyboards import get_main_menu_keyboard, get_help_keyboard, get_donation_keyboard, get_guides_keyboard, \
@@ -159,7 +160,6 @@ async def _send_initial_welcome(message: types.Message, state: FSMContext, bot: 
     has_active_list = active_shopping_list is not None
 
     timezone_warning = ""
-    # Это предупреждение теперь нужно только тем, кто НЕ прошел обучение и еще не настроил
     if not user_profile.get('has_completed_onboarding') and user_profile.get('timezone', 'UTC') == 'UTC':
         timezone_warning = (
             f"\n\n{hbold('⚠️ ВАЖНО: Настройте ваш часовой пояс!')}\n"
@@ -198,7 +198,15 @@ async def show_main_menu(message: types.Message, state: FSMContext, bot: Bot):
     Чистое отображение главного меню. Вызывается из других модулей, например, после обучения.
     """
     await state.clear()
-    user_profile = await user_repo.get_user_profile(message.from_user.id)
+    user_profile = await user_repo.get_or_create_user(message.from_user)
+
+    # Добавляем проверку на случай, если даже создание пользователя по какой-то причине не удалось
+    if not user_profile:
+        logger.error(
+            f"Не удалось получить или создать профиль для пользователя {message.from_user.id} в show_main_menu")
+        await message.answer(
+            "Произошла ошибка при загрузке вашего профиля. Пожалуйста, попробуйте нажать /start еще раз.")
+        return
     is_vip = user_profile.get('is_vip', False)
     active_shopping_list = await note_repo.get_active_shopping_list(message.from_user.id)
     has_active_list = active_shopping_list is not None
@@ -210,7 +218,6 @@ async def show_main_menu(message: types.Message, state: FSMContext, bot: Bot):
     )
     keyboard = get_main_menu_keyboard(is_vip=is_vip, has_active_list=has_active_list)
 
-    # Редактируем последнее сообщение или отправляем новое
     try:
         await message.edit_text(text, reply_markup=keyboard)
     except Exception:
@@ -220,13 +227,11 @@ async def show_main_menu(message: types.Message, state: FSMContext, bot: Bot):
 @router.message(Command(commands=["start"]))
 async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command: CommandObject):
     """Обрабатывает команду /start, включая диплинки и запуск обучения."""
-    # Отложенный импорт для избежания циклической зависимости
     from ..onboarding.handlers import start_onboarding
 
     args = command.args
     user_profile = await user_repo.get_or_create_user(message.from_user)
 
-    # Логика для диплинков шаринга
     if args and args.startswith("share_"):
         token = args.split('_', 1)[1]
         token_data = await note_repo.get_share_token_data(token)
@@ -279,7 +284,6 @@ async def cmd_start(message: types.Message, state: FSMContext, bot: Bot, command
             await message.answer("❌ Произошла ошибка при получении доступа к заметке.")
             await _send_initial_welcome(message, state, bot)
 
-    # Логика для обычного /start и запуска обучения
     else:
         if not user_profile.get('has_completed_onboarding'):
             await start_onboarding(message, state)
@@ -332,6 +336,10 @@ async def show_specific_guide(callback: types.CallbackQuery, callback_data: Info
         "daily_digest": GUIDE_DAILY_DIGEST,
     }
     guide_text = guides.get(callback_data.guide_topic, "Извините, этот гайд не найден.")
+
+    if callback_data.guide_topic:
+        await user_repo.mark_guide_as_viewed(callback.from_user.id, callback_data.guide_topic)
+        await check_and_grant_achievements(callback.bot, callback.from_user.id)
 
     await callback.message.edit_text(guide_text, reply_markup=get_back_to_guides_keyboard())
     await callback.answer()

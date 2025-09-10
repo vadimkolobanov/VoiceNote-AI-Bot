@@ -19,6 +19,7 @@ from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
 from . import push_service, weather_service, llm
 from ..core.config import WEATHER_SERVICE_ENABLED, DIGEST_UPCOMING_DAYS, DIGEST_OVERDUE_LIMIT
+from ..services.gamification_service import AchievCode
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +208,6 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
                 f"Пересоздание повторяющейся задачи #{note['note_id']}. Старая дата: {last_due_date}, Новая дата: {next_occurrence}")
 
             await note_repo.update_note_due_date(note['note_id'], next_occurrence)
-
             note['due_date'] = next_occurrence
 
             note_data_for_scheduler = {**note, **user_profile}
@@ -219,7 +219,6 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
         logger.error(f"Ошибка при пересоздании повторяющейся задачи #{note['note_id']}: {e}", exc_info=True)
 
 
-# --- ИЗМЕНЕНИЕ: Полностью заменяем эту функцию ---
 async def generate_and_send_daily_digest(bot: Bot, user: dict):
     telegram_id = user['telegram_id']
     user_timezone = user['timezone']
@@ -229,7 +228,6 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 
     logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone})")
 
-    # --- Сбор данных ---
     weather_forecast = "Прогноз погоды недоступен."
     if city and WEATHER_SERVICE_ENABLED:
         weather_forecast = await weather_service.get_weather_for_city(city) or "Не удалось получить прогноз."
@@ -239,7 +237,6 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
     notes_overdue = await note_repo.get_overdue_notes_for_digest(telegram_id, DIGEST_OVERDUE_LIMIT)
     birthdays_soon = await birthday_repo.get_birthdays_for_upcoming_digest(telegram_id)
 
-    # --- Форматирование данных для LLM ---
     notes_for_prompt = "На сегодня задач нет."
     if notes_today:
         notes_text_parts = []
@@ -270,7 +267,6 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
             bday_text_parts.append(f"- {date_str}: {bday['person_name']}")
         bdays_for_prompt = "\n".join(bday_text_parts)
 
-    # --- Генерация и отправка ---
     digest_text = ""
     try:
         llm_result = await llm.generate_digest_text(
@@ -278,8 +274,8 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
             weather_forecast=weather_forecast,
             notes_for_prompt=notes_for_prompt,
             bdays_for_prompt=bdays_for_prompt,
-            upcoming_for_prompt=upcoming_for_prompt,  # Новое
-            overdue_for_prompt=overdue_for_prompt  # Новое
+            upcoming_for_prompt=upcoming_for_prompt,
+            overdue_for_prompt=overdue_for_prompt
         )
         if "error" in llm_result:
             raise ValueError(llm_result["error"])
@@ -287,13 +283,11 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 
     except Exception as e:
         logger.error(f"Ошибка генерации AI-дайджеста для {telegram_id}: {e}. Отправка стандартного шаблона.")
-        # --- Обновляем резервный шаблон ---
         notes_html = "\n".join(notes_for_prompt.splitlines()) if notes_today else "<i>Задач нет. Время планировать!</i>"
         upcoming_html = "\n".join(upcoming_for_prompt.splitlines()) if notes_upcoming else ""
         overdue_html = "\n".join(overdue_for_prompt.splitlines()) if notes_overdue else ""
         bdays_html = "\n".join(
             bdays_for_prompt.splitlines()) if birthdays_soon else "<i>Нет ближайших дней рождений.</i>"
-
         weather_html = f"🌦️ {weather_forecast}\n\n" if city and WEATHER_SERVICE_ENABLED and "Не удалось" not in weather_forecast else ""
 
         digest_parts = [f"☀️ <b>Доброе утро, {user_name}!</b>", weather_html,
@@ -322,9 +316,6 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
         body=push_body,
         data={"action": "show_digest"}
     )
-
-
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 async def check_and_send_digests(bot: Bot):
@@ -372,6 +363,13 @@ async def send_birthday_reminders(bot: Bot):
         return
 
     for user_id, reminders in user_reminders.items():
+        user_has_self_bday = await user_repo.has_self_birthday_record(user_id)
+        if user_has_self_bday:
+            user_achievements = await user_repo.get_user_achievements_codes(user_id)
+            if AchievCode.HAPPY_BIRTHDAY.value not in user_achievements:
+                await user_repo.grant_achievement(bot, user_id, AchievCode.HAPPY_BIRTHDAY.value, silent=True)
+                reminders.append("\nP.S. С Днём Рождения! 🎉 Загляните в профиль, там для вас сюрприз 😉")
+
         full_tg_text = "🎂 Напоминание о днях рождения!\n\n" + "\n".join(reminders)
         push_body = reminders[0] if len(
             reminders) == 1 else f"Сегодня {len(reminders)} важных события! Посмотрите в приложении."
