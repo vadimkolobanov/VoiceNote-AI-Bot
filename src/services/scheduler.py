@@ -17,8 +17,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from ..database import note_repo, birthday_repo, user_repo
 from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
-from . import push_service, weather_service, llm # --- ИЗМЕНЕНИЕ: импортируем наш llm сервис
-from ..core.config import WEATHER_SERVICE_ENABLED
+from . import push_service, weather_service, llm
+from ..core.config import WEATHER_SERVICE_ENABLED, DIGEST_UPCOMING_DAYS, DIGEST_OVERDUE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -208,9 +208,7 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
 
             await note_repo.update_note_due_date(note['note_id'], next_occurrence)
 
-            # --- ИСПРАВЛЕНИЕ: Критически важно обновить дату в локальном объекте `note` ---
             note['due_date'] = next_occurrence
-            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
             note_data_for_scheduler = {**note, **user_profile}
             add_reminder_to_scheduler(bot, note_data_for_scheduler)
@@ -221,28 +219,48 @@ async def reschedule_recurring_note(bot: Bot, note: dict):
         logger.error(f"Ошибка при пересоздании повторяющейся задачи #{note['note_id']}: {e}", exc_info=True)
 
 
+# --- ИЗМЕНЕНИЕ: Полностью заменяем эту функцию ---
 async def generate_and_send_daily_digest(bot: Bot, user: dict):
     telegram_id = user['telegram_id']
     user_timezone = user['timezone']
     user_name = user['first_name']
     city = user.get('city_name')
+    user_tz_obj = pytz.timezone(user_timezone)
 
     logger.info(f"Подготовка утренней сводки для пользователя {telegram_id} (ТЗ: {user_timezone})")
 
+    # --- Сбор данных ---
     weather_forecast = "Прогноз погоды недоступен."
     if city and WEATHER_SERVICE_ENABLED:
         weather_forecast = await weather_service.get_weather_for_city(city) or "Не удалось получить прогноз."
 
     notes_today = await note_repo.get_notes_for_today_digest(telegram_id, user_timezone)
+    notes_upcoming = await note_repo.get_notes_for_upcoming_digest(telegram_id, user_timezone, DIGEST_UPCOMING_DAYS)
+    notes_overdue = await note_repo.get_overdue_notes_for_digest(telegram_id, DIGEST_OVERDUE_LIMIT)
     birthdays_soon = await birthday_repo.get_birthdays_for_upcoming_digest(telegram_id)
 
+    # --- Форматирование данных для LLM ---
     notes_for_prompt = "На сегодня задач нет."
     if notes_today:
         notes_text_parts = []
         for note in notes_today:
-            time_str = note['due_date'].astimezone(pytz.timezone(user_timezone)).strftime('%H:%M')
+            time_str = note['due_date'].astimezone(user_tz_obj).strftime('%H:%M')
             notes_text_parts.append(f"- {time_str}: {note['corrected_text']}")
         notes_for_prompt = "\n".join(notes_text_parts)
+
+    upcoming_for_prompt = "Нет запланированных задач."
+    if notes_upcoming:
+        upcoming_text_parts = []
+        for note in notes_upcoming:
+            date_str = note['due_date'].astimezone(user_tz_obj).strftime('%d.%m (%a)')
+            time_str = note['due_date'].astimezone(user_tz_obj).strftime('%H:%M')
+            upcoming_text_parts.append(f"- {date_str} в {time_str}: {note['corrected_text']}")
+        upcoming_for_prompt = "\n".join(upcoming_text_parts)
+
+    overdue_for_prompt = "Нет пропущенных задач."
+    if notes_overdue:
+        overdue_text_parts = [f"- {note['corrected_text']}" for note in notes_overdue]
+        overdue_for_prompt = "\n".join(overdue_text_parts)
 
     bdays_for_prompt = "Нет дней рождений в ближайшую неделю."
     if birthdays_soon:
@@ -252,14 +270,16 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
             bday_text_parts.append(f"- {date_str}: {bday['person_name']}")
         bdays_for_prompt = "\n".join(bday_text_parts)
 
-    # --- ИЗМЕНЕНИЕ: Используем нашу новую централизованную функцию ---
+    # --- Генерация и отправка ---
     digest_text = ""
     try:
         llm_result = await llm.generate_digest_text(
             user_name=user_name,
             weather_forecast=weather_forecast,
             notes_for_prompt=notes_for_prompt,
-            bdays_for_prompt=bdays_for_prompt
+            bdays_for_prompt=bdays_for_prompt,
+            upcoming_for_prompt=upcoming_for_prompt,  # Новое
+            overdue_for_prompt=overdue_for_prompt  # Новое
         )
         if "error" in llm_result:
             raise ValueError(llm_result["error"])
@@ -267,13 +287,23 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
 
     except Exception as e:
         logger.error(f"Ошибка генерации AI-дайджеста для {telegram_id}: {e}. Отправка стандартного шаблона.")
-        notes_html_list = notes_for_prompt.splitlines()
-        notes_html = "\n".join(notes_html_list) if notes_today else "<i>Задач нет. Время планировать!</i>"
-        bdays_html_list = bdays_for_prompt.splitlines()
-        bdays_html = "\n".join(bdays_html_list) if birthdays_soon else "<i>Нет ближайших дней рождений.</i>"
+        # --- Обновляем резервный шаблон ---
+        notes_html = "\n".join(notes_for_prompt.splitlines()) if notes_today else "<i>Задач нет. Время планировать!</i>"
+        upcoming_html = "\n".join(upcoming_for_prompt.splitlines()) if notes_upcoming else ""
+        overdue_html = "\n".join(overdue_for_prompt.splitlines()) if notes_overdue else ""
+        bdays_html = "\n".join(
+            bdays_for_prompt.splitlines()) if birthdays_soon else "<i>Нет ближайших дней рождений.</i>"
+
         weather_html = f"🌦️ {weather_forecast}\n\n" if city and WEATHER_SERVICE_ENABLED and "Не удалось" not in weather_forecast else ""
-        digest_text = f"☀️ <b>Доброе утро, {user_name}!</b>\n\n{weather_html}<b>Задачи на сегодня:</b>\n{notes_html}\n\n<b>Дни рождения на неделе:</b>\n{bdays_html}\n\n<i>Отличного дня!</i>"
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+        digest_parts = [f"☀️ <b>Доброе утро, {user_name}!</b>", weather_html,
+                        f"<b>Задачи на сегодня:</b>\n{notes_html}"]
+        if upcoming_html:
+            digest_parts.append(f"\n<b>Планы на неделю:</b>\n{upcoming_html}")
+        if overdue_html:
+            digest_parts.append(f"\n<b>Пропущенные задачи:</b>\n{overdue_html}")
+        digest_parts.append(f"\n<b>Дни рождения на неделе:</b>\n{bdays_html}\n\n<i>Отличного дня!</i>")
+        digest_text = "\n".join(filter(None, digest_parts))
 
     if not digest_text:
         logger.warning(f"Сгенерирован пустой дайджест для {telegram_id}, отправка отменена.")
@@ -292,6 +322,9 @@ async def generate_and_send_daily_digest(bot: Bot, user: dict):
         body=push_body,
         data={"action": "show_digest"}
     )
+
+
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 async def check_and_send_digests(bot: Bot):

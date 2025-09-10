@@ -55,6 +55,10 @@ MIN_STT_TEXT_CHARS = 5
 MIN_STT_TEXT_WORDS = 1
 MAX_DAILY_STT_RECOGNITIONS_MVP = 15
 MAX_VOICE_DURATION_SEC = 30
+# --- НОВЫЙ КОД ---
+DIGEST_UPCOMING_DAYS = 5
+DIGEST_OVERDUE_LIMIT = 5
+# --- КОНЕЦ НОВОГО КОДА ---
 
 NOTE_CATEGORIES = [
     "Общее", "Работа", "Личное", "Задачи", "Идеи", "Покупки"

@@ -415,6 +415,46 @@ async def get_notes_for_today_digest(telegram_id: int, user_timezone: str) -> li
         return [dict(rec) for rec in records]
 
 
+# --- НОВЫЙ КОД НАЧАЛО ---
+async def get_notes_for_upcoming_digest(telegram_id: int, user_timezone: str, days: int) -> list[dict]:
+    """Возвращает заметки на ближайшие N дней (не включая сегодня) для утренней сводки."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = """
+                SELECT corrected_text, due_date
+                FROM notes
+                WHERE telegram_id = $1
+                  AND is_archived = FALSE
+                  AND is_completed = FALSE
+                  AND due_date IS NOT NULL
+                  AND (due_date AT TIME ZONE $3)::date > (NOW() AT TIME ZONE $3)::date
+                  AND (due_date AT TIME ZONE $3)::date <= (NOW() AT TIME ZONE $3)::date + MAKE_INTERVAL(days => $2)
+                ORDER BY due_date ASC;
+                """
+        records = await conn.fetch(query, telegram_id, days, user_timezone)
+        return [dict(rec) for rec in records]
+
+
+async def get_overdue_notes_for_digest(telegram_id: int, limit: int) -> list[dict]:
+    """Возвращает просроченные задачи и задачи без срока для утренней сводки."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Задачи с прошедшим сроком ИЛИ задачи вообще без срока
+        query = """
+                SELECT corrected_text, due_date
+                FROM notes
+                WHERE telegram_id = $1
+                  AND is_archived = FALSE
+                  AND is_completed = FALSE
+                  AND (due_date < NOW() OR due_date IS NULL)
+                ORDER BY created_at DESC
+                LIMIT $2;
+                """
+        records = await conn.fetch(query, telegram_id, limit)
+        return [dict(rec) for rec in records]
+# --- НОВЫЙ КОД КОНЕЦ ---
+
+
 async def count_total_and_voice_notes(telegram_id: int) -> tuple[int, int]:
     pool = await get_db_pool()
     async with pool.acquire() as conn:

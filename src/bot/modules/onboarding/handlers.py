@@ -223,4 +223,4 @@ async def finish_onboarding_handler(callback: types.CallbackQuery, state: FSMCon
     """Завершает обучение."""
     logger.info(f"User {callback.from_user.id} finished onboarding.")
     await _mark_onboarding_complete(callback.from_user.id, state, bot, callback.message)
-    await callback.answer("Добро пожаловать!")
+    await callback.answer("Добро пожаловать! Проверьте в настройках часовой пояс и время утренней сводки — так напоминания и дайджесты будут приходить точно вовремя.")
