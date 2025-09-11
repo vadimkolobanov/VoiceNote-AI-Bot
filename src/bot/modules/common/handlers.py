@@ -1,7 +1,7 @@
 # src/bot/modules/common/handlers.py
 import logging
 from aiogram import F, Bot, Router, types
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hlink, hcode, hitalic
 
@@ -379,3 +379,28 @@ async def show_donate_info_handler(callback: types.CallbackQuery):
         disable_web_page_preview=True
     )
     await callback.answer()
+
+
+class AnyState:
+    pass
+
+
+@router.message(Command(commands=["cancel", "start"]), StateFilter(AnyState))
+async def cancel_handler(message: types.Message, state: FSMContext, bot: Bot):
+    """
+    Универсальный хендлер для отмены любого состояния FSM.
+    Срабатывает на /cancel или /start в любом состоянии.
+    """
+    current_state = await state.get_state()
+    if current_state is None:
+        # Если состояния нет, просто покажем главное меню как обычно
+        await show_main_menu(message, state, bot)
+        return
+
+    logger.info(f"Cancelling state {current_state} for {message.from_user.id}")
+    await state.clear()
+    await message.answer(
+        "Действие отменено. Вы возвращены в главное меню.",
+        reply_markup=types.ReplyKeyboardRemove() # Убирает обычную клавиатуру, если она была
+    )
+    await show_main_menu(message, state, bot)

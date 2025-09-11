@@ -4,6 +4,7 @@ from datetime import datetime
 import pytz
 
 from aiogram import F, Router, types, Bot
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hitalic
 
@@ -11,7 +12,8 @@ from ....database import habit_repo, user_repo
 from ....services import llm
 from ....bot.common_utils.states import HabitStates
 from ....bot.common_utils.callbacks import HabitAction, HabitTrack
-from .keyboards import get_habits_menu_keyboard, get_habit_confirmation_keyboard, get_manage_habits_keyboard
+from .keyboards import get_habits_menu_keyboard, get_habit_confirmation_keyboard, get_manage_habits_keyboard, \
+    get_habit_input_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -66,11 +68,11 @@ async def add_new_habits_start(callback: types.CallbackQuery, state: FSMContext)
         "📝 Расскажите мне в одном сообщении, какие привычки вы хотите сформировать.\n\n"
         f"{hitalic('Пример: «Хочу каждый день утром делать зарядку, по вечерам мыть посуду, а по выходным читать книгу»')}"
     )
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(text, reply_markup=get_habit_input_keyboard())
     await callback.answer()
 
 
-@router.message(HabitStates.awaiting_description, F.text)
+@router.message(HabitStates.awaiting_description, F.text, ~F.text.startswith('/'))
 async def process_habits_description(message: types.Message, state: FSMContext):
     status_msg = await message.answer("🧠 Анализирую ваш текст... Пожалуйста, подождите.")
 
@@ -138,8 +140,10 @@ async def confirm_add_habits(callback: types.CallbackQuery, state: FSMContext, b
     await show_habits_menu(callback)
 
 
-@router.callback_query(HabitStates.awaiting_confirmation, HabitAction.filter(F.action == "cancel"))
+@router.callback_query(StateFilter(HabitStates), HabitAction.filter(F.action == "cancel"))
 async def cancel_add_habits(callback: types.CallbackQuery, state: FSMContext):
+    # Добавляем импорт StateFilter вверху файла, если его нет
+    # from aiogram.filters import StateFilter
     await state.clear()
     await callback.answer("Действие отменено.")
     await show_habits_menu(callback)

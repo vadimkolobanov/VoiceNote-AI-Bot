@@ -3,6 +3,10 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from ....bot.common_utils.callbacks import HabitAction, HabitTrack
 
+def get_habit_input_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=HabitAction(action="cancel").pack())
+    return builder.as_markup()
 
 def get_habits_menu_keyboard(has_habits: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
