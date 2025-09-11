@@ -214,6 +214,29 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         last_used_at TIMESTAMPTZ
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS habits (
+        id SERIAL PRIMARY KEY,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT,
+        frequency_rule TEXT NOT NULL,
+        reminder_time TIME,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        is_active BOOLEAN DEFAULT TRUE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS habit_trackings (
+        id SERIAL PRIMARY KEY,
+        habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        track_date DATE NOT NULL,
+        status TEXT NOT NULL,
+        tracked_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(habit_id, track_date)
+    );
+    """,
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",
@@ -226,6 +249,8 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_user_achievements_user_id ON user_achievements (user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_mobile_activation_codes_code ON mobile_activation_codes(code);",
     "CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON user_devices(user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_habit_trackings_habit_id ON habit_trackings(habit_id);",
 ]
 
 

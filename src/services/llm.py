@@ -7,7 +7,7 @@ from datetime import datetime
 
 import aiohttp
 from ..core.config import DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL_NAME
-from ..services.tz_utils import get_day_of_week_str # Добавим утилиту для дня недели
+from ..services.tz_utils import get_day_of_week_str
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,6 @@ async def extract_shopping_list(raw_text: str) -> dict:
     return await _call_deepseek_api(system_prompt, user_prompt, is_json_output=True)
 
 
-# --- ИЗМЕНЕНИЕ: Полностью переписан промпт для лучшего распознавания дат ---
 async def extract_reminder_details(raw_text: str, current_user_datetime_iso: str) -> dict:
     current_dt = datetime.fromisoformat(current_user_datetime_iso)
     day_of_week = get_day_of_week_str(current_dt)
@@ -185,16 +184,12 @@ async def extract_reminder_details(raw_text: str, current_user_datetime_iso: str
 **ПРИМЕРЫ (учитывая, что сегодня {current_dt.strftime('%Y-%m-%d')}):**
 - **Вход:** "встреча с командой завтра в 10:00"
 - **Выход:** {{"summary_text": "Встреча с командой", "corrected_text": "Встреча с командой завтра в 10:00.", "time_components": {{"original_mention": "завтра в 10:00", "relative_days": 1, "set_hour": 10, "set_minute": 0}}, "recurrence_rule": null}}
-
 - **Вход:** "позвонить маме в субботу вечером"
 - **Выход:** {{"summary_text": "Позвонить маме", "corrected_text": "Позвонить маме в субботу вечером.", "time_components": {{"original_mention": "в субботу вечером", "set_hour": 19, "set_minute": 0 /* ... и set_day/month/year для ближайшей субботы */}}, "recurrence_rule": null}}
-
 - **Вход:** "Напомни мне 31.07 пойти в театр"
 - **Выход:** {{"summary_text": "Пойти в театр", "corrected_text": "Напомни мне 31.07 пойти в театр.", "time_components": {{"original_mention": "31.07", "set_day": 31, "set_month": 7}}, "recurrence_rule": null}}
-
 - **Вход:** "просто мысль"
 - **Выход:** {{"summary_text": "Просто мысль", "corrected_text": "Просто мысль.", "time_components": null, "recurrence_rule": null}}
-
 - **Вход:** "платить за интернет каждый месяц 25го числа"
 - **Выход:** {{"summary_text": "Платить за интернет", "corrected_text": "Платить за интернет каждый месяц 25го числа.", "time_components": {{"original_mention": "25го числа", "set_day": 25}}, "recurrence_rule": "FREQ=MONTHLY;BYMONTHDAY=25"}}
 """
@@ -202,7 +197,6 @@ async def extract_reminder_details(raw_text: str, current_user_datetime_iso: str
     return await _call_deepseek_api(system_prompt, user_prompt, is_json_output=True)
 
 
-# --- ИЗМЕНЕНИЕ: Полностью заменяем эту функцию ---
 async def generate_digest_text(
         user_name: str,
         weather_forecast: str,
@@ -244,9 +238,35 @@ async def generate_digest_text(
 ---
 Сгенерируй финальное HTML-сообщение, строго следуя правилам.
 """
-    # Для генерации текста лучше подходит более высокая температура
     return await _call_deepseek_api(system_prompt, user_prompt, is_json_output=False, temperature=0.4)
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+
+async def extract_habits_from_text(raw_text: str, current_user_datetime_iso: str) -> dict:
+    system_prompt = f"""
+Ты — AI-аналитик привычек. Твоя задача — извлечь из текста пользователя все желаемые привычки и их параметры.
+Контекст: Текущая дата и время пользователя: `{current_user_datetime_iso}`.
+Правила времени: "Утром" - 08:00, "Днем" - 14:00, "Вечером" - 20:00.
+Правила дней недели: "По будням" -> MO,TU,WE,TH,FR. "По выходным" -> SA,SU.
+
+Верни JSON-объект со списком привычек:
+{{
+  "habits": [
+    {{
+      "name": "Краткое название привычки (2-4 слова в инфинитиве, например 'Делать зарядку')",
+      "frequency_rule": "Строка iCalendar RRULE (например, FREQ=DAILY или FREQ=WEEKLY;BYDAY=SA,SU)",
+      "reminder_time": "Время в формате HH:MM"
+    }}
+  ]
+}}
+
+ПРАВИЛА АНАЛИЗА:
+1.  "Каждый день" -> FREQ=DAILY.
+2.  "Каждую неделю", "еженедельно" -> FREQ=WEEKLY. Если дни не указаны, не добавляй BYDAY.
+3.  Если время не указано, но есть "утром", "вечером" и т.д., подставь время по умолчанию. Если времени нет совсем, верни null для reminder_time.
+4.  Название привычки должно быть лаконичным и в инфинитиве.
+"""
+    user_prompt = f"Извлеки привычки из текста: \"{raw_text}\""
+    return await _call_deepseek_api(system_prompt, user_prompt, is_json_output=True)
 
 
 async def are_tasks_conflicting(task1_text: str, task2_text: str) -> bool:

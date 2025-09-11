@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 import pytz
-
+from dateutil.rrule import rrulestr, WEEKLY, DAILY, MONTHLY, YEARLY # Добавляем импорты
 logger = logging.getLogger(__name__)
 
 # Список распространенных часовых поясов для удобства пользователя в клавиатурах.
@@ -74,7 +74,60 @@ def get_day_of_week_str(dt: datetime) -> str:
     """Возвращает название дня недели на русском."""
     days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
     return days[dt.weekday()]
+
 # Пример использования (для самопроверки и отладки)
+def format_rrule_for_user(rrule_str: str) -> str:
+    """Преобразует строку RRULE в человекочитаемый формат на русском."""
+    if not rrule_str:
+        return "Никогда"
+
+    try:
+        rule = rrulestr(rrule_str)
+    except (ValueError, TypeError):
+        return rrule_str
+
+    freq_map = {
+        YEARLY: "Каждый год",
+        MONTHLY: "Каждый месяц",
+        WEEKLY: "Каждую неделю",
+        DAILY: "Каждый день",
+    }
+
+    freq_text = freq_map.get(rule._freq, "Сложное правило")
+
+    days_map = {
+        0: "пн", 1: "вт", 2: "ср", 3: "чт", 4: "пт", 5: "сб", 6: "вс"
+    }
+
+    parts = [freq_text]
+
+    if rule._byweekday:
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        # Проверяем, являются ли элементы объектами weekday или просто числами
+        if hasattr(rule._byweekday[0], 'weekday'):
+            # Это объекты weekday (например, MO, TU)
+            days = sorted([d.weekday for d in rule._byweekday])
+        else:
+            # Это просто кортеж чисел (0, 1, 2...)
+            days = sorted(list(rule._byweekday))
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+        days_text = ", ".join([days_map.get(d, '?') for d in days])
+
+        if rule._freq == WEEKLY and days_text:
+            return f"По дням: {days_text}"
+        elif days_text:
+            parts.append(f"по дням: {days_text}")
+
+    if rule._bymonthday:
+        days = sorted(rule._bymonthday)
+        days_text = ", ".join([str(d) for d in days])
+        parts.append(f"по числам: {days_text}")
+
+    if rule._interval and rule._interval > 1:
+        parts.append(f"(интервал: {rule._interval})")
+
+    return " ".join(parts)
 if __name__ == '__main__':
     # Время в UTC, как оно было бы извлечено из БД
     utc_now = datetime.now(pytz.utc)

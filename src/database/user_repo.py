@@ -479,8 +479,6 @@ async def mark_guide_as_viewed(telegram_id: int, guide_topic: str) -> bool:
     """Добавляет топик гайда в список просмотренных пользователем."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Используем оператор || для конкатенации JSONB массивов,
-        # а затем преобразуем в set и обратно, чтобы убрать дубликаты.
         query = """
                 UPDATE users
                 SET viewed_guides = (
@@ -500,7 +498,6 @@ async def has_self_birthday_record(telegram_id: int) -> bool:
     """Проверяет, добавил ли пользователь свой день рождения."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        # Ищем по ключевым словам в имени
         query = """
                 SELECT 1 FROM birthdays
                 WHERE user_telegram_id = $1
@@ -508,3 +505,12 @@ async def has_self_birthday_record(telegram_id: int) -> bool:
                 LIMIT 1;
                 """
         return await conn.fetchval(query, telegram_id) is not None
+
+
+async def get_all_users_with_habits() -> list[int]:
+    """Возвращает ID всех пользователей, у которых есть хотя бы одна активная привычка."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        query = "SELECT DISTINCT user_telegram_id FROM habits WHERE is_active = TRUE"
+        records = await conn.fetch(query)
+        return [rec['user_telegram_id'] for rec in records]

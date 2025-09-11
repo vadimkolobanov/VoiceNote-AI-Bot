@@ -50,3 +50,9 @@ class SupportStates(StatesGroup):
 
 class NotesSearchStates(StatesGroup):
     waiting_for_query = State()
+
+
+class HabitStates(StatesGroup):
+    """Состояния для управления привычками."""
+    awaiting_description = State()
+    awaiting_confirmation = State()

@@ -4,7 +4,7 @@ import asyncio
 import re
 from datetime import datetime, time, timedelta, date
 import pytz
-from dateutil.rrule import rrulestr
+from dateutil.rrule import rrulestr, rrule, WEEKLY, DAILY
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -14,12 +14,13 @@ from apscheduler.executors.asyncio import AsyncIOExecutor
 from aiogram.utils.markdown import hbold, hcode, hitalic
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from ..database import note_repo, birthday_repo, user_repo
+from ..database import note_repo, birthday_repo, user_repo, habit_repo
 from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
 from . import push_service, weather_service, llm
 from ..core.config import WEATHER_SERVICE_ENABLED, DIGEST_UPCOMING_DAYS, DIGEST_OVERDUE_LIMIT
 from ..services.gamification_service import AchievCode
+from ..bot.modules.habits.keyboards import get_habit_tracking_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -389,6 +390,131 @@ async def send_birthday_reminders(bot: Bot):
         )
 
 
+async def send_habit_reminder(bot: Bot, habit: dict):
+    user_id = habit['user_telegram_id']
+    habit_id = habit['id']
+    name = habit['name']
+
+    logger.info(f"Отправка напоминания о привычке #{habit_id} ('{name}') пользователю {user_id}")
+
+    try:
+        text = f"💪 Время для вашей привычки!\n\n{hbold(name)}\n\nВыполнили сегодня?"
+        keyboard = get_habit_tracking_keyboard(habit_id)
+        await bot.send_message(user_id, text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Не удалось отправить напоминание о привычке #{habit_id}: {e}")
+
+
+async def setup_habit_reminders(bot: Bot):
+    """Устанавливает или обновляет все задачи-напоминания о привычках."""
+    logger.info("Загрузка и настройка напоминаний о привычках...")
+    all_habits = await habit_repo.get_all_active_habits_for_scheduler()
+
+    for job in scheduler.get_jobs():
+        if job.id.startswith("habit_reminder_"):
+            job.remove()
+
+    count = 0
+    for habit in all_habits:
+        try:
+            user_profile = await user_repo.get_user_profile(habit['user_telegram_id'])
+            user_tz = pytz.timezone(user_profile.get('timezone', 'UTC'))
+
+            rule = rrulestr(habit['frequency_rule'])
+            cron_kwargs = {"timezone": user_tz}
+
+            if rule._byweekday is not None:
+                cron_kwargs['day_of_week'] = ",".join([str(d) for d in rule._byweekday])
+            if rule._bymonthday:
+                cron_kwargs['day'] = ",".join([str(d) for d in rule._bymonthday])
+
+            cron_kwargs['hour'] = habit['reminder_time'].hour
+            cron_kwargs['minute'] = habit['reminder_time'].minute
+
+            scheduler.add_job(
+                send_habit_reminder,
+                trigger='cron',
+                id=f"habit_reminder_{habit['id']}",
+                kwargs={'bot': bot, 'habit': habit},
+                replace_existing=True,
+                **cron_kwargs
+            )
+            count += 1
+        except Exception as e:
+            logger.error(f"Ошибка при настройке напоминания для привычки #{habit['id']}: {e}")
+
+    logger.info(f"Успешно настроено {count} напоминаний о привычках.")
+
+
+async def send_weekly_habit_reports(bot: Bot):
+    """
+    Формирует и рассылает всем пользователям с привычками
+    еженедельный отчет о прогрессе.
+    """
+    logger.info("Запуск еженедельной рассылки отчетов по привычкам.")
+    all_users_with_habits = await user_repo.get_all_users_with_habits()
+
+    today = datetime.now(pytz.utc).date()
+    start_of_week = today - timedelta(days=6)
+
+    for user_id in all_users_with_habits:
+        user_habits = await habit_repo.get_user_habits(user_id)
+        if not user_habits:
+            continue
+
+        report_parts = [f"📊 {hbold('Ваш отчет по привычкам за неделю!')}\n"]
+        total_completed = 0
+        total_possible = 0
+
+        for habit in user_habits:
+            stats_raw = await habit_repo.get_weekly_stats(habit['id'], start_of_week.isoformat())
+            stats_by_date = {s['track_date'].isoformat(): s['status'] for s in stats_raw}
+
+            progress_bar = []
+            completed_count = 0
+
+            try:
+                rule = rrulestr(habit['frequency_rule'])
+            except Exception:
+                continue
+
+            # Определяем дни, когда привычка должна была выполняться на этой неделе
+            days_of_week_in_rule = {d.weekday for d in rule._byweekday} if rule._byweekday else set(range(7))
+
+            week_dates = []
+            for i in range(7):
+                current_day = start_of_week + timedelta(days=i)
+                if current_day.weekday() in days_of_week_in_rule:
+                    week_dates.append(current_day)
+
+            if not week_dates: continue
+
+            for day_date in week_dates:
+                day_str = day_date.isoformat()
+                if stats_by_date.get(day_str) == 'completed':
+                    progress_bar.append("✅")
+                    completed_count += 1
+                elif stats_by_date.get(day_str) == 'skipped':
+                    progress_bar.append("❌")
+                else:
+                    progress_bar.append("➖")
+
+            total_completed += completed_count
+            total_possible += len(week_dates)
+
+            progress_str = "".join(progress_bar)
+            report_parts.append(f"• {hitalic(habit['name'])}: {completed_count}/{len(week_dates)}\n  {progress_str}")
+
+        if total_possible > 0:
+            overall_progress = int((total_completed / total_possible) * 100)
+            report_parts.append(f"\nОбщий прогресс: {hbold(f'{overall_progress}%')}. Так держать!")
+
+            try:
+                await bot.send_message(user_id, "\n".join(report_parts))
+            except Exception as e:
+                logger.warning(f"Не удалось отправить отчет по привычкам пользователю {user_id}: {e}")
+
+
 async def load_reminders_on_startup(bot: Bot):
     logger.info("Загрузка предстоящих напоминаний из базы данных...")
     notes_with_reminders = await note_repo.get_notes_with_reminders()
@@ -397,6 +523,7 @@ async def load_reminders_on_startup(bot: Bot):
         add_reminder_to_scheduler(bot, note)
         count += 1
     logger.info(f"Загружено и обработано {count} заметок с напоминаниями.")
+    await setup_habit_reminders(bot)
 
 
 async def setup_daily_jobs(bot: Bot):
@@ -421,3 +548,15 @@ async def setup_daily_jobs(bot: Bot):
         replace_existing=True
     )
     logger.info("Ежечасная задача проверки утренних сводок запланирована.")
+
+    scheduler.add_job(
+        send_weekly_habit_reports,
+        trigger='cron',
+        day_of_week='sun',
+        hour=18,
+        minute=0,
+        kwargs={'bot': bot},
+        id='weekly_habit_report',
+        replace_existing=True
+    )
+    logger.info("Еженедельная задача отправки отчетов по привычкам запланирована на вечер воскресенья (18:00 UTC).")

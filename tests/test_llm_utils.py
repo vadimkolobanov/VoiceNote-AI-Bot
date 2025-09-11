@@ -9,4 +9,7 @@ def test_parse_llm_json_response_with_json_fence():
   "ok": true,
   "value": 123
 }
+```"""
+    data = _parse_llm_json_response(resp)
+    assert data == {"ok": True, "value": 123}
 

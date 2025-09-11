@@ -6,8 +6,9 @@ from src.core.config import REDIS_URL
 
 # Импортируем "главные" роутеры из каждого модуля
 from .modules.admin import router as admin_router
-from .modules.onboarding import router as onboarding_router  # <-- НОВЫЙ ИМПОРТ
+from .modules.onboarding import router as onboarding_router
 from .modules.birthdays import router as birthdays_router
+from .modules.habits import router as habits_router # <-- НОВЫЙ ИМПОРТ
 from .modules.common import router as common_router
 from .modules.notes import router as notes_router
 from .modules.profile import router as profile_router
@@ -33,6 +34,7 @@ def get_dispatcher() -> Dispatcher:
     #    по конкретным колбэкам или командам.
     dp.include_router(profile_router)
     dp.include_router(birthdays_router)
+    dp.include_router(habits_router) # <-- ДОБАВЛЕНО ЗДЕСЬ
 
     # 4. Модуль заметок. Он содержит все свои хендлеры, собранные
     #    в правильном порядке внутри своего __init__.py.

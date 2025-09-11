@@ -79,3 +79,15 @@ class AdminAction(CallbackData, prefix="adm_act"):
 class AdminUserNav(CallbackData, prefix="adm_usr_nav"):
     """Пагинация по списку пользователей в админ-панели."""
     page: int
+
+
+class HabitAction(CallbackData, prefix="habit_act"):
+    """Действия, связанные с привычками."""
+    action: str  # 'confirm_add', 'edit', 'cancel', 'delete'
+    habit_id: int | None = None # <-- ДОБАВЛЕНО ЭТО ПОЛЕ
+
+
+class HabitTrack(CallbackData, prefix="habit_track"):
+    """Колбэк для отметки выполнения привычки."""
+    habit_id: int
+    status: str  # 'completed', 'skipped'

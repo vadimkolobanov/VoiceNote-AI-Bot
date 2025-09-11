@@ -23,6 +23,7 @@ def get_main_menu_keyboard(is_vip: bool = False, has_active_list: bool = False) 
         )
 
     builder.button(text="📝 Мои заметки", callback_data=PageNavigation(target="notes", page=1, archived=False).pack())
+    builder.button(text="💪 Мои привычки", callback_data="habits_menu")
     builder.button(text="👤 Профиль", callback_data="user_profile")
     builder.button(text="⚙️ Настройки", callback_data=SettingsAction(action="go_to_main").pack())
     builder.button(text="❓ Помощь", callback_data=InfoAction(action="main").pack())
@@ -36,7 +37,8 @@ def get_main_menu_keyboard(is_vip: bool = False, has_active_list: bool = False) 
     if not is_vip:
         adjust_layout.append(1)
 
-    adjust_layout.extend([1, 2, 1, 1])
+    # Обновляем layout: теперь у нас 2 кнопки в ряду (Заметки, Привычки), потом 2 (Профиль, Настройки)
+    adjust_layout.extend([2, 2, 1, 1])
     builder.adjust(*adjust_layout)
 
     return builder.as_markup()
@@ -75,6 +77,7 @@ def get_guides_keyboard() -> InlineKeyboardMarkup:
         "Как создать список покупок?": "shopping_list",
         "Как поделиться списком/заметкой?": "share_note",
         "Как записать день рождения?": "add_birthday",
+        "💪 Как пользоваться трекером привычек?": "habit_tracker",
         "Что такое утренняя сводка? (VIP)": "daily_digest",
         "Как настроить часовой пояс?": "set_timezone",
     }
