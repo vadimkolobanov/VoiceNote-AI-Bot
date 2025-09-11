@@ -1,6 +1,6 @@
 # src/database/habit_repo.py
 import logging
-from datetime import datetime
+from datetime import datetime, date
 
 from .connection import get_db_pool
 
@@ -53,7 +53,7 @@ async def add_habits_bulk(user_telegram_id: int, habits: list[dict]) -> list[dic
             return []
 
 
-async def track_habit(habit_id: int, user_telegram_id: int, track_date: str, status: str) -> bool:
+async def track_habit(habit_id: int, user_telegram_id: int, track_date: date, status: str) -> bool:
     """Записывает выполнение или пропуск привычки."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:

@@ -156,7 +156,7 @@ async def track_habit_handler(callback: types.CallbackQuery, callback_data: Habi
 
     user_profile = await user_repo.get_user_profile(callback.from_user.id)
     user_tz = pytz.timezone(user_profile.get('timezone', 'UTC'))
-    track_date = datetime.now(user_tz).date().isoformat()
+    track_date = datetime.now(user_tz).date()
 
     success = await habit_repo.track_habit(habit_id, callback.from_user.id, track_date, status)
 
