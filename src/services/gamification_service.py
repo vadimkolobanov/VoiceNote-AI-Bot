@@ -126,7 +126,8 @@ async def check_and_grant_achievements(bot, user_id: int, silent: bool = False):
         await user_repo.grant_achievement(bot, user_id, AchievCode.URBANIST.value, silent=silent)
 
     # Проверка на "Повелителя времени" (сравниваем с временем по умолчанию)
-    if user_profile.get('daily_digest_time') != time(9, 0) and AchievCode.TIME_LORD.value not in user_achievements:
+    digest_time = user_profile.get('daily_digest_time')
+    if digest_time is not None and digest_time != time(9, 0) and AchievCode.TIME_LORD.value not in user_achievements:
         await user_repo.grant_achievement(bot, user_id, AchievCode.TIME_LORD.value, silent=silent)
 
     # Проверка на "Человека-привычку"
@@ -139,7 +140,9 @@ async def check_and_grant_achievements(bot, user_id: int, silent: bool = False):
                             [])) >= 6 and AchievCode.CERTIFIED_SPECIALIST.value not in user_achievements:
         await user_repo.grant_achievement(bot, user_id, AchievCode.CERTIFIED_SPECIALIST.value, silent=silent)
 
-    # Проверка на "Любителя хардкора"
-    if user_profile.get('timezone',
-                        'UTC') == 'UTC' and total_notes >= 10 and AchievCode.HARDCORE_MODE.value not in user_achievements:
+    # Проверка на "Любителя хардкора" (только если пользователь явно оставил UTC, создав 10 заметок)
+    # Не выдаем ачивку если пользователь просто не настроил часовой пояс
+    user_timezone = user_profile.get('timezone', 'UTC')
+    has_completed_onboarding = user_profile.get('has_completed_onboarding', False)
+    if user_timezone == 'UTC' and has_completed_onboarding and total_notes >= 10 and AchievCode.HARDCORE_MODE.value not in user_achievements:
         await user_repo.grant_achievement(bot, user_id, AchievCode.HARDCORE_MODE.value, silent=silent)
