@@ -446,73 +446,102 @@ async def setup_habit_reminders(bot: Bot):
     logger.info(f"Успешно настроено {count} напоминаний о привычках.")
 
 
-async def send_weekly_habit_reports(bot: Bot):
+async def send_weekly_habit_report_to_user(bot: Bot, user_id: int):
     """
-    Формирует и рассылает всем пользователям с привычками
-    еженедельный отчет о прогрессе.
+    Формирует и отправляет отчет по привычкам для конкретного пользователя.
     """
-    logger.info("Запуск еженедельной рассылки отчетов по привычкам.")
-    all_users_with_habits = await user_repo.get_all_users_with_habits()
+    user_habits = await habit_repo.get_user_habits(user_id)
+    if not user_habits:
+        logger.info(f"У пользователя {user_id} нет привычек, пропускаем отчет.")
+        return
+
+    logger.info(f"Формирование отчета для пользователя {user_id}, привычек: {len(user_habits)}")
 
     today = datetime.now(pytz.utc).date()
     start_of_week = today - timedelta(days=6)
 
-    for user_id in all_users_with_habits:
-        user_habits = await habit_repo.get_user_habits(user_id)
-        if not user_habits:
+    report_parts = [f"📊 {hbold('Ваш отчет по привычкам за неделю!')}\n"]
+    total_completed = 0
+    total_possible = 0
+
+    for habit in user_habits:
+        stats_raw = await habit_repo.get_weekly_stats(habit['id'], start_of_week)
+        stats_by_date = {s['track_date'].isoformat(): s['status'] for s in stats_raw}
+
+        progress_bar = []
+        completed_count = 0
+
+        try:
+            rule = rrulestr(habit['frequency_rule'])
+        except Exception:
             continue
 
-        report_parts = [f"📊 {hbold('Ваш отчет по привычкам за неделю!')}\n"]
-        total_completed = 0
-        total_possible = 0
+        # Определяем дни, когда привычка должна была выполняться на этой неделе
+        days_of_week_in_rule = {d.weekday for d in rule._byweekday} if rule._byweekday else set(range(7))
 
-        for habit in user_habits:
-            stats_raw = await habit_repo.get_weekly_stats(habit['id'], start_of_week.isoformat())
-            stats_by_date = {s['track_date'].isoformat(): s['status'] for s in stats_raw}
+        week_dates = []
+        for i in range(7):
+            current_day = start_of_week + timedelta(days=i)
+            if current_day.weekday() in days_of_week_in_rule:
+                week_dates.append(current_day)
 
-            progress_bar = []
-            completed_count = 0
+        if not week_dates: continue
 
-            try:
-                rule = rrulestr(habit['frequency_rule'])
-            except Exception:
+        for day_date in week_dates:
+            day_str = day_date.isoformat()
+            if stats_by_date.get(day_str) == 'completed':
+                progress_bar.append("✅")
+                completed_count += 1
+            elif stats_by_date.get(day_str) == 'skipped':
+                progress_bar.append("❌")
+            else:
+                progress_bar.append("➖")
+
+        total_completed += completed_count
+        total_possible += len(week_dates)
+
+        progress_str = "".join(progress_bar)
+        report_parts.append(f"• {hitalic(habit['name'])}: {completed_count}/{len(week_dates)}\n  {progress_str}")
+
+    if total_possible > 0:
+        overall_progress = int((total_completed / total_possible) * 100)
+        report_parts.append(f"\nОбщий прогресс: {hbold(f'{overall_progress}%')}. Так держать!")
+
+        try:
+            await bot.send_message(user_id, "\n".join(report_parts), parse_mode="HTML")
+            logger.info(f"Отчет по привычкам успешно отправлен пользователю {user_id}")
+        except Exception as e:
+            logger.warning(f"Не удалось отправить отчет по привычкам пользователю {user_id}: {e}")
+    else:
+        logger.info(f"У пользователя {user_id} нет возможных дней для отслеживания привычек на этой неделе.")
+
+
+async def check_and_send_weekly_habit_reports(bot: Bot):
+    """
+    Проверяет для каких пользователей наступило воскресенье 18:00 по их часовому поясу
+    и отправляет им отчеты по привычкам.
+    """
+    logger.info("Проверка необходимости отправки еженедельных отчетов по привычкам.")
+    all_users_with_habits = await user_repo.get_all_users_with_habits()
+
+    now_utc = datetime.now(pytz.utc)
+
+    for user_id in all_users_with_habits:
+        try:
+            user_profile = await user_repo.get_user_profile(user_id)
+            if not user_profile:
                 continue
 
-            # Определяем дни, когда привычка должна была выполняться на этой неделе
-            days_of_week_in_rule = {d.weekday for d in rule._byweekday} if rule._byweekday else set(range(7))
+            user_tz_str = user_profile.get('timezone', 'UTC')
+            user_tz = pytz.timezone(user_tz_str)
+            user_time = now_utc.astimezone(user_tz)
 
-            week_dates = []
-            for i in range(7):
-                current_day = start_of_week + timedelta(days=i)
-                if current_day.weekday() in days_of_week_in_rule:
-                    week_dates.append(current_day)
-
-            if not week_dates: continue
-
-            for day_date in week_dates:
-                day_str = day_date.isoformat()
-                if stats_by_date.get(day_str) == 'completed':
-                    progress_bar.append("✅")
-                    completed_count += 1
-                elif stats_by_date.get(day_str) == 'skipped':
-                    progress_bar.append("❌")
-                else:
-                    progress_bar.append("➖")
-
-            total_completed += completed_count
-            total_possible += len(week_dates)
-
-            progress_str = "".join(progress_bar)
-            report_parts.append(f"• {hitalic(habit['name'])}: {completed_count}/{len(week_dates)}\n  {progress_str}")
-
-        if total_possible > 0:
-            overall_progress = int((total_completed / total_possible) * 100)
-            report_parts.append(f"\nОбщий прогресс: {hbold(f'{overall_progress}%')}. Так держать!")
-
-            try:
-                await bot.send_message(user_id, "\n".join(report_parts))
-            except Exception as e:
-                logger.warning(f"Не удалось отправить отчет по привычкам пользователю {user_id}: {e}")
+            # Проверяем: воскресенье и час 18
+            if user_time.weekday() == 6 and user_time.hour == 18:
+                logger.info(f"Отправка еженедельного отчета пользователю {user_id} (TZ: {user_tz_str})")
+                await send_weekly_habit_report_to_user(bot, user_id)
+        except Exception as e:
+            logger.error(f"Ошибка при проверке/отправке отчета пользователю {user_id}: {e}", exc_info=True)
 
 
 async def load_reminders_on_startup(bot: Bot):
@@ -550,13 +579,12 @@ async def setup_daily_jobs(bot: Bot):
     logger.info("Ежечасная задача проверки утренних сводок запланирована.")
 
     scheduler.add_job(
-        send_weekly_habit_reports,
+        check_and_send_weekly_habit_reports,
         trigger='cron',
-        day_of_week='sun',
-        hour=18,
+        hour='*',
         minute=0,
         kwargs={'bot': bot},
-        id='weekly_habit_report',
+        id='hourly_habit_report_check',
         replace_existing=True
     )
-    logger.info("Еженедельная задача отправки отчетов по привычкам запланирована на вечер воскресенья (18:00 UTC).")
+    logger.info("Ежечасная задача проверки и отправки отчетов по привычкам запланирована.")

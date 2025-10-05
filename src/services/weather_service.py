@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 GEOCODER_API_URL = "https://nominatim.openstreetmap.org/search"
 WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
-PRIORITY_COUNTRY_CODES = "ru,by,ua,kz,kg,uz,md,am,ge,az"
+PRIORITY_COUNTRY_CODES = "ru,by,ua,kz,kg,uz,md,am,ge,az,ca"
 
 def _get_weather_icon(weather_code: int) -> str:
     """

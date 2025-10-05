@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hbold, hitalic, hcode
 
 from .....database import note_repo, user_repo
-from .....services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler
+from .....services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler, reschedule_recurring_note
 from .....services.gamification_service import XP_REWARDS, AchievCode, check_and_grant_achievements
 from ....common_utils.callbacks import NoteAction
 from ..keyboards import get_category_selection_keyboard
@@ -89,8 +89,9 @@ async def complete_note_handler(callback: types.CallbackQuery, callback_data: No
 
     if note.get('recurrence_rule'):
         # Это повторяющаяся задача. Не архивируем!
-        # Планировщик сам позаботится о следующем запуске после отправки уведомления.
-        # Мы просто убираем кнопки, чтобы пользователь не нажал их снова.
+        # Перепланируем на следующее повторение.
+        await reschedule_recurring_note(callback.bot, note)
+
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:

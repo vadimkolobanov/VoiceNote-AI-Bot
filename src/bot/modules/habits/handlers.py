@@ -205,3 +205,12 @@ async def delete_habit_handler(callback: types.CallbackQuery, callback_data: Hab
         await manage_habits_handler(callback)
     else:
         await callback.answer("Не удалось удалить привычку.", show_alert=True)
+
+
+@router.message(F.text.in_(["/habit_report", "отчет по привычкам"]))
+async def force_habit_report_handler(message: types.Message, bot: Bot):
+    """Принудительно отправляет отчет по привычкам пользователю."""
+    from ....services.scheduler import send_weekly_habit_report_to_user
+
+    user_id = message.from_user.id
+    await send_weekly_habit_report_to_user(bot, user_id)
