@@ -25,6 +25,52 @@ COMMON_TIMEZONES = {
 ALL_PYTZ_TIMEZONES = pytz.all_timezones_set
 
 
+def guess_timezone_from_language(language_code: str | None) -> str:
+    """
+    Пытается определить часовой пояс на основе языка пользователя.
+    Возвращает наиболее вероятный часовой пояс или 'UTC' по умолчанию.
+    
+    :param language_code: Код языка пользователя (например, 'ru', 'en', 'uk')
+    :return: Название часового пояса IANA
+    """
+    if not language_code:
+        return 'UTC'
+    
+    language_code_lower = language_code.lower()
+    
+    # Маппинг языков на наиболее вероятные часовые пояса
+    language_to_timezone = {
+        'ru': 'Europe/Moscow',  # Русский - Москва (самый распространенный)
+        'uk': 'Europe/Kiev',    # Украинский - Киев
+        'be': 'Europe/Minsk',   # Белорусский - Минск
+        'kk': 'Asia/Almaty',    # Казахский - Алматы
+        'uz': 'Asia/Tashkent',  # Узбекский - Ташкент
+        'ky': 'Asia/Bishkek',   # Киргизский - Бишкек
+        'hy': 'Asia/Yerevan',   # Армянский - Ереван
+        'az': 'Asia/Baku',      # Азербайджанский - Баку
+        'ka': 'Asia/Tbilisi',   # Грузинский - Тбилиси
+        'ro': 'Europe/Bucharest', # Румынский - Бухарест
+        'bg': 'Europe/Sofia',   # Болгарский - София
+        'sr': 'Europe/Belgrade', # Сербский - Белград
+        'pl': 'Europe/Warsaw',  # Польский - Варшава
+        'cs': 'Europe/Prague',  # Чешский - Прага
+        'sk': 'Europe/Bratislava', # Словацкий - Братислава
+        'hu': 'Europe/Budapest', # Венгерский - Будапешт
+    }
+    
+    # Проверяем точное совпадение
+    if language_code_lower in language_to_timezone:
+        return language_to_timezone[language_code_lower]
+    
+    # Проверяем префикс (например, 'ru-RU' -> 'ru')
+    lang_prefix = language_code_lower.split('-')[0]
+    if lang_prefix in language_to_timezone:
+        return language_to_timezone[lang_prefix]
+    
+    # Если язык не определен, возвращаем UTC
+    return 'UTC'
+
+
 def format_datetime_for_user(
         dt_obj: datetime | None,
         user_tz_str: str | None,

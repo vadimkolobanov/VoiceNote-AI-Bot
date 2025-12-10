@@ -9,7 +9,7 @@ from aiogram.utils.markdown import hcode, hbold
 from aiogram.exceptions import TelegramBadRequest
 
 from .....core import config
-from .....database import user_repo, note_repo
+from .....database import user_repo, note_repo, chat_topic_repo
 from .....services import stt, llm
 from .....services.gamification_service import XP_REWARDS, check_and_grant_achievements
 from .....services.tz_utils import format_datetime_for_user
@@ -61,6 +61,40 @@ async def _increment_stt_count(telegram_id: int):
 
     new_count = 1 if last_reset != today else count + 1
     await user_repo.update_user_stt_counters(telegram_id, new_count, today)
+
+
+async def _should_process_message(message: types.Message) -> bool:
+    """
+    Проверяет, нужно ли обрабатывать сообщение в зависимости от типа чата и топика.
+    
+    Логика:
+    - Личные чаты: всегда обрабатываем (как раньше)
+    - Группы/супергруппы:
+      * Если есть топик (message_thread_id) - проверяем, настроен ли он
+      * Если нет топика - не обрабатываем (чтобы не мешать в "болталке")
+    """
+    # Личные чаты - всегда обрабатываем
+    if message.chat.type == 'private':
+        return True
+    
+    # Группы и супергруппы - только если есть топик и он настроен
+    if message.chat.type in ('group', 'supergroup'):
+        topic_id = getattr(message, 'message_thread_id', None)
+        
+        # Если нет топика - не обрабатываем (обычный чат без топиков)
+        if topic_id is None:
+            return False
+        
+        # Проверяем, настроен ли топик для обработки
+        # Используем 'all' чтобы проверить любую функцию
+        return await chat_topic_repo.is_topic_allowed(
+            chat_id=message.chat.id,
+            topic_id=topic_id,
+            function_type='all'
+        )
+    
+    # Для других типов чатов (каналы и т.д.) не обрабатываем
+    return False
 
 
 async def _check_for_proactive_suggestions(bot: Bot, user_id: int, new_note: dict):
@@ -124,21 +158,53 @@ async def _background_note_processor(
             audio_bytes = await stt.download_audio_content(
                 f"https://api.telegram.org/file/bot{bot.token}/{file_info.file_path}")
             if not audio_bytes:
-                await bot.edit_message_text(text="❌ Не удалось скачать аудиофайл.", chat_id=chat_id,
-                                            message_id=status_message_id)
+                await bot.edit_message_text(
+                    text=(
+                        "📥 Не удалось скачать аудиофайл.\n\n"
+                        f"💡 {hbold('Возможные причины:')}\n"
+                        "• Проблемы с интернет-соединением\n"
+                        "• Файл слишком большой\n"
+                        "• Технические проблемы на стороне сервера\n\n"
+                        "🔄 Попробуйте отправить голосовое сообщение еще раз или используйте текстовое сообщение."
+                    ),
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    parse_mode="HTML"
+                )
                 return
 
             recognized_text = await stt.recognize_speech_yandex(audio_bytes)
             if not recognized_text or not recognized_text.strip():
-                await bot.edit_message_text(text="❌ К сожалению, не удалось распознать речь.", chat_id=chat_id,
-                                            message_id=status_message_id)
+                await bot.edit_message_text(
+                    text=(
+                        "🎤 К сожалению, я не смог разобрать ваше голосовое сообщение.\n\n"
+                        f"💡 {hbold('Советы для лучшего распознавания:')}\n"
+                        "• Говорите четче и ближе к микрофону\n"
+                        "• Проверьте, что запись не слишком тихая\n"
+                        "• Избегайте фонового шума\n"
+                        "• Попробуйте отправить текстовое сообщение\n\n"
+                        "🔄 Хотите попробовать еще раз?"
+                    ),
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    parse_mode="HTML"
+                )
                 return
 
             await _increment_stt_count(user_id)
             if len(recognized_text.strip()) < config.MIN_STT_TEXT_CHARS or len(
                     recognized_text.strip().split()) < config.MIN_STT_TEXT_WORDS:
-                await bot.edit_message_text(text=f"❌ Распознанный текст слишком короткий: {hcode(recognized_text)}",
-                                            chat_id=chat_id, message_id=status_message_id, parse_mode="HTML")
+                await bot.edit_message_text(
+                    text=(
+                        f"📝 Распознанный текст слишком короткий: {hcode(recognized_text)}\n\n"
+                        f"💡 {hbold('Попробуйте:')}\n"
+                        "• Говорить более развернуто\n"
+                        "• Или отправьте текстовое сообщение"
+                    ),
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    parse_mode="HTML"
+                )
                 return
 
             text_to_process = recognized_text
@@ -170,6 +236,39 @@ async def _background_note_processor(
                                     reply_markup=keyboard)
 
         await _check_for_proactive_suggestions(bot, user_id, new_note)
+        
+        # Предложение VIP после 5 заметок
+        user_profile = await user_repo.get_user_profile(user_id)
+        if user_profile and not user_profile.get('is_vip', False):
+            total_notes, _ = await note_repo.count_total_and_voice_notes(user_id)
+            if total_notes == 5:
+                await asyncio.sleep(2)  # Небольшая задержка после создания заметки
+                vip_text = (
+                    f"🎉 {hbold('Поздравляю! Вы создали 5 заметок!')}\n\n"
+                    f"Вы уже активно используете бота. Хотите получить {hbold('бесплатный VIP-доступ')}?\n\n"
+                    f"⭐ {hbold('VIP включает:')}\n"
+                    f"• Утренние сводки с планом на день\n"
+                    f"• Предварительные напоминания\n"
+                    f"• Повторяющиеся задачи\n"
+                    f"• Безлимитное распознавание голоса\n\n"
+                    f"🚀 Получить VIP бесплатно?"
+                )
+                from ...common_utils.callbacks import SettingsAction
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                vip_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="🚀 Да, хочу VIP!",
+                        callback_data=SettingsAction(action="get_free_vip").pack()
+                    )],
+                    [InlineKeyboardButton(
+                        text="Позже",
+                        callback_data="dismiss_vip_offer"
+                    )]
+                ])
+                try:
+                    await bot.send_message(user_id, vip_text, reply_markup=vip_keyboard, parse_mode="HTML")
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить предложение VIP пользователю {user_id}: {e}")
 
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
@@ -177,15 +276,35 @@ async def _background_note_processor(
         else:
             logger.error(f"Ошибка Telegram API в фоновом обработчике: {e}", exc_info=True)
             try:
-                await bot.edit_message_text(text="❌ Произошла ошибка при обработке.", chat_id=chat_id,
-                                            message_id=status_message_id)
+                await bot.edit_message_text(
+                    text=(
+                        "😔 Упс, что-то пошло не так при обработке вашей заметки.\n\n"
+                        f"💡 {hbold('Что можно сделать:')}\n"
+                        "• Попробуйте отправить сообщение еще раз\n"
+                        "• Проверьте, что сообщение не слишком длинное\n"
+                        "• Если проблема повторится, напишите нам через меню «❓ Помощь» → «Сообщить о проблеме»"
+                    ),
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    parse_mode="HTML"
+                )
             except Exception:
                 pass
     except Exception as e:
         logger.error(f"Критическая ошибка в фоновом обработчике заметки: {e}", exc_info=True)
         try:
-            await bot.edit_message_text(text="❌ Произошла серьезная ошибка при обработке вашей заметки.",
-                                        chat_id=chat_id, message_id=status_message_id)
+            await bot.edit_message_text(
+                text=(
+                    "😔 Произошла серьезная ошибка при обработке вашей заметки.\n\n"
+                    f"💡 {hbold('Попробуйте:')}\n"
+                    "• Отправить сообщение еще раз\n"
+                    "• Использовать более простую формулировку\n"
+                    "• Написать нам через меню «❓ Помощь» → «Сообщить о проблеме»"
+                ),
+                chat_id=chat_id,
+                message_id=status_message_id,
+                parse_mode="HTML"
+            )
         except Exception:
             pass
 
@@ -196,6 +315,10 @@ async def handle_voice_message(message: types.Message, state: FSMContext):
     Быстро отвечает на голосовое сообщение и запускает обработку в фоне.
     """
     await state.clear()
+    
+    # Проверяем, нужно ли обрабатывать сообщение (фильтр по топикам для групп)
+    if not await _should_process_message(message):
+        return
 
     can_recognize, _ = await _check_and_update_stt_limit(message.from_user.id)
     if not can_recognize:
@@ -226,6 +349,11 @@ async def handle_text_message(message: types.Message, state: FSMContext):
     Обрабатывает текстовые сообщения: создает заметки или отвечает на "скуку".
     """
     await state.clear()
+    
+    # Проверяем, нужно ли обрабатывать сообщение (фильтр по топикам для групп)
+    if not await _should_process_message(message):
+        return
+    
     text = message.text.strip()
     text_lower = text.lower()
 

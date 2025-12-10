@@ -1,5 +1,6 @@
 # src/bot/modules/onboarding/handlers.py
 import logging
+import asyncio
 from datetime import datetime
 import pytz
 
@@ -64,12 +65,7 @@ async def _mark_onboarding_complete(user_id: int, state: FSMContext, bot: Bot, m
     await _show_main_menu(message, state)
 
 
-@router.callback_query(OnboardingAction.filter(F.action == "skip"))
-async def skip_onboarding_handler(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
-    """Обрабатывает пропуск обучения."""
-    logger.info(f"User {callback.from_user.id} skipped onboarding.")
-    await callback.answer("Хорошо, вы всегда можете найти подсказки в разделе '❓ Помощь'.")
-    await _mark_onboarding_complete(callback.from_user.id, state, bot, callback.message)
+# Пропуск онбординга удален - создание первой заметки теперь обязательное
 
 
 async def start_onboarding(message: types.Message, state: FSMContext):
@@ -78,149 +74,100 @@ async def start_onboarding(message: types.Message, state: FSMContext):
     await state.set_state(OnboardingStates.step_1_welcome)
     text = (
         f"👋 Привет, {hbold(message.from_user.first_name)}! Я — {hbold('VoiceNote AI')}.\n\n"
-        f"Давайте я быстро покажу, как всё работает. Это займет не больше минуты!"
+        f"Я превращаю ваши мысли в умные заметки с напоминаниями.\n\n"
+        f"Давайте создадим вашу первую заметку прямо сейчас! Это займет 30 секунд."
     )
     await message.answer(text, reply_markup=get_welcome_keyboard())
 
 
 @router.callback_query(OnboardingStates.step_1_welcome, OnboardingAction.filter(F.action == "next_step"))
 async def onboarding_step_2_handler(callback: types.CallbackQuery, state: FSMContext):
-    """Шаг 2: Создание заметки."""
+    """Шаг 2: Создание заметки (ОБЯЗАТЕЛЬНЫЙ)."""
     await state.set_state(OnboardingStates.step_2_create_note)
     text = (
-        f"1️⃣ {hbold('Главная функция')} (Шаг 1/5)\n\n"
-        f"Просто отправьте мне {hbold('текст')} или {hbold('голосовое сообщение')}, и я превращу его в умную заметку. "
-        f"Если в тексте будет дата (например, {hitalic('«позвонить маме завтра в 10»')}), я автоматически поставлю напоминание.\n\n"
-        f"👉 {hbold('Попробуйте!')} Отправьте мне любую мысль. Заметка не сохранится, это лишь демонстрация."
+        f"1️⃣ {hbold('Создайте вашу первую заметку!')} (Шаг 1/3)\n\n"
+        f"Просто отправьте мне {hbold('текст')} или {hbold('голосовое сообщение')}, и я превращу его в умную заметку.\n\n"
+        f"💡 {hbold('Примеры:')}\n"
+        f"• {hitalic('«Позвонить маме завтра в 10»')}\n"
+        f"• {hitalic('«Купить молоко и хлеб»')}\n"
+        f"• {hitalic('«Встреча с командой в пятницу в 15:00»')}\n\n"
+        f"👉 {hbold('Отправьте мне любую мысль прямо сейчас!')}"
     )
-    await callback.message.edit_text(text, reply_markup=get_next_step_keyboard("➡️ Пропустить этот шаг"))
+    await callback.message.edit_text(text, reply_markup=None)
     await callback.answer()
 
 
 @router.message(OnboardingStates.step_2_create_note, F.text)
-@router.callback_query(OnboardingStates.step_2_create_note, OnboardingAction.filter(F.action == "next_step"))
-async def onboarding_step_3_handler(event: types.Message | types.CallbackQuery, state: FSMContext, bot: Bot):
-    """Шаг 3: Демонстрация результата и переход к настройке часового пояса."""
-    message = event if isinstance(event, types.Message) else event.message
-
-    feedback_text = ""
-    if isinstance(event, types.Message) and event.text:
-        status_msg = await message.answer("🧠 Анализирую ваше сообщение...")
-
-        current_time_iso = datetime.now(pytz.utc).isoformat()
-        llm_result = await llm.extract_reminder_details(event.text, current_time_iso)
-
-        if "error" in llm_result:
-            feedback_text = f"✅ {hbold('Отлично!')}\n\n"
-        else:
-            summary = llm_result.get("summary_text", "Ваша заметка")
-            corrected = llm_result.get("corrected_text", event.text)
-            time_components = llm_result.get("time_components")
-
-            reminder_part = ""
-            if time_components and time_components.get("original_mention"):
-                reminder_part = f"\n{hbold('🤖 Напоминание:')} будет установлено на {hitalic(time_components['original_mention'])}!"
-
-            feedback_text = (
-                f"✅ {hbold('Готово! Вот как бы я сохранил вашу заметку:')}\n\n"
-                f"<b>{summary}</b>\n"
-                f"<i>{corrected}</i>{reminder_part}\n\n"
-            )
-        await status_msg.delete()
+@router.message(OnboardingStates.step_2_create_note, F.voice)
+async def onboarding_step_2_process_note(message: types.Message, state: FSMContext, bot: Bot):
+    """Обрабатывает создание первой заметки в онбординге - ОБЯЗАТЕЛЬНЫЙ шаг."""
+    from ...notes.handlers.creation import _background_note_processor
+    
+    # Проверяем, что это действительно заметка (не мусор)
+    text_to_process = None
+    voice_file_id = None
+    
+    if message.voice:
+        voice_file_id = message.voice.file_id
+        status_msg = await message.answer("✔️ Принято! Распознаю речь...")
+    elif message.text:
+        text_to_process = message.text.strip()
+        if len(text_to_process) < 10 or len(text_to_process.split()) < 2:
+            await message.answer("❌ Пожалуйста, отправьте более подробное сообщение. Например: «Позвонить маме завтра в 10»")
+            return
+        status_msg = await message.answer("✔️ Принято! Обрабатываю...")
     else:
-        feedback_text = f"✅ {hbold('Отлично!')}\n\n"
-
+        return
+    
+    # Сохраняем заметку в фоне
+    await _background_note_processor(
+        bot=bot,
+        user_id=message.from_user.id,
+        status_message_id=status_msg.message_id,
+        chat_id=message.chat.id,
+        text_to_process=text_to_process,
+        voice_file_id=voice_file_id,
+        original_message_date=message.date
+    )
+    
+    # Ждем немного и переходим к следующему шагу
+    await asyncio.sleep(2)
     await state.set_state(OnboardingStates.step_3_timezone)
+    
     text = (
-        f"{feedback_text}"
-        f"2️⃣ {hbold('Часовой пояс')} (Шаг 2/5)\n\n"
+        f"✅ {hbold('Отлично! Ваша первая заметка создана!')}\n\n"
+        f"2️⃣ {hbold('Часовой пояс')} (Шаг 2/3)\n\n"
         f"Чтобы напоминания приходили вовремя, "
         f"мне нужно знать ваш {hbold('часовой пояс')}. Это самая важная настройка!\n\n"
         f"Пожалуйста, выберите ваш город из списка:"
     )
-
-    if isinstance(event, types.CallbackQuery):
-        await message.edit_text(text, reply_markup=get_timezone_keyboard())
-        await event.answer()
-    else:
-        await message.answer(text, reply_markup=get_timezone_keyboard())
+    await message.answer(text, reply_markup=get_timezone_keyboard())
 
 
 @router.callback_query(OnboardingStates.step_3_timezone, OnboardingAction.filter(F.action == "set_tz"))
-async def onboarding_step_4_handler(callback: types.CallbackQuery, callback_data: OnboardingAction, state: FSMContext):
-    """Шаг 4: Списки покупок и общие заметки."""
+async def onboarding_step_3_final_handler(callback: types.CallbackQuery, callback_data: OnboardingAction, state: FSMContext, bot: Bot):
+    """Шаг 3: Завершение онбординга."""
     await user_repo.set_user_timezone(callback.from_user.id, callback_data.tz_name)
-    await state.set_state(OnboardingStates.step_4_advanced_notes)
+    await state.set_state(OnboardingStates.step_4_final)
 
     text = (
         f"🕒 Часовой пояс {hbold(callback_data.tz_name)} установлен!\n\n"
-        f"3️⃣ {hbold('Списки покупок')} (Шаг 3/5)\n\n"
-        f"🛒 Я умею создавать удобные списки покупок. Просто отправьте мне сообщение, начинающееся со слова {hbold('«купить»')}.\n"
-        f"{hitalic('Пример: «Купить молоко, хлеб и 2 банана»')}\n\n"
-        f"🤝 Любой заметкой или списком можно {hbold('поделиться')} с другим человеком. Для этого под заметкой есть специальная кнопка."
+        f"3️⃣ {hbold('Готово!')} (Шаг 3/3)\n\n"
+        f"🎉 {hbold('Поздравляю! Вы готовы к работе!')}\n\n"
+        f"Теперь просто отправляйте мне любые мысли, и я превращу их в умные заметки.\n\n"
+        f"💡 {hbold('Полезные функции:')}\n"
+        f"• Списки покупок: напишите «купить молоко, хлеб»\n"
+        f"• Повторяющиеся задачи: «пить витамины каждый день в 9»\n"
+        f"• Дни рождения: добавьте в меню «👤 Профиль»\n\n"
+        f"🚀 {hbold('Совет:')} После создания 3-5 заметок я предложу вам VIP-функции!"
     )
-    await callback.message.edit_text(text, reply_markup=get_next_step_keyboard())
+    await callback.message.edit_text(text, reply_markup=get_final_keyboard())
     await callback.answer("Часовой пояс установлен!")
 
 
-@router.callback_query(OnboardingStates.step_4_advanced_notes, OnboardingAction.filter(F.action == "next_step"))
-async def onboarding_step_5_handler(callback: types.CallbackQuery, state: FSMContext):
-    """Шаг 5: Дни рождения и повторяющиеся задачи."""
-    await state.set_state(OnboardingStates.step_5_birthdays)
-    text = (
-        f"4️⃣ {hbold('Повторяющиеся задачи и даты')} (Шаг 4/5)\n\n"
-        f"🔁 {hbold('Задачи')} \n"
-        f"Создавайте регулярные напоминания, просто написав, как часто их повторять.\n"
-        f"{hitalic('Пример: «Пить витамины каждый день в 9 утра»')}\n\n"
-        f"🎂 {hbold('Дни рождения')}\n"
-        f"Я могу напоминать о днях рождения каждый год. Добавить их можно в меню `👤 Профиль`."
-    )
-    await callback.message.edit_text(text, reply_markup=get_next_step_keyboard("Отлично, почти закончили!"))
-    await callback.answer()
-
-
-@router.callback_query(OnboardingStates.step_5_birthdays, OnboardingAction.filter(F.action == "next_step"))
-async def onboarding_step_6_handler(callback: types.CallbackQuery, state: FSMContext):
-    """Шаг 6: VIP-функции."""
-    await state.set_state(OnboardingStates.step_6_vip)
-    text = (
-        f"5️⃣ {hbold('Для максимальной продуктивности (VIP)')} (Шаг 5/5)\n\n"
-        f"В VIP-режиме вам также доступны:\n\n"
-        f"☀️ {hbold('Утренние сводки')}\n"
-        f"Каждое утро я могу присылать вам план на день: задачи, дни рождения и погода.\n\n"
-        f"🔔 {hbold('Предварительные напоминания')}\n"
-        f"Я напомню о важном событии не только в срок, но и заранее (например, за час).\n\n"
-        f"Хотите попробовать {hbold('бесплатный VIP-доступ')} прямо сейчас?"
-    )
-    await callback.message.edit_text(text, reply_markup=get_vip_choice_keyboard())
-    await callback.answer()
-
-
-@router.callback_query(OnboardingStates.step_6_vip, OnboardingAction.filter(F.action == "get_vip"))
-async def onboarding_get_vip_handler(callback: types.CallbackQuery, state: FSMContext):
-    """Обрабатывает выдачу VIP и переходит к финалу."""
-    await user_repo.set_user_vip_status(callback.from_user.id, True)
-    await state.set_state(OnboardingStates.step_7_final)
-    text = (
-        f"🎉 {hbold('Поздравляем! Вам присвоен VIP-статус!')}\n\n"
-        f"Теперь вам доступны все функции. Вы можете настроить их в меню '⚙️ Настройки'."
-    )
-    await callback.message.edit_text(text, reply_markup=get_final_keyboard())
-    await callback.answer("VIP-статус активирован!", show_alert=True)
-
-
-@router.callback_query(OnboardingStates.step_6_vip, OnboardingAction.filter(F.action == "next_step"))
-async def onboarding_final_step_handler(callback: types.CallbackQuery, state: FSMContext):
-    """Шаг 7: Завершение без VIP."""
-    await state.set_state(OnboardingStates.step_7_final)
-    text = "Хорошо! Вы всегда сможете активировать VIP позже."
-    await callback.message.edit_text(text, reply_markup=get_final_keyboard())
-    await callback.answer()
-
-
-@router.callback_query(OnboardingStates.step_7_final, OnboardingAction.filter(F.action == "finish"))
+@router.callback_query(OnboardingStates.step_4_final, OnboardingAction.filter(F.action == "finish"))
 async def finish_onboarding_handler(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     """Завершает обучение."""
     logger.info(f"User {callback.from_user.id} finished onboarding.")
     await _mark_onboarding_complete(callback.from_user.id, state, bot, callback.message)
-    await callback.answer("Добро пожаловать! Проверьте в настройках часовой пояс и время утренней сводки — так напоминания и дайджесты будут приходить точно вовремя.")
+    await callback.answer("Добро пожаловать! Начните создавать заметки прямо сейчас!")

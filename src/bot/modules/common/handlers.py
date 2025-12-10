@@ -8,7 +8,7 @@ from aiogram.utils.markdown import hbold, hlink, hcode, hitalic
 from ...common_utils.callbacks import SettingsAction, InfoAction
 from ...common_utils.states import OnboardingStates
 from ....core import config
-from ....database import user_repo, note_repo
+from ....database import user_repo, note_repo, chat_topic_repo
 from ....services.scheduler import add_reminder_to_scheduler
 from ....services.gamification_service import check_and_grant_achievements
 
@@ -229,14 +229,44 @@ async def show_main_menu(message: types.Message, state: FSMContext, bot: Bot):
         await message.answer(
             "Произошла ошибка при загрузке вашего профиля. Пожалуйста, попробуйте нажать /start еще раз.")
         return
+    
     is_vip = user_profile.get('is_vip', False)
     active_shopping_list = await note_repo.get_active_shopping_list(message.from_user.id)
     has_active_list = active_shopping_list is not None
+    
+    # Gamification виджеты
+    user_level = user_profile.get('level', 1)
+    user_xp = user_profile.get('xp', 0)
+    from ....database.user_repo import get_xp_for_level
+    xp_for_current_level = get_xp_for_level(user_level)
+    xp_for_next_level = get_xp_for_level(user_level + 1)
+    xp_progress = user_xp - xp_for_current_level
+    xp_needed = xp_for_next_level - xp_for_current_level
+    progress_percent = int((xp_progress / xp_needed * 100)) if xp_needed > 0 else 100
+    
+    # Подсчет заметок
+    total_notes, voice_notes = await note_repo.count_total_and_voice_notes(message.from_user.id)
+    
+    # Проверка на предложение VIP (после 3-5 заметок)
+    vip_suggestion = ""
+    if not is_vip and 3 <= total_notes <= 5:
+        vip_suggestion = f"\n\n🚀 {hbold('Совет:')} После создания еще {5 - total_notes} заметок я предложу вам VIP-функции!"
+    
+    # Виджет для пользователей без заметок
+    no_notes_widget = ""
+    if total_notes == 0:
+        no_notes_widget = f"\n\n💡 {hbold('Начните прямо сейчас!')} Отправьте мне любую мысль, и я создам вашу первую заметку."
 
     text = (
         f"🏠 {hbold('Главное меню')}\n\n"
-        f"Отправьте мне любую мысль, голосовое или текстовое сообщение, "
-        f"и я превращу его в умную заметку."
+        f"📊 {hbold(f'Уровень {user_level}')} | {progress_percent}% до следующего\n"
+        f"📝 Создано заметок: {total_notes}\n\n"
+        f"💬 {hbold('Что я умею:')}\n"
+        f"• Создавать заметки из текста или голоса\n"
+        f"• Напоминать о важных делах\n"
+        f"• Ведить списки покупок\n"
+        f"• Отслеживать дни рождения{no_notes_widget}{vip_suggestion}\n\n"
+        f"👉 {hitalic('Просто отправьте мне любое сообщение!')}"
     )
     keyboard = get_main_menu_keyboard(is_vip=is_vip, has_active_list=has_active_list)
 
@@ -329,10 +359,154 @@ async def cmd_code(message: types.Message):
     )
 
 
+@router.message(Command(commands=["topic", "topics"]))
+async def cmd_topic_settings(message: types.Message):
+    """
+    Настройка топиков для обработки сообщений ботом.
+    Работает только в группах/супергруппах с топиками.
+    """
+    # Проверяем, что это группа или супергруппа
+    if message.chat.type not in ('group', 'supergroup'):
+        await message.reply(
+            "ℹ️ Эта команда работает только в группах с топиками.\n\n"
+            "В личных чатах бот обрабатывает все сообщения автоматически."
+        )
+        return
+    
+    chat_id = message.chat.id
+    topic_id = getattr(message, 'message_thread_id', None)
+    
+    # Получаем текущие настройки
+    settings = await chat_topic_repo.get_chat_topic_settings(chat_id)
+    
+    if not settings:
+        text = (
+            f"📋 {hbold('Настройки топиков')}\n\n"
+            f"Сейчас бот не обрабатывает сообщения ни в одном топике.\n\n"
+        )
+    else:
+        text = (
+            f"📋 {hbold('Настройки топиков')}\n\n"
+            f"{hbold('Активные топики:')}\n"
+        )
+        for setting in settings:
+            function_type = setting['function_type']
+            function_name = {
+                'all': 'Все функции',
+                'notes': 'Заметки',
+                'shopping_list': 'Список покупок',
+                'reminders': 'Напоминания'
+            }.get(function_type, function_type)
+            text += f"• Топик {hcode(str(setting['topic_id']))}: {function_name}\n"
+        text += "\n"
+    
+    # Если команда вызвана из топика, показываем кнопки для управления
+    if topic_id is not None:
+        # Проверяем, настроен ли текущий топик
+        is_configured = await chat_topic_repo.is_topic_allowed(chat_id, topic_id, 'all')
+        
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        
+        if is_configured:
+            # Топик уже настроен - можно удалить
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text="❌ Отключить обработку в этом топике",
+                    callback_data=f"topic_disable:{chat_id}:{topic_id}"
+                )
+            ])
+            text += f"✅ Текущий топик {hcode(str(topic_id))} настроен для обработки."
+        else:
+            # Топик не настроен - можно добавить
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text="✅ Включить обработку в этом топике",
+                    callback_data=f"topic_enable:{chat_id}:{topic_id}"
+                )
+            ])
+            text += f"ℹ️ Текущий топик {hcode(str(topic_id))} не настроен. Бот не будет реагировать на сообщения здесь."
+        
+        text += "\n\n💡 Используйте кнопки ниже для управления."
+    else:
+        text += (
+            f"💡 {hbold('Как настроить топик:')}\n"
+            "1. Перейдите в нужный топик (например, «Список покупок»)\n"
+            "2. В этом топике вызовите команду {hcode('/topic')}\n"
+            "3. Нажмите кнопку «✅ Включить обработку в этом топике»\n\n"
+            f"{hbold('После настройки:')}\n"
+            "Бот будет обрабатывать текстовые и голосовые сообщения только в настроенных топиках.\n"
+            "В обычном чате (без топиков) и в ненастроенных топиках бот молчит."
+        )
+        keyboard = None
+    
+    await message.reply(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("topic_enable:"))
+async def enable_topic_handler(callback: types.CallbackQuery):
+    """Включает обработку сообщений в топике."""
+    try:
+        _, chat_id_str, topic_id_str = callback.data.split(":")
+        chat_id = int(chat_id_str)
+        topic_id = int(topic_id_str)
+        
+        # Добавляем настройку для всех функций
+        success = await chat_topic_repo.add_topic_setting(chat_id, topic_id, 'all')
+        
+        if success:
+            await callback.answer("✅ Топик настроен! Бот теперь будет обрабатывать сообщения здесь.")
+            # Обновляем сообщение
+            await callback.message.edit_text(
+                f"✅ Топик {hcode(str(topic_id))} настроен для обработки всех сообщений.\n\n"
+                f"Бот будет реагировать на текстовые и голосовые сообщения в этом топике.",
+                parse_mode="HTML"
+            )
+        else:
+            await callback.answer("❌ Ошибка при настройке топика", show_alert=True)
+    except Exception as e:
+        logger.error(f"Ошибка при включении топика: {e}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("topic_disable:"))
+async def disable_topic_handler(callback: types.CallbackQuery):
+    """Отключает обработку сообщений в топике."""
+    try:
+        _, chat_id_str, topic_id_str = callback.data.split(":")
+        chat_id = int(chat_id_str)
+        topic_id = int(topic_id_str)
+        
+        # Удаляем все настройки для топика
+        success = await chat_topic_repo.remove_topic_setting(chat_id, topic_id)
+        
+        if success:
+            await callback.answer("✅ Обработка в топике отключена.")
+            # Обновляем сообщение
+            await callback.message.edit_text(
+                f"❌ Топик {hcode(str(topic_id))} отключен.\n\n"
+                f"Бот больше не будет реагировать на сообщения в этом топике.",
+                parse_mode="HTML"
+            )
+        else:
+            await callback.answer("❌ Ошибка при отключении топика", show_alert=True)
+    except Exception as e:
+        logger.error(f"Ошибка при отключении топика: {e}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
+
+
 @router.callback_query(F.data == "go_to_main_menu")
 async def go_to_main_menu_handler(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     await show_main_menu(callback.message, state, bot)
     await callback.answer()
+
+
+@router.callback_query(F.data == "dismiss_vip_offer")
+async def dismiss_vip_offer_handler(callback: types.CallbackQuery):
+    """Обрабатывает отклонение предложения VIP."""
+    await callback.message.delete()
+    await callback.answer("Хорошо, вы всегда можете получить VIP позже в настройках!")
 
 
 @router.callback_query(InfoAction.filter(F.action == "main"))

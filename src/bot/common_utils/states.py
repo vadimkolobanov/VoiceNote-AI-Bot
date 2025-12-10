@@ -5,12 +5,9 @@ from aiogram.fsm.state import StatesGroup, State
 class OnboardingStates(StatesGroup):
     """Состояния для процесса обучения нового пользователя."""
     step_1_welcome = State()
-    step_2_create_note = State()
-    step_3_timezone = State()
-    step_4_advanced_notes = State() # Списки покупок и шаринг
-    step_5_birthdays = State()      # Повторяющиеся задачи и ДР
-    step_6_vip = State()
-    step_7_final = State()
+    step_2_create_note = State()  # ОБЯЗАТЕЛЬНЫЙ шаг - создание первой заметки
+    step_3_timezone = State()     # Настройка часового пояса
+    step_4_final = State()         # Завершение
 
 
 class NoteNavigationStates(StatesGroup):

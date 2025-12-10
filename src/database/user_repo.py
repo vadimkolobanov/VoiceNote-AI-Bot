@@ -29,21 +29,49 @@ async def add_or_update_user(telegram_id: int, username: str = None, first_name:
                              language_code: str = None) -> dict | None:
     """
     Добавляет нового пользователя или обновляет данные существующего.
+    Автоматически устанавливает часовой пояс на основе языка, если он не установлен.
     Возвращает полную запись о пользователе из БД.
     """
+    from ..services.tz_utils import guess_timezone_from_language
+    
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         now = datetime.now(timezone.utc)
-        query = """
-                INSERT INTO users (telegram_id, username, first_name, last_name, language_code, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT (telegram_id) DO
-                UPDATE SET
-                    username = EXCLUDED.username, first_name = EXCLUDED.first_name,
-                    last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
-                    updated_at = $6
-                    RETURNING *;
-                """
-        user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
+        
+        # Проверяем, существует ли пользователь
+        existing_user = await conn.fetchrow("SELECT timezone FROM users WHERE telegram_id = $1", telegram_id)
+        is_new_user = existing_user is None
+        
+        # Для новых пользователей пытаемся определить часовой пояс по языку
+        auto_timezone = None
+        if is_new_user and language_code:
+            auto_timezone = guess_timezone_from_language(language_code)
+            if auto_timezone != 'UTC':
+                logger.info(f"Автоматически определен часовой пояс {auto_timezone} для нового пользователя {telegram_id} на основе языка {language_code}")
+        
+        # Если это новый пользователь и мы определили часовой пояс, устанавливаем его
+        if is_new_user and auto_timezone:
+            query = """
+                    INSERT INTO users (telegram_id, username, first_name, last_name, language_code, timezone, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $7) ON CONFLICT (telegram_id) DO
+                    UPDATE SET
+                        username = EXCLUDED.username, first_name = EXCLUDED.first_name,
+                        last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
+                        updated_at = $7
+                        RETURNING *;
+                    """
+            user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, auto_timezone, now)
+        else:
+            query = """
+                    INSERT INTO users (telegram_id, username, first_name, last_name, language_code, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT (telegram_id) DO
+                    UPDATE SET
+                        username = EXCLUDED.username, first_name = EXCLUDED.first_name,
+                        last_name = EXCLUDED.last_name, language_code = EXCLUDED.language_code,
+                        updated_at = $6
+                        RETURNING *;
+                    """
+            user_record = await conn.fetchrow(query, telegram_id, username, first_name, last_name, language_code, now)
 
         await cache_service.delete_user_profile_from_cache(telegram_id)
 
@@ -336,6 +364,8 @@ async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_
 
 async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silent: bool = False):
     """Присваивает пользователю достижение и начисляет опыт."""
+    import asyncpg
+    
     pool = await get_db_pool()
     achievement = ACHIEVEMENTS_BY_CODE.get(achievement_code)
     if not achievement:
@@ -351,21 +381,50 @@ async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silen
             if not silent:
                 user_profile = await get_user_profile(user_id)
                 user_name = user_profile.get('first_name', 'пользователь')
-
-                text = (
-                    f"🏆 {hbold('Новое достижение!')} 🏆\n\n"
-                    f"{user_name}, вы получили достижение:\n"
-                    f"{achievement.icon} {hbold(achievement.name)}\n"
-                    f"«{achievement.description}»\n\n"
-                    f"Награда: +{achievement.xp_reward} XP ✨"
-                )
+                
+                # Получаем все достижения пользователя для определения, первое ли это
+                user_achievements = await get_user_achievements_codes(user_id)
+                is_first_achievement = len(user_achievements) == 1
+                
+                # Определяем важность достижения по XP награде
+                is_important_achievement = achievement.xp_reward >= 150
+                
+                # Персонализируем сообщение в зависимости от типа достижения
+                if is_first_achievement:
+                    text = (
+                        f"🎉 {hbold('Ваше первое достижение!')}\n\n"
+                        f"{user_name}, вы получили:\n"
+                        f"{achievement.icon} {hbold(achievement.name)}\n"
+                        f"«{achievement.description}»\n\n"
+                        f"✨ +{achievement.xp_reward} XP\n\n"
+                        f"Продолжайте в том же духе! 🚀"
+                    )
+                elif is_important_achievement:
+                    text = (
+                        f"🏆 {hbold('ВЕЛИКОЛЕПНО!')} 🏆\n\n"
+                        f"{user_name}, вы достигли невероятного результата!\n\n"
+                        f"{achievement.icon} {hbold(achievement.name)}\n"
+                        f"«{achievement.description}»\n\n"
+                        f"✨ +{achievement.xp_reward} XP\n\n"
+                        f"Вы настоящий мастер продуктивности! 👑"
+                    )
+                else:
+                    text = (
+                        f"🏆 {hbold('Новое достижение!')} 🏆\n\n"
+                        f"{user_name}, вы получили достижение:\n"
+                        f"{achievement.icon} {hbold(achievement.name)}\n"
+                        f"«{achievement.description}»\n\n"
+                        f"Награда: +{achievement.xp_reward} XP ✨"
+                    )
+                
                 if bot:
                     await bot.send_message(user_id, text, parse_mode="HTML")
 
-        except Exception:
-            pass
+        except asyncpg.UniqueViolationError:
+            # Достижение уже было выдано ранее - это нормально, просто игнорируем
+            logger.debug(f"Достижение {achievement_code} уже было выдано пользователю {user_id}")
         except Exception as e:
-            logger.error(f"Ошибка при выдаче достижения {achievement_code} пользователю {user_id}: {e}")
+            logger.error(f"Ошибка при выдаче достижения {achievement_code} пользователю {user_id}: {e}", exc_info=True)
 
 
 async def get_user_achievements_codes(user_id: int) -> set:

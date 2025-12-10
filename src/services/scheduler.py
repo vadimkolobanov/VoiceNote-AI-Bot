@@ -137,15 +137,27 @@ async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, n
         actual_due_date = note.get('due_date', due_date)
         formatted_due_date = format_datetime_for_user(actual_due_date, user_timezone)
 
-        header = f"🔔 Предварительное напоминание" if is_pre_reminder else f"❗️ НАПОМИНАНИЕ"
-
-        text = (
-            f"{header}\n\n"
-            f"Заметка: #{hcode(str(note_id))}\n"
-            f"Срок: {hitalic(formatted_due_date)}\n\n"
-            f"📝 {hbold('Текст заметки:')}\n"
-            f"{hcode(note_text)}"
-        )
+        if is_pre_reminder:
+            # Вычисляем минуты до основного напоминания
+            time_diff = actual_due_date - datetime.now(pytz.utc)
+            pre_minutes = max(1, int(time_diff.total_seconds() / 60))
+            header = f"🔔 {hbold('Напоминание заранее')}"
+            text = (
+                f"{header}\n\n"
+                f"Через {pre_minutes} минут у вас:\n"
+                f"📝 {hbold(note_text)}\n\n"
+                f"⏰ {hitalic(formatted_due_date)}\n\n"
+                f"💡 Подготовьтесь заранее!"
+            )
+        else:
+            header = f"❗️ {hbold('Время выполнить задачу!')}"
+            text = (
+                f"{header}\n\n"
+                f"📝 {hbold('Задача:')}\n"
+                f"{hcode(note_text)}\n\n"
+                f"⏰ {hbold('Срок:')} {hitalic(formatted_due_date)}\n\n"
+                f"💪 {hitalic('Вы справитесь!')}"
+            )
         keyboard = get_reminder_notification_keyboard(note_id, is_pre_reminder=is_pre_reminder)
         await bot.send_message(chat_id=telegram_id, text=text, parse_mode="HTML", reply_markup=keyboard)
     except (TelegramBadRequest, TelegramForbiddenError) as e:
@@ -341,53 +353,102 @@ def get_age_string(year: int, today: date) -> str:
 
 
 async def send_birthday_reminders(bot: Bot):
-    logger.info("Запущена ежедневная проверка дней рождений...")
+    """
+    Проверяет дни рождения для всех пользователей и отправляет напоминания в 9:00 по локальному времени каждого пользователя.
+    Запускается каждый час, чтобы покрыть все часовые пояса.
+    """
+    logger.info("Запущена проверка дней рождений...")
     all_birthdays = await birthday_repo.get_all_birthdays_for_reminders()
-    today_utc = datetime.now(pytz.utc)
-    user_reminders = {}
-
+    now_utc = datetime.now(pytz.utc)
+    
+    # Группируем дни рождения по пользователям
+    birthdays_by_user = {}
     for bday in all_birthdays:
-        if bday['birth_day'] == today_utc.day and bday['birth_month'] == today_utc.month:
-            user_id = bday['user_telegram_id']
-            person_name = bday['person_name']
-            age_info = ""
-            if bday['birth_year']:
-                age_info = " " + get_age_string(bday['birth_year'], today_utc.date())
-
-            text = f"Сегодня важный день у <b>{person_name}</b>{age_info}!"
-            if user_id not in user_reminders:
-                user_reminders[user_id] = []
-            user_reminders[user_id].append(text)
-
-    if not user_reminders:
-        logger.info("На сегодня нет дней рождений для напоминания.")
+        user_id = bday['user_telegram_id']
+        if user_id not in birthdays_by_user:
+            birthdays_by_user[user_id] = []
+        birthdays_by_user[user_id].append(bday)
+    
+    if not birthdays_by_user:
+        logger.info("Нет дней рождений в базе данных.")
         return
-
-    for user_id, reminders in user_reminders.items():
-        user_has_self_bday = await user_repo.has_self_birthday_record(user_id)
-        if user_has_self_bday:
-            user_achievements = await user_repo.get_user_achievements_codes(user_id)
-            if AchievCode.HAPPY_BIRTHDAY.value not in user_achievements:
-                await user_repo.grant_achievement(bot, user_id, AchievCode.HAPPY_BIRTHDAY.value, silent=True)
-                reminders.append("\nP.S. С Днём Рождения! 🎉 Загляните в профиль, там для вас сюрприз 😉")
-
-        full_tg_text = "🎂 Напоминание о днях рождения!\n\n" + "\n".join(reminders)
-        push_body = reminders[0] if len(
-            reminders) == 1 else f"Сегодня {len(reminders)} важных события! Посмотрите в приложении."
-        push_body = re.sub('<[^<]+?>', '', push_body)
-
+    
+    user_reminders = {}
+    
+    # Проверяем для каждого пользователя отдельно по его локальному времени
+    for user_id, user_birthdays in birthdays_by_user.items():
         try:
-            await bot.send_message(chat_id=user_id, text=full_tg_text, parse_mode="HTML")
-            logger.info(f"Напоминание о {len(reminders)} ДР отправлено в Telegram пользователю {user_id}")
+            user_profile = await user_repo.get_user_profile(user_id)
+            if not user_profile:
+                continue
+            
+            user_timezone_str = user_profile.get('timezone', 'UTC')
+            try:
+                user_tz = pytz.timezone(user_timezone_str)
+            except pytz.UnknownTimeZoneError:
+                user_tz = pytz.utc
+                logger.warning(f"Неизвестный часовой пояс '{user_timezone_str}' для пользователя {user_id}, используется UTC")
+            
+            # Получаем текущее время в часовом поясе пользователя
+            user_local_time = now_utc.astimezone(user_tz)
+            
+            # Отправляем напоминания только в 9:00 по локальному времени пользователя
+            if user_local_time.hour != 9 or user_local_time.minute != 0:
+                continue
+            
+            # Проверяем, есть ли сегодня дни рождения по локальному времени пользователя
+            today_day = user_local_time.day
+            today_month = user_local_time.month
+            
+            for bday in user_birthdays:
+                if bday['birth_day'] == today_day and bday['birth_month'] == today_month:
+                    person_name = bday['person_name']
+                    age_info = ""
+                    if bday['birth_year']:
+                        age_info = " " + get_age_string(bday['birth_year'], user_local_time.date())
+                    
+                    text = f"Сегодня важный день у <b>{person_name}</b>{age_info}!"
+                    if user_id not in user_reminders:
+                        user_reminders[user_id] = []
+                    user_reminders[user_id].append(text)
+        
         except Exception as e:
-            logger.error(f"Не удалось отправить напоминание о ДР в Telegram пользователю {user_id}: {e}")
-
-        await push_service.send_push_to_user(
-            telegram_id=user_id,
-            title="🎂 Напоминание о дне рождения!",
-            body=push_body,
-            data={"action": "show_birthdays"}
-        )
+            logger.error(f"Ошибка при обработке дней рождений для пользователя {user_id}: {e}", exc_info=True)
+            continue
+    
+    if not user_reminders:
+        logger.info("На сегодня нет дней рождений для напоминания (или не подошло время отправки).")
+        return
+    
+    # Отправляем напоминания
+    for user_id, reminders in user_reminders.items():
+        try:
+            user_has_self_bday = await user_repo.has_self_birthday_record(user_id)
+            if user_has_self_bday:
+                user_achievements = await user_repo.get_user_achievements_codes(user_id)
+                if AchievCode.HAPPY_BIRTHDAY.value not in user_achievements:
+                    await user_repo.grant_achievement(bot, user_id, AchievCode.HAPPY_BIRTHDAY.value, silent=True)
+                    reminders.append("\nP.S. С Днём Рождения! 🎉 Загляните в профиль, там для вас сюрприз 😉")
+            
+            full_tg_text = "🎂 Напоминание о днях рождения!\n\n" + "\n".join(reminders)
+            push_body = reminders[0] if len(
+                reminders) == 1 else f"Сегодня {len(reminders)} важных события! Посмотрите в приложении."
+            push_body = re.sub('<[^<]+?>', '', push_body)
+            
+            try:
+                await bot.send_message(chat_id=user_id, text=full_tg_text, parse_mode="HTML")
+                logger.info(f"Напоминание о {len(reminders)} ДР отправлено в Telegram пользователю {user_id}")
+            except Exception as e:
+                logger.error(f"Не удалось отправить напоминание о ДР в Telegram пользователю {user_id}: {e}")
+            
+            await push_service.send_push_to_user(
+                telegram_id=user_id,
+                title="🎂 Напоминание о дне рождения!",
+                body=push_body,
+                data={"action": "show_birthdays"}
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке напоминаний о ДР пользователю {user_id}: {e}", exc_info=True)
 
 
 async def send_habit_reminder(bot: Bot, habit: dict):
@@ -555,17 +616,127 @@ async def load_reminders_on_startup(bot: Bot):
     await setup_habit_reminders(bot)
 
 
+async def send_reengagement_message(bot: Bot, user_id: int, days_since_registration: int, has_notes: bool):
+    """Отправляет сообщение для возврата неактивного пользователя."""
+    try:
+        user_profile = await user_repo.get_user_profile(user_id)
+        if not user_profile:
+            return
+        
+        user_name = user_profile.get('first_name', 'друг')
+        
+        if not has_notes:
+            # Пользователь не создал ни одной заметки
+            if days_since_registration == 1:
+                text = (
+                    f"👋 Привет, {user_name}!\n\n"
+                    f"Я заметил, что вы еще не создали свою первую заметку.\n\n"
+                    f"💡 {hbold('Попробуйте прямо сейчас!')}\n"
+                    f"Просто отправьте мне любую мысль, например:\n"
+                    f"• {hitalic('«Позвонить маме завтра в 10»')}\n"
+                    f"• {hitalic('«Купить молоко и хлеб»')}\n"
+                    f"• {hitalic('«Встреча с командой в пятницу»')}\n\n"
+                    f"Я превращу это в умную заметку с напоминанием! 🚀"
+                )
+            elif days_since_registration == 3:
+                text = (
+                    f"👋 {user_name}, я все еще здесь!\n\n"
+                    f"Вы еще не попробовали создать заметку. Это займет всего 10 секунд!\n\n"
+                    f"🎯 {hbold('Что я умею:')}\n"
+                    f"• Создавать заметки из текста или голоса\n"
+                    f"• Ставить автоматические напоминания\n"
+                    f"• Ведить списки покупок\n"
+                    f"• Напоминать о днях рождения\n\n"
+                    f"Просто отправьте мне любое сообщение, и я покажу, как это работает! ✨"
+                )
+            else:
+                return  # Не отправляем больше сообщений
+        else:
+            # Пользователь создал заметки, но неактивен
+            if days_since_registration == 7:
+                text = (
+                    f"👋 Привет, {user_name}!\n\n"
+                    f"Давно не виделись! У вас есть активные заметки, которые ждут вашего внимания.\n\n"
+                    f"📝 Загляните в меню «📝 Мои заметки», чтобы посмотреть, что у вас запланировано.\n\n"
+                    f"💡 {hbold('Совет:')} Создавайте новые заметки, и я буду напоминать о них вовремя!"
+                )
+            else:
+                return
+        
+        await bot.send_message(user_id, text, parse_mode="HTML")
+        logger.info(f"Re-engagement сообщение отправлено пользователю {user_id} (дней с регистрации: {days_since_registration})")
+        
+    except TelegramForbiddenError:
+        logger.warning(f"Пользователь {user_id} заблокировал бота, пропускаем re-engagement.")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке re-engagement сообщения пользователю {user_id}: {e}")
+
+
+async def check_and_send_reengagement_messages(bot: Bot):
+    """Проверяет неактивных пользователей и отправляет им сообщения для возврата."""
+    logger.info("Проверка неактивных пользователей для re-engagement...")
+    
+    from ..database.connection import get_db_pool
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Пользователи без заметок: 1 и 3 дня после регистрации
+        query_no_notes = """
+            SELECT u.telegram_id, u.created_at, 
+                   COUNT(n.note_id) as notes_count,
+                   EXTRACT(DAY FROM (NOW() - u.created_at))::int as days_ago
+            FROM users u
+            LEFT JOIN notes n ON u.telegram_id = n.telegram_id
+            WHERE u.has_completed_onboarding = TRUE
+              AND EXTRACT(DAY FROM (NOW() - u.created_at))::int IN (1, 3)
+            GROUP BY u.telegram_id, u.created_at
+            HAVING COUNT(n.note_id) = 0
+        """
+        
+        # Пользователи с заметками, но неактивные 7 дней
+        query_inactive = """
+            SELECT DISTINCT u.telegram_id, u.created_at,
+                   COUNT(n.note_id) as notes_count,
+                   EXTRACT(DAY FROM (NOW() - u.created_at))::int as days_ago
+            FROM users u
+            JOIN notes n ON u.telegram_id = n.telegram_id
+            LEFT JOIN user_actions ua ON u.telegram_id = ua.user_telegram_id 
+                AND ua.created_at > NOW() - INTERVAL '7 days'
+            WHERE u.has_completed_onboarding = TRUE
+              AND EXTRACT(DAY FROM (NOW() - u.created_at))::int = 7
+              AND ua.id IS NULL
+            GROUP BY u.telegram_id, u.created_at
+            HAVING COUNT(n.note_id) > 0
+        """
+        
+        # Проверяем пользователей без заметок
+        records = await conn.fetch(query_no_notes)
+        for record in records:
+            user_id = record['telegram_id']
+            days_ago = int(record['days_ago'])
+            await send_reengagement_message(bot, user_id, days_ago, has_notes=False)
+        
+        # Проверяем неактивных пользователей с заметками
+        records = await conn.fetch(query_inactive)
+        for record in records:
+            user_id = record['telegram_id']
+            days_ago = int(record['days_ago'])
+            await send_reengagement_message(bot, user_id, days_ago, has_notes=True)
+    
+    logger.info("Проверка re-engagement завершена.")
+
+
 async def setup_daily_jobs(bot: Bot):
+    # Проверяем дни рождения каждый час, чтобы отправлять напоминания в 9:00 по локальному времени каждого пользователя
     scheduler.add_job(
         send_birthday_reminders,
         trigger='cron',
-        hour=0,
-        minute=5,
+        hour='*',
+        minute=0,
         kwargs={'bot': bot},
-        id='daily_birthday_check',
+        id='hourly_birthday_check',
         replace_existing=True
     )
-    logger.info("Ежедневная задача проверки дней рождений запланирована на 00:05 UTC.")
+    logger.info("Ежечасная задача проверки дней рождений запланирована (напоминания отправляются в 9:00 по локальному времени каждого пользователя).")
 
     scheduler.add_job(
         check_and_send_digests,
@@ -588,3 +759,15 @@ async def setup_daily_jobs(bot: Bot):
         replace_existing=True
     )
     logger.info("Ежечасная задача проверки и отправки отчетов по привычкам запланирована.")
+    
+    # Re-engagement: проверяем каждый день в 10:00 UTC
+    scheduler.add_job(
+        check_and_send_reengagement_messages,
+        trigger='cron',
+        hour=10,
+        minute=0,
+        kwargs={'bot': bot},
+        id='daily_reengagement_check',
+        replace_existing=True
+    )
+    logger.info("Ежедневная задача re-engagement запланирована на 10:00 UTC.")

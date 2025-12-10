@@ -10,12 +10,8 @@ def get_welcome_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для первого шага обучения."""
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="🚀 Показать, что ты умеешь!",
+        text="🚀 Начать!",
         callback_data=OnboardingAction(action="next_step").pack()
-    )
-    builder.button(
-        text="➡️ Пропустить",
-        callback_data=OnboardingAction(action="skip").pack()
     )
     builder.adjust(1)
     return builder.as_markup()

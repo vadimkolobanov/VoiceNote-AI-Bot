@@ -237,6 +237,17 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         UNIQUE(habit_id, track_date)
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS chat_topic_settings (
+        id SERIAL PRIMARY KEY,
+        chat_id BIGINT NOT NULL,
+        topic_id INTEGER NOT NULL,
+        function_type TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(chat_id, topic_id, function_type)
+    );
+    """,
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",
@@ -251,6 +262,7 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON user_devices(user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_habit_trackings_habit_id ON habit_trackings(habit_id);",
+    "CREATE INDEX IF NOT EXISTS idx_chat_topic_settings_chat_topic ON chat_topic_settings(chat_id, topic_id);",
 ]
 
 
