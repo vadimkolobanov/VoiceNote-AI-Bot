@@ -1,5 +1,6 @@
 # src/bot/modules/notes/services.py
 import logging
+import re
 import asyncio
 from datetime import datetime, timedelta
 import pytz

@@ -61,8 +61,11 @@ async def on_shutdown(bot: Bot):
 
     await close_db_pool()
 
-    if bot and bot.session and not bot.session.is_closed():
-        await bot.session.close()
+    try:
+        if bot and bot.session:
+            await bot.session.close()
+    except Exception as e:
+        logger.warning(f"Ошибка при закрытии сессии бота: {e}")
 
     logger.info("Bot stopped.")
 

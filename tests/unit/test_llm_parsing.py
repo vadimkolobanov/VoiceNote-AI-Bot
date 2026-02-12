@@ -60,20 +60,20 @@ def test_malformed_json_returns_error():
     assert "error" in result
 
 
-# --- JSON array (not dict) returns dict with "error" key ---
+# --- JSON array wraps into {"results": data} ---
 
-def test_json_array_returns_error():
+def test_json_array_returns_wrapped():
     resp = '[1, 2, 3]'
     result = _parse_llm_json_response(resp)
     assert isinstance(result, dict)
-    assert "error" in result
+    assert result == {"results": [1, 2, 3]}
 
 
-def test_json_array_in_fence_returns_error():
+def test_json_array_in_fence_returns_wrapped():
     resp = '```json\n[{"a": 1}, {"b": 2}]\n```'
     result = _parse_llm_json_response(resp)
     assert isinstance(result, dict)
-    assert "error" in result
+    assert result == {"results": [{"a": 1}, {"b": 2}]}
 
 
 # --- Empty string returns dict with "error" key ---

@@ -47,11 +47,14 @@ def _parse_llm_json_response(response_text: str) -> dict:
     try:
         data = json.loads(text)
         if not isinstance(data, dict):
-            logger.warning(f"LLM вернула JSON, но это не словарь: {data}")
+            # LLM иногда возвращает массив (например, search_notes_with_llm) — оборачиваем
+            if isinstance(data, list):
+                return {"results": data}
+            logger.warning(f"LLM вернула JSON, но это не словарь и не список: {type(data)}")
             return {"error": "LLM returned non-dict JSON"}
         return data
     except (json.JSONDecodeError, TypeError) as e:
-        logger.error(f"Ошибка декодирования JSON от LLM: {e}. Ответ LLM: {response_text[:500]}...")
+        logger.error(f"Ошибка декодирования JSON от LLM: {e}. Ответ LLM: {text[:500]}...")
         return {"error": "Failed to decode JSON from LLM"}
 
 
@@ -91,6 +94,12 @@ async def _call_deepseek_api(system_prompt: str, user_prompt: str, is_json_outpu
                 return _parse_llm_json_response(message_content_str) if is_json_output else {
                     "content": message_content_str}
 
+    except asyncio.TimeoutError:
+        logger.error("Таймаут запроса к DeepSeek API (90 сек)")
+        return {"error": "LLM API timeout (90s)"}
+    except aiohttp.ClientError as e:
+        logger.error(f"Сетевая ошибка при запросе к DeepSeek: {e}")
+        return {"error": f"Network error: {e}"}
     except Exception as e:
         logger.exception(f"Неожиданная ошибка во время запроса к DeepSeek: {e}")
         return {"error": f"Unexpected exception: {e}"}

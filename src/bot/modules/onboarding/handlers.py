@@ -1,6 +1,5 @@
 # src/bot/modules/onboarding/handlers.py
 import logging
-import asyncio
 from datetime import datetime
 import pytz
 
@@ -101,7 +100,7 @@ async def onboarding_step_2_handler(callback: types.CallbackQuery, state: FSMCon
 @router.message(OnboardingStates.step_2_create_note, F.voice)
 async def onboarding_step_2_process_note(message: types.Message, state: FSMContext, bot: Bot):
     """Обрабатывает создание первой заметки в онбординге - ОБЯЗАТЕЛЬНЫЙ шаг."""
-    from ...notes.handlers.creation import _background_note_processor
+    from ..notes.handlers.creation import _background_note_processor
     
     # Проверяем, что это действительно заметка (не мусор)
     text_to_process = None
@@ -119,21 +118,29 @@ async def onboarding_step_2_process_note(message: types.Message, state: FSMConte
     else:
         return
     
-    # Сохраняем заметку в фоне
-    await _background_note_processor(
-        bot=bot,
-        user_id=message.from_user.id,
-        status_message_id=status_msg.message_id,
-        chat_id=message.chat.id,
-        text_to_process=text_to_process,
-        voice_file_id=voice_file_id,
-        original_message_date=message.date
-    )
-    
-    # Ждем немного и переходим к следующему шагу
-    await asyncio.sleep(2)
+    # Обрабатываем заметку (await — ждём полного завершения, НЕ фоновая задача)
+    try:
+        await _background_note_processor(
+            bot=bot,
+            user_id=message.from_user.id,
+            status_message_id=status_msg.message_id,
+            chat_id=message.chat.id,
+            text_to_process=text_to_process,
+            voice_file_id=voice_file_id,
+            original_message_date=message.date,
+            silent_achievements=True
+        )
+    except Exception as e:
+        logger.error(f"Ошибка создания первой заметки в онбординге для user {message.from_user.id}: {e}", exc_info=True)
+        await message.answer(
+            "😔 Не удалось создать заметку. Попробуйте ещё раз — отправьте текст или голосовое сообщение."
+        )
+        # Остаёмся на шаге step_2, чтобы пользователь мог повторить попытку
+        return
+
+    # Заметка успешно создана — переходим к выбору часового пояса
     await state.set_state(OnboardingStates.step_3_timezone)
-    
+
     text = (
         f"✅ {hbold('Отлично! Ваша первая заметка создана!')}\n\n"
         f"2️⃣ {hbold('Часовой пояс')} (Шаг 2/3)\n\n"

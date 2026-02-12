@@ -274,7 +274,7 @@ async def get_db_pool() -> asyncpg.Pool:
     global db_pool
     if db_pool is None or db_pool.is_closing():
         try:
-            db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=2, max_size=10)
+            db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=2, max_size=10, ssl=False)
             logger.info("Пул соединений к PostgreSQL успешно создан.")
         except Exception as e:
             logger.critical(f"Не удалось подключиться к PostgreSQL: {e}", exc_info=True)

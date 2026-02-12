@@ -145,7 +145,8 @@ async def _background_note_processor(
         chat_id: int,
         text_to_process: str | None = None,
         voice_file_id: str | None = None,
-        original_message_date: datetime | None = None
+        original_message_date: datetime | None = None,
+        silent_achievements: bool = False
 ):
     """
     Фоновый воркер для обработки и сохранения заметки.
@@ -227,8 +228,8 @@ async def _background_note_processor(
         xp_reward = XP_REWARDS['create_note_voice'] if voice_file_id else XP_REWARDS['create_note_text']
 
         await user_repo.log_user_action(user_id, action_type, metadata={'note_id': new_note['note_id']})
-        await user_repo.add_xp_and_check_level_up(bot, user_id, xp_reward)
-        await check_and_grant_achievements(bot, user_id)
+        await user_repo.add_xp_and_check_level_up(bot, user_id, xp_reward, silent_level_up=silent_achievements)
+        await check_and_grant_achievements(bot, user_id, silent=silent_achievements)
 
         is_shopping_list = new_note.get('category') == 'Покупки'
         keyboard = get_undo_creation_keyboard(new_note['note_id'], is_shopping_list)
