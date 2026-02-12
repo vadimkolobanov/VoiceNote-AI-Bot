@@ -24,7 +24,7 @@ def _get_weather_icon(weather_code: int) -> str:
     if weather_code in [80, 81, 82]: return "🌦️"
     if weather_code in [85, 86]: return "🌨️"
     if weather_code in [95, 96, 99]: return "⛈️"
-    return ""
+    return "🌡️"
 
 
 async def _get_coords_for_city(city: str) -> tuple[float, float, str] | None:

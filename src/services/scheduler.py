@@ -19,7 +19,7 @@ from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
 from . import push_service, weather_service, llm
 from ..core.config import WEATHER_SERVICE_ENABLED, DIGEST_UPCOMING_DAYS, DIGEST_OVERDUE_LIMIT
-from ..services.gamification_service import AchievCode
+# AchievCode импортируется лениво внутри функции, чтобы избежать циклического импорта
 from ..bot.modules.habits.keyboards import get_habit_tracking_keyboard
 
 logger = logging.getLogger(__name__)
@@ -344,7 +344,8 @@ async def check_and_send_digests(bot: Bot):
 
 def get_age_string(year: int, today: date) -> str:
     age = today.year - year
-    if age <= 0: return ""
+    if age < 0: return ""
+    if age == 0: return "(до года)"
     if age % 10 == 1 and age % 100 != 11:
         return f"({age} год)"
     if 2 <= age % 10 <= 4 and (age % 100 < 10 or age % 100 >= 20):
@@ -426,6 +427,7 @@ async def send_birthday_reminders(bot: Bot):
             user_has_self_bday = await user_repo.has_self_birthday_record(user_id)
             if user_has_self_bday:
                 user_achievements = await user_repo.get_user_achievements_codes(user_id)
+                from ..services.gamification_service import AchievCode
                 if AchievCode.HAPPY_BIRTHDAY.value not in user_achievements:
                     await user_repo.grant_achievement(bot, user_id, AchievCode.HAPPY_BIRTHDAY.value, silent=True)
                     reminders.append("\nP.S. С Днём Рождения! 🎉 Загляните в профиль, там для вас сюрприз 😉")

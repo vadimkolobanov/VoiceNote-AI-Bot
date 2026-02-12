@@ -32,13 +32,20 @@ class UserIntent(Enum):
 
 
 def _parse_llm_json_response(response_text: str) -> dict:
-    if response_text.strip().startswith("```json"):
-        response_text = response_text.strip()[7:-3].strip()
-    elif response_text.strip().startswith("```"):
-        response_text = response_text.strip()[3:-3].strip()
+    import re
+
+    text = response_text.strip()
+
+    # Извлекаем JSON из markdown fence (```json ... ``` или ``` ... ```)
+    fence_match = re.search(r'```(?:json)?\s*\n?(.*?)```', text, re.DOTALL)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    elif text.startswith("```"):
+        # Незакрытый fence — убираем открывающий маркер
+        text = re.sub(r'^```(?:json)?\s*\n?', '', text).strip()
 
     try:
-        data = json.loads(response_text)
+        data = json.loads(text)
         if not isinstance(data, dict):
             logger.warning(f"LLM вернула JSON, но это не словарь: {data}")
             return {"error": "LLM returned non-dict JSON"}

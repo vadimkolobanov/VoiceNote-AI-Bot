@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from datetime import time
 
-from ..database import user_repo, note_repo, birthday_repo
+# database repos импортируются лениво внутри check_and_grant_achievements(),
+# чтобы избежать циклических импортов
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ ACHIEVEMENTS_BY_CODE = {a.code: a for a in ACHIEVEMENTS_LIST}
 
 
 async def check_and_grant_achievements(bot, user_id: int, silent: bool = False):
+    from ..database import user_repo, note_repo, birthday_repo
+
     user_achievements = await user_repo.get_user_achievements_codes(user_id)
     user_profile = await user_repo.get_user_profile(user_id)  # Получаем профиль один раз
 

@@ -26,9 +26,11 @@ TYPO_CORRECTIONS = {
 
 def _preprocess_text(text: str) -> str:
     """Применяет исправления опечаток к тексту."""
+    import re
+    result = text
     for typo, correction in TYPO_CORRECTIONS.items():
-        text = text.lower().replace(f"\\b{typo}\\b", correction, 1)
-    return text
+        result = re.sub(rf'\b{re.escape(typo)}\b', correction, result, count=1, flags=re.IGNORECASE)
+    return result
 
 
 def _calculate_due_date_from_components(time_components: dict, user_tz: pytz.BaseTzInfo) -> datetime | None:
@@ -46,14 +48,25 @@ def _calculate_due_date_from_components(time_components: dict, user_tz: pytz.Bas
         relative_days = time_components.get("relative_days", 0) or 0
         relative_hours = time_components.get("relative_hours", 0) or 0
         relative_minutes = time_components.get("relative_minutes", 0) or 0
+
+        # Защита от конфликтов: если есть relative_hours, игнорируем set_hour (и аналогично для минут)
+        set_hour = time_components.get("set_hour")
+        set_minute = time_components.get("set_minute")
+        if relative_hours and set_hour is not None:
+            logger.warning(f"Конфликт: relative_hours={relative_hours} и set_hour={set_hour}. Используем set_hour.")
+            relative_hours = 0
+        if relative_minutes and set_minute is not None:
+            logger.warning(f"Конфликт: relative_minutes={relative_minutes} и set_minute={set_minute}. Используем set_minute.")
+            relative_minutes = 0
+
         if any([relative_days, relative_hours, relative_minutes]):
             target_dt += timedelta(days=relative_days, hours=relative_hours, minutes=relative_minutes)
 
         replace_kwargs = {
             k: v for k, v in {
                 'year': time_components.get("set_year"), 'month': time_components.get("set_month"),
-                'day': time_components.get("set_day"), 'hour': time_components.get("set_hour"),
-                'minute': time_components.get("set_minute"), 'second': 0, 'microsecond': 0
+                'day': time_components.get("set_day"), 'hour': set_hour,
+                'minute': set_minute, 'second': 0, 'microsecond': 0
             }.items() if v is not None
         }
         if replace_kwargs:

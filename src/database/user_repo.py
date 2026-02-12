@@ -7,7 +7,8 @@ from aiogram.utils.markdown import hbold
 
 from .connection import get_db_pool
 from ..services import cache_service
-from ..services.gamification_service import ACHIEVEMENTS_BY_CODE
+# ACHIEVEMENTS_BY_CODE импортируется лениво внутри grant_achievement()
+# чтобы избежать циклического импорта с gamification_service
 from ..web.routes import bot_instance
 
 logger = logging.getLogger(__name__)
@@ -365,7 +366,8 @@ async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_
 async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silent: bool = False):
     """Присваивает пользователю достижение и начисляет опыт."""
     import asyncpg
-    
+    from ..services.gamification_service import ACHIEVEMENTS_BY_CODE
+
     pool = await get_db_pool()
     achievement = ACHIEVEMENTS_BY_CODE.get(achievement_code)
     if not achievement:
