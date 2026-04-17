@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
 from src.database.connection import get_db_pool
@@ -136,11 +136,11 @@ async def login_with_email(payload: EmailLoginRequest) -> dict:
     return await _issue_tokens(row["telegram_id"])
 
 
-@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def change_password(
     payload: PasswordChangeRequest,
     current_user: dict = Depends(get_current_user),
-) -> None:
+) -> Response:
     """Смена пароля."""
     _validate_password_strength(payload.new_password)
 
@@ -163,19 +163,21 @@ async def change_password(
             _hash_password(payload.new_password),
             current_user["telegram_id"],
         )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class LogoutRequest(BaseModel):
     refresh_token: str
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def logout(
     payload: LogoutRequest,
     current_user: dict = Depends(get_current_user),
-) -> None:
+) -> Response:
     """Отзыв refresh token."""
     await _revoke_refresh_token(payload.refresh_token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserProfile)

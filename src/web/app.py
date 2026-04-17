@@ -13,6 +13,7 @@ from .api.birthdays import router as birthdays_router
 from .api.shopping_list import router as shopping_list_router
 from .api.habits import router as habits_router
 from .api.voice import router as voice_router
+from .api.mobile_auth import router as mobile_auth_router
 
 
 def get_fastapi_app(bot: Bot) -> FastAPI:
@@ -93,5 +94,6 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     app.include_router(shopping_list_router, prefix="/api/v1/shopping-list", tags=["Shopping List"])
     app.include_router(habits_router, prefix="/api/v1/habits", tags=["Habits"])
     app.include_router(voice_router, prefix="/api/v1/voice", tags=["Voice"])
+    app.include_router(mobile_auth_router, prefix="/api/v1")
 
     return app

@@ -275,6 +275,59 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_habits_user_id ON habits(user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_habit_trackings_habit_id ON habit_trackings(habit_id);",
     "CREATE INDEX IF NOT EXISTS idx_chat_topic_settings_chat_topic ON chat_topic_settings(chat_id, topic_id);",
+
+    # --- Mobile auth (email/password) ---
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='email') THEN
+            ALTER TABLE users ADD COLUMN email TEXT UNIQUE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='password_hash') THEN
+            ALTER TABLE users ADD COLUMN password_hash TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='email_verified') THEN
+            ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='auth_provider') THEN
+            ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'telegram';
+        END IF;
+    END;
+    $$;
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email)) WHERE email IS NOT NULL;",
+    "CREATE SEQUENCE IF NOT EXISTS mobile_user_id_seq START WITH 1 INCREMENT BY 1;",
+
+    # --- Subscriptions & payments (YooKassa) ---
+    """
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id BIGSERIAL PRIMARY KEY,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        plan TEXT NOT NULL CHECK (plan IN ('monthly','yearly')),
+        status TEXT NOT NULL CHECK (status IN ('active','cancelled','expired','pending')),
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        auto_renew BOOLEAN NOT NULL DEFAULT TRUE,
+        cancelled_at TIMESTAMPTZ
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions (user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions (status, expires_at);",
+    """
+    CREATE TABLE IF NOT EXISTS payments (
+        id BIGSERIAL PRIMARY KEY,
+        yookassa_payment_id TEXT UNIQUE NOT NULL,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        amount NUMERIC(12,2) NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'RUB',
+        status TEXT NOT NULL,
+        plan TEXT NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_payments_user ON payments (user_telegram_id);",
 ]
 
 
