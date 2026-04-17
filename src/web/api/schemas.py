@@ -13,6 +13,7 @@ class TelegramLoginData(BaseModel):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
 
 class UserProfile(BaseModel):
@@ -27,6 +28,7 @@ class UserProfile(BaseModel):
     pre_reminder_minutes: int
     daily_digest_enabled: bool
     daily_digest_time: time
+    city_name: str | None = None
 
     class Config:
         from_attributes = True
@@ -89,6 +91,7 @@ class ProfileUpdateRequest(BaseModel):
     pre_reminder_minutes: int | None = None
     daily_digest_enabled: bool | None = None
     daily_digest_time: time | None = None
+    city_name: str | None = None
 
 class ShoppingListItem(BaseModel):
     item_name: str

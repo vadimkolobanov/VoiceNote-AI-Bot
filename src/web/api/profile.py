@@ -1,10 +1,11 @@
-# src/api/profile.py
+# src/web/api/profile.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from datetime import time
 
 from src.database import user_repo
-from .notes import get_current_user  # Переиспользуем зависимость из notes
+from .dependencies import get_current_user
+from .schemas import ProfileUpdateRequest, DeviceTokenRegister
 
 router = APIRouter()
 
@@ -21,15 +22,10 @@ class UserProfile(BaseModel):
     pre_reminder_minutes: int
     daily_digest_enabled: bool
     daily_digest_time: time
+    city_name: str | None = None
 
     class Config:
         from_attributes = True
-
-
-class ProfileUpdateRequest(BaseModel):
-    timezone: str | None = None
-    daily_digest_enabled: bool | None = None
-    daily_digest_time: time | None = None
 
 
 class Achievements(BaseModel):
@@ -52,7 +48,6 @@ async def update_users_me(
         current_user: dict = Depends(get_current_user)
 ):
     user_id = current_user['telegram_id']
-    # Используем model_dump(), т.к. dict() устарел
     update_data = request_data.model_dump(exclude_unset=True)
 
     if not update_data:
@@ -61,13 +56,18 @@ async def update_users_me(
             detail="No data provided to update."
         )
 
-    # Мы будем использовать отдельные repo-функции для каждого поля
     if 'timezone' in update_data:
         await user_repo.set_user_timezone(user_id, update_data['timezone'])
     if 'daily_digest_enabled' in update_data:
         await user_repo.set_user_daily_digest_status(user_id, update_data['daily_digest_enabled'])
     if 'daily_digest_time' in update_data:
         await user_repo.set_user_daily_digest_time(user_id, update_data['daily_digest_time'])
+    if 'city_name' in update_data:
+        await user_repo.set_user_city(user_id, update_data['city_name'])
+    if 'default_reminder_time' in update_data:
+        await user_repo.set_user_default_reminder_time(user_id, update_data['default_reminder_time'])
+    if 'pre_reminder_minutes' in update_data:
+        await user_repo.set_user_pre_reminder_minutes(user_id, update_data['pre_reminder_minutes'])
 
     updated_user = await user_repo.get_user_profile(user_id)
     if not updated_user:
@@ -92,3 +92,38 @@ async def read_my_achievements(current_user: dict = Depends(get_current_user)):
             "is_earned": ach['code'] in user_achievements_codes
         })
     return result
+
+
+# --- Device / FCM Token Management ---
+
+@router.post("/devices", status_code=status.HTTP_201_CREATED, tags=["Devices"])
+async def register_device(
+        device_data: DeviceTokenRegister,
+        current_user: dict = Depends(get_current_user)
+):
+    """Регистрирует FCM-токен устройства для push-уведомлений."""
+    user_id = current_user['telegram_id']
+    success = await user_repo.register_user_device(
+        telegram_id=user_id,
+        fcm_token=device_data.fcm_token,
+        platform=device_data.platform
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to register device."
+        )
+    return {"detail": "Device registered successfully."}
+
+
+class DeviceTokenDeleteRequest(BaseModel):
+    fcm_token: str
+
+
+@router.delete("/devices", status_code=status.HTTP_204_NO_CONTENT, tags=["Devices"])
+async def unregister_device(
+        device_data: DeviceTokenDeleteRequest,
+        current_user: dict = Depends(get_current_user)
+):
+    """Удаляет FCM-токен устройства (при логауте)."""
+    await user_repo.delete_user_device_token(device_data.fcm_token)

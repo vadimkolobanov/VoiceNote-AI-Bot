@@ -248,6 +248,18 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         UNIQUE(chat_id, topic_id, function_type)
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id SERIAL PRIMARY KEY,
+        token_hash TEXT UNIQUE NOT NULL,
+        user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        revoked_at TIMESTAMPTZ
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_telegram_id ON notes (telegram_id);",
     "CREATE INDEX IF NOT EXISTS idx_notes_due_date ON notes (due_date);",
     "CREATE INDEX IF NOT EXISTS idx_birthdays_user_id ON birthdays (user_telegram_id);",

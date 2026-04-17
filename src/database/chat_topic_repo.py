@@ -118,3 +118,4 @@ async def get_chat_topic_settings(chat_id: int) -> list[dict]:
         records = await conn.fetch(query, chat_id)
         return [dict(rec) for rec in records]
 
+

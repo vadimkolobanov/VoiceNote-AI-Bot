@@ -1,0 +1,86 @@
+name: voicenote_ai
+description: VoiceNote AI — голосовые заметки, привычки и AI-агент.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Routing
+  go_router: ^14.2.7
+
+  # Networking
+  dio: ^5.5.0+1
+
+  # Models / codegen
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Storage
+  flutter_secure_storage: ^9.2.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Voice / audio
+  record: ^6.0.0
+  permission_handler: ^11.3.1
+
+  # Payments (WebView для ЮКасса)
+  webview_flutter: ^4.9.0
+  webview_flutter_android: ^3.16.7
+  webview_flutter_wkwebview: ^3.16.3
+
+  # Push notifications
+  firebase_core: ^3.5.0
+  firebase_messaging: ^15.1.2
+  flutter_local_notifications: ^17.2.2
+
+  # Deep linking
+  app_links: ^6.3.0
+
+  # Utils
+  intl: ^0.20.2
+  logger: ^2.4.0
+  equatable: ^2.0.5
+  collection: ^1.18.0
+  path_provider: ^2.1.4
+
+  # Env
+  flutter_dotenv: ^5.1.0
+
+  # UI
+  shimmer: ^3.0.0
+  google_fonts: ^6.2.1
+  cached_network_image: ^3.4.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+  # Codegen (kept as optional dev stack; enable when you start using freezed/riverpod codegen)
+  # build_runner: ^2.4.11
+  # riverpod_generator: ^2.4.3
+  # freezed: ^2.5.7
+  # json_serializable: ^6.8.0
+  # hive_generator: ^2.0.1
+  # custom_lint: ^0.6.5
+  # riverpod_lint: ^2.3.13
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+  assets:
+    - assets/.env

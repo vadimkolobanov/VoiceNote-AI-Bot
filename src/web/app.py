@@ -1,5 +1,6 @@
 # src/web/app.py
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from aiogram import Bot
 from starlette.responses import HTMLResponse
 
@@ -10,6 +11,8 @@ from .api.profile import router as profile_router
 from .api.notes import router as notes_router
 from .api.birthdays import router as birthdays_router
 from .api.shopping_list import router as shopping_list_router
+from .api.habits import router as habits_router
+from .api.voice import router as voice_router
 
 
 def get_fastapi_app(bot: Bot) -> FastAPI:
@@ -20,9 +23,17 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
 
     app = FastAPI(
         title="VoiceNote AI API",
-        version="1.0.0",
+        version="2.0.0",
         docs_url="/api/v1/docs",
         redoc_url="/api/v1/redoc"
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     # Middleware для добавления бота в request.app.state
@@ -80,5 +91,7 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     app.include_router(notes_router, prefix="/api/v1/notes", tags=["Notes"])
     app.include_router(birthdays_router, prefix="/api/v1/birthdays", tags=["Birthdays"])
     app.include_router(shopping_list_router, prefix="/api/v1/shopping-list", tags=["Shopping List"])
+    app.include_router(habits_router, prefix="/api/v1/habits", tags=["Habits"])
+    app.include_router(voice_router, prefix="/api/v1/voice", tags=["Voice"])
 
     return app
