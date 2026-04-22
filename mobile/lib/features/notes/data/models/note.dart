@@ -1,7 +1,31 @@
+/// Canonical note types. Maps to `notes.type` enum on the backend.
+enum NoteType {
+  note,
+  task,
+  idea,
+  shopping;
+
+  static NoteType parse(String? raw) {
+    switch (raw) {
+      case 'task':
+        return NoteType.task;
+      case 'idea':
+        return NoteType.idea;
+      case 'shopping':
+        return NoteType.shopping;
+      default:
+        return NoteType.note;
+    }
+  }
+
+  String get apiValue => name;
+}
+
 class Note {
   const Note({
     required this.id,
     required this.ownerId,
+    required this.type,
     required this.correctedText,
     required this.createdAt,
     required this.updatedAt,
@@ -17,6 +41,7 @@ class Note {
 
   final int id;
   final int ownerId;
+  final NoteType type;
   final String? summaryText;
   final String correctedText;
   final String? category;
@@ -29,7 +54,8 @@ class Note {
   final bool isCompleted;
   final Map<String, dynamic>? llmAnalysisJson;
 
-  bool get isShoppingList => (category ?? '').toLowerCase().contains('покуп');
+  bool get isShoppingList => type == NoteType.shopping;
+  bool get isTask => type == NoteType.task;
 
   String get displayTitle {
     final s = (summaryText ?? '').trim();
@@ -40,6 +66,7 @@ class Note {
   factory Note.fromJson(Map<String, dynamic> json) => Note(
         id: (json['note_id'] as num).toInt(),
         ownerId: (json['owner_id'] as num).toInt(),
+        type: NoteType.parse(json['type'] as String?),
         summaryText: json['summary_text'] as String?,
         correctedText: (json['corrected_text'] as String?) ?? '',
         category: json['category'] as String?,
@@ -70,6 +97,7 @@ class Note {
     return Note(
       id: id,
       ownerId: ownerId,
+      type: type,
       summaryText: summaryText ?? this.summaryText,
       correctedText: correctedText ?? this.correctedText,
       category: category ?? this.category,

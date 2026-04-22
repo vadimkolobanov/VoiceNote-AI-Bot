@@ -1,5 +1,5 @@
 name: voicenote_ai
-description: VoiceNote AI — голосовые заметки, привычки и AI-агент.
+description: Методекс Секретарь — голосовые заметки, привычки и AI-агент.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -84,3 +84,4 @@ flutter:
 
   assets:
     - assets/.env
+    - assets/brand/

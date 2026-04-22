@@ -124,6 +124,23 @@ async def get_user_profile(telegram_id: int) -> dict | None:
         user_record = await conn.fetchrow("SELECT * FROM users WHERE telegram_id = $1", telegram_id)
         profile = dict(user_record) if user_record else None
 
+    # Phase 6: `level` — производная от `xp`. Всегда отдаём вычисленный уровень,
+    # а хранимую колонку лечим, если она отстала (self-heal).
+    if profile:
+        xp = profile.get('xp') or 0
+        stored_level = profile.get('level') or 1
+        canonical_level = get_level_for_xp(xp)
+        if canonical_level != stored_level:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE users SET level = $1 WHERE telegram_id = $2",
+                        canonical_level, telegram_id,
+                    )
+            except Exception as e:
+                logger.warning("Не удалось обновить level для %s: %s", telegram_id, e)
+        profile['level'] = canonical_level
+
     if profile:
         await cache_service.set_user_profile_to_cache(telegram_id, profile.copy())
 

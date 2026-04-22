@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/router/app_routes.dart';
 import 'package:voicenote_ai/features/notes/application/notes_controller.dart';
+import 'package:voicenote_ai/features/notes/data/models/note.dart';
 import 'package:voicenote_ai/features/notes/data/repositories/notes_repository.dart';
 import 'package:voicenote_ai/features/notes/presentation/widgets/note_card.dart';
 import 'package:voicenote_ai/features/voice/presentation/voice_bar.dart';
@@ -33,17 +34,20 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
     super.dispose();
   }
 
+  NotesQuery get _query =>
+      NotesQuery(segment: _segment, type: NoteType.note);
+
   void _maybeLoadMore() {
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent - 300) {
-      ref.read(notesControllerProvider(_segment).notifier).loadMore();
+      ref.read(notesControllerProvider(_query).notifier).loadMore();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(notesControllerProvider(_segment));
-    final controller = ref.read(notesControllerProvider(_segment).notifier);
+    final state = ref.watch(notesControllerProvider(_query));
+    final controller = ref.read(notesControllerProvider(_query).notifier);
 
     return Scaffold(
       appBar: AppBar(

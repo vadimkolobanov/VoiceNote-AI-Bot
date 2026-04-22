@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/features/notes/application/notes_controller.dart';
+import 'package:voicenote_ai/features/notes/data/models/note.dart';
 import 'package:voicenote_ai/features/notes/data/repositories/notes_repository.dart';
 
 class CreateNoteScreen extends ConsumerStatefulWidget {
@@ -30,7 +31,8 @@ class _CreateNoteScreenState extends ConsumerState<CreateNoteScreen> {
     try {
       final note = await ref.read(notesRepositoryProvider).create(text);
       if (!mounted) return;
-      ref.read(notesControllerProvider(NotesSegment.active).notifier).upsert(note);
+      final query = NotesQuery(segment: NotesSegment.active, type: note.type);
+      ref.read(notesControllerProvider(query).notifier).upsert(note);
       context.pop();
     } on ApiException catch (e) {
       if (mounted) {

@@ -38,7 +38,7 @@ class _VoiceBarState extends ConsumerState<VoiceBar>
       final note = await ref.read(notesRepositoryProvider).create(text);
       _controller.clear();
       widget.onCreated?.call(note);
-      ref.read(notesControllerProvider(NotesSegment.active).notifier).upsert(note);
+      _upsertIntoRelevantList(note);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -50,6 +50,14 @@ class _VoiceBarState extends ConsumerState<VoiceBar>
     }
   }
 
+  void _upsertIntoRelevantList(Note note) {
+    // Новая запись приходит с серверным type — положим её в соответствующий
+    // список (заметки/задачи/идеи). Shopping — отдельная сущность, игнорим.
+    if (note.type == NoteType.shopping) return;
+    final query = NotesQuery(segment: NotesSegment.active, type: note.type);
+    ref.read(notesControllerProvider(query).notifier).upsert(note);
+  }
+
   Future<void> _onMicLongPress() async {
     await ref.read(voiceRecorderProvider.notifier).start();
   }
@@ -59,7 +67,7 @@ class _VoiceBarState extends ConsumerState<VoiceBar>
     final note = await voice.stopAndUpload();
     if (note != null) {
       widget.onCreated?.call(note);
-      ref.read(notesControllerProvider(NotesSegment.active).notifier).upsert(note);
+      _upsertIntoRelevantList(note);
     } else {
       final err = ref.read(voiceRecorderProvider).error;
       if (mounted && err != null) {

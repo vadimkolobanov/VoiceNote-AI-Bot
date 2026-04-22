@@ -15,6 +15,7 @@ class NotesRepository {
     required NotesSegment segment,
     int page = 1,
     int perPage = 20,
+    String type = 'note', // 'note' | 'task' | 'idea' | 'all'
   }) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
@@ -23,6 +24,7 @@ class NotesRepository {
           'page': page,
           'per_page': perPage,
           'archived': segment == NotesSegment.archive,
+          'type': type,
         },
       );
       return PaginatedNotes.fromJson(response.data!);
@@ -57,6 +59,44 @@ class NotesRepository {
       final response = await _dio.put<Map<String, dynamic>>(
         '/notes/$id',
         data: {'text': text},
+      );
+      return Note.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// Частичное обновление: только те поля, что не null, будут изменены.
+  /// Чтобы сбросить due_date в null — передать `clearDueDate: true`.
+  /// Чтобы сбросить recurrence — `clearRecurrence: true`.
+  Future<Note> patch(
+    int id, {
+    String? text,
+    String? category,
+    String? type,
+    DateTime? dueDate,
+    bool clearDueDate = false,
+    String? recurrenceRule,
+    bool clearRecurrence = false,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (text != null) body['text'] = text;
+      if (category != null) body['category'] = category;
+      if (type != null) body['type'] = type;
+      if (clearDueDate) {
+        body['clear_due_date'] = true;
+      } else if (dueDate != null) {
+        body['due_date'] = dueDate.toUtc().toIso8601String();
+      }
+      if (clearRecurrence) {
+        body['clear_recurrence'] = true;
+      } else if (recurrenceRule != null) {
+        body['recurrence_rule'] = recurrenceRule;
+      }
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/notes/$id',
+        data: body,
       );
       return Note.fromJson(response.data!);
     } on DioException catch (e) {

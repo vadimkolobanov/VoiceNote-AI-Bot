@@ -12,7 +12,18 @@ async def add_birthday(user_telegram_id: int, person_name: str, day: int, month:
     query = "INSERT INTO birthdays (user_telegram_id, person_name, birth_day, birth_month, birth_year) VALUES ($1, $2, $3, $4, $5) RETURNING *;"
     async with pool.acquire() as conn:
         record = await conn.fetchrow(query, user_telegram_id, person_name, day, month, year)
-        return dict(record) if record else None
+    if not record:
+        return None
+    # Phase 3a: sync reminders read-model
+    from . import reminder_repo
+    await reminder_repo.upsert_birthday_reminder(
+        user_id=user_telegram_id,
+        birthday_id=record['id'],
+        person_name=person_name,
+        birth_month=month,
+        birth_day=day,
+    )
+    return dict(record)
 
 
 async def add_birthdays_bulk(user_telegram_id: int, birthdays_data: list[tuple]) -> int:
@@ -72,7 +83,11 @@ async def delete_birthday(birthday_id: int, user_telegram_id: int) -> bool:
     async with pool.acquire() as conn:
         result = await conn.execute("DELETE FROM birthdays WHERE id = $1 AND user_telegram_id = $2", birthday_id,
                                     user_telegram_id)
-        return int(result.split(" ")[1]) > 0
+        ok = int(result.split(" ")[1]) > 0
+    if ok:
+        from . import reminder_repo
+        await reminder_repo.delete_birthday_reminder(birthday_id)
+    return ok
 
 
 async def get_all_birthdays_for_reminders() -> list[dict]:

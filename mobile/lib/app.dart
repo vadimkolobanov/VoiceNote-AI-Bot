@@ -12,12 +12,13 @@ class VoiceNoteApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
     return MaterialApp.router(
-      title: 'VoiceNote AI',
+      title: 'Методекс Секретарь',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      themeMode: ThemeMode.system,
+      // Дизайн спроектирован dark-first; light — pragmatic fallback.
+      themeMode: ThemeMode.dark,
       locale: const Locale('ru'),
       supportedLocales: const [Locale('ru'), Locale('en')],
       localizationsDelegates: const [

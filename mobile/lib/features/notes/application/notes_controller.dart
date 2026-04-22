@@ -4,10 +4,30 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voicenote_ai/features/notes/data/models/note.dart';
 import 'package:voicenote_ai/features/notes/data/repositories/notes_repository.dart';
 
+/// Ключ провайдера: какой сегмент (активные/архив) и какой тип записей.
+///
+/// Используем value-class, чтобы Riverpod family корректно дедуплицировал
+/// инстансы контроллера.
+@immutable
+class NotesQuery {
+  const NotesQuery({required this.segment, required this.type});
+  final NotesSegment segment;
+  final NoteType type;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is NotesQuery && other.segment == segment && other.type == type);
+
+  @override
+  int get hashCode => Object.hash(segment, type);
+}
+
 @immutable
 class NotesListState {
   const NotesListState({
     required this.segment,
+    required this.type,
     required this.items,
     required this.page,
     required this.totalPages,
@@ -17,6 +37,7 @@ class NotesListState {
   });
 
   final NotesSegment segment;
+  final NoteType type;
   final List<Note> items;
   final int page;
   final int totalPages;
@@ -26,7 +47,7 @@ class NotesListState {
 
   bool get hasMore => page < totalPages;
 
-  const NotesListState.initial(this.segment)
+  const NotesListState.initial(this.segment, this.type)
       : items = const [],
         page = 0,
         totalPages = 0,
@@ -35,7 +56,6 @@ class NotesListState {
         error = null;
 
   NotesListState copyWith({
-    NotesSegment? segment,
     List<Note>? items,
     int? page,
     int? totalPages,
@@ -45,7 +65,8 @@ class NotesListState {
     bool clearError = false,
   }) =>
       NotesListState(
-        segment: segment ?? this.segment,
+        segment: segment,
+        type: type,
         items: items ?? this.items,
         page: page ?? this.page,
         totalPages: totalPages ?? this.totalPages,
@@ -56,8 +77,8 @@ class NotesListState {
 }
 
 class NotesController extends StateNotifier<NotesListState> {
-  NotesController(this._repo, NotesSegment segment)
-      : super(NotesListState.initial(segment)) {
+  NotesController(this._repo, NotesQuery query)
+      : super(NotesListState.initial(query.segment, query.type)) {
     refresh();
   }
 
@@ -66,7 +87,11 @@ class NotesController extends StateNotifier<NotesListState> {
   Future<void> refresh() async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final page = await _repo.list(segment: state.segment, page: 1);
+      final page = await _repo.list(
+        segment: state.segment,
+        type: state.type.apiValue,
+        page: 1,
+      );
       state = state.copyWith(
         items: page.items,
         page: page.page,
@@ -82,7 +107,11 @@ class NotesController extends StateNotifier<NotesListState> {
     if (!state.hasMore || state.isLoadingMore) return;
     state = state.copyWith(isLoadingMore: true);
     try {
-      final page = await _repo.list(segment: state.segment, page: state.page + 1);
+      final page = await _repo.list(
+        segment: state.segment,
+        type: state.type.apiValue,
+        page: state.page + 1,
+      );
       state = state.copyWith(
         items: [...state.items, ...page.items],
         page: page.page,
@@ -136,6 +165,6 @@ class NotesController extends StateNotifier<NotesListState> {
 }
 
 final notesControllerProvider = StateNotifierProvider.family<
-    NotesController, NotesListState, NotesSegment>(
-  (ref, segment) => NotesController(ref.watch(notesRepositoryProvider), segment),
+    NotesController, NotesListState, NotesQuery>(
+  (ref, query) => NotesController(ref.watch(notesRepositoryProvider), query),
 );

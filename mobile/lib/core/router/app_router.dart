@@ -19,6 +19,9 @@ import 'package:voicenote_ai/features/profile/presentation/screens/achievements_
 import 'package:voicenote_ai/features/profile/presentation/screens/profile_screen.dart';
 import 'package:voicenote_ai/features/profile/presentation/screens/settings_screen.dart';
 import 'package:voicenote_ai/features/shopping_list/presentation/screens/shopping_list_screen.dart';
+import 'package:voicenote_ai/features/tasks/presentation/screens/all_reminders_screen.dart';
+import 'package:voicenote_ai/features/tasks/presentation/screens/tasks_screen.dart';
+import 'package:voicenote_ai/features/today/presentation/screens/today_screen.dart';
 // (Detail screen is pushed via MaterialPageRoute from the list screen.)
 import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 
@@ -47,7 +50,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         return isAuthRoute ? null : AppRoutes.login;
       }
       // authenticated
-      if (isSplash || isAuthRoute) return AppRoutes.notes;
+      if (isSplash || isAuthRoute) return AppRoutes.today;
       return null;
     },
     routes: [
@@ -65,8 +68,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) => AppShell(location: state.matchedLocation, child: child),
         routes: [
           GoRoute(
+            path: AppRoutes.today,
+            pageBuilder: (_, __) => const NoTransitionPage(child: TodayScreen()),
+          ),
+          GoRoute(
             path: AppRoutes.notes,
             pageBuilder: (_, __) => const NoTransitionPage(child: NotesListScreen()),
+          ),
+          GoRoute(
+            path: AppRoutes.tasks,
+            pageBuilder: (_, __) => const NoTransitionPage(child: TasksScreen()),
           ),
           GoRoute(
             path: AppRoutes.habits,
@@ -76,11 +87,18 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.agent,
             pageBuilder: (_, __) => const NoTransitionPage(child: AiChatScreen()),
           ),
-          GoRoute(
-            path: AppRoutes.profile,
-            pageBuilder: (_, __) => const NoTransitionPage(child: ProfileScreen()),
-          ),
         ],
+      ),
+      // Profile is reachable from header/drawer, not a bottom tab.
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.profile,
+        builder: (_, __) => const ProfileScreen(),
+      ),
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.voiceCapture,
+        builder: (_, __) => const CreateNoteScreen(),
       ),
 
       // Pushed screens (outside shell)
@@ -129,6 +147,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootKey,
         path: AppRoutes.memoryFacts,
         builder: (_, __) => const MemoryFactsScreen(),
+      ),
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.allReminders,
+        builder: (_, __) => const AllRemindersScreen(),
       ),
       GoRoute(
         parentNavigatorKey: _rootKey,

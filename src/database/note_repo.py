@@ -29,16 +29,35 @@ def _process_note_record(record: asyncpg.Record) -> dict | None:
     return note_dict
 
 
+def _infer_note_type(category: str | None, due_date, recurrence_rule: str | None) -> str:
+    """Derive canonical note type from legacy category string + date flags."""
+    cat = (category or "").strip().lower()
+    if cat.startswith("покуп"):
+        return "shopping"
+    if cat.startswith("иде"):
+        return "idea"
+    if cat.startswith("задач") or cat.startswith("напомин"):
+        return "task"
+    if due_date is not None or recurrence_rule:
+        return "task"
+    return "note"
+
+
 async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | None:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         query = """
                 INSERT INTO notes (telegram_id, summary_text, corrected_text, original_stt_text, llm_analysis_json,
-                                   original_audio_telegram_file_id, note_taken_at, due_date, recurrence_rule, category)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING note_id; \
+                                   original_audio_telegram_file_id, note_taken_at, due_date, recurrence_rule,
+                                   category, type)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING note_id; \
                 """
         try:
             llm_json_str = json.dumps(kwargs.get("llm_analysis_json")) if kwargs.get("llm_analysis_json") else None
+            category = kwargs.get("category", "Общее")
+            note_type = kwargs.get("type") or _infer_note_type(
+                category, kwargs.get("due_date"), kwargs.get("recurrence_rule")
+            )
             note_id = await conn.fetchval(
                 query,
                 telegram_id,
@@ -50,7 +69,8 @@ async def create_note(telegram_id: int, corrected_text: str, **kwargs) -> int | 
                 kwargs.get("note_taken_at"),
                 kwargs.get("due_date"),
                 kwargs.get("recurrence_rule"),
-                kwargs.get("category", "Общее")
+                category,
+                note_type,
             )
             return note_id
         except Exception as e:
@@ -110,39 +130,66 @@ async def count_active_notes_for_user(telegram_id: int) -> int:
             telegram_id) or 0
 
 
-async def get_paginated_notes_for_user(telegram_id: int, page: int = 1, per_page: int = NOTES_PER_PAGE,
-                                       archived: bool = False) -> tuple[list[dict], int]:
-    """Возвращает пагинированный список заметок пользователя (активных или архивных)."""
+async def get_paginated_notes_for_user(
+        telegram_id: int,
+        page: int = 1,
+        per_page: int = NOTES_PER_PAGE,
+        archived: bool = False,
+        note_type: str | None = None,
+) -> tuple[list[dict], int]:
+    """Возвращает пагинированный список записей пользователя.
+
+    :param note_type: один из 'note' | 'task' | 'idea' | 'shopping'. None = все типы.
+    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         archived_filter_sql = "is_archived = TRUE" if archived else "is_archived = FALSE AND is_completed = FALSE"
+        type_filter_sql = ""
+        params: list = [telegram_id]
+        if note_type:
+            params.append(note_type)
+            type_filter_sql = f" AND type = ${len(params)}"
 
         count_query = f"""
             SELECT COUNT(*) FROM (
                 SELECT note_id FROM notes
-                WHERE telegram_id = $1 AND {archived_filter_sql}
+                WHERE telegram_id = $1 AND {archived_filter_sql}{type_filter_sql}
                 UNION
                 SELECT n.note_id FROM notes n
                 JOIN note_shares ns ON n.note_id = ns.note_id
-                WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}
+                WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}{
+                    type_filter_sql.replace('type', 'n.type')
+                }
             ) as combined_notes;
         """
-        total_items = await conn.fetchval(count_query, telegram_id) or 0
+        total_items = await conn.fetchval(count_query, *params) or 0
 
         offset = (page - 1) * per_page
+        # Для задач сортируем по due_date, для остального — по created_at.
+        order_clause = (
+            "ORDER BY due_date ASC NULLS LAST, created_at DESC"
+            if note_type == 'task'
+            else "ORDER BY created_at DESC"
+        )
+
+        params_with_paging = [*params, per_page, offset]
+        limit_idx = len(params_with_paging) - 1
+        offset_idx = len(params_with_paging)
         fetch_query = f"""
             SELECT * FROM (
                 SELECT *, telegram_id as owner_id FROM notes
-                WHERE telegram_id = $1 AND {archived_filter_sql}
+                WHERE telegram_id = $1 AND {archived_filter_sql}{type_filter_sql}
                 UNION
                 SELECT n.*, n.telegram_id as owner_id FROM notes n
                 JOIN note_shares ns ON n.note_id = ns.note_id
-                WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}
+                WHERE ns.shared_with_telegram_id = $1 AND n.{archived_filter_sql}{
+                    type_filter_sql.replace('type', 'n.type')
+                }
             ) as combined_notes
-            ORDER BY due_date ASC NULLS LAST, created_at DESC
-            LIMIT $2 OFFSET $3;
+            {order_clause}
+            LIMIT ${limit_idx} OFFSET ${offset_idx};
         """
-        notes_records = await conn.fetch(fetch_query, telegram_id, per_page, offset)
+        notes_records = await conn.fetch(fetch_query, *params_with_paging)
         return [_process_note_record(rec) for rec in notes_records], total_items
 
 
@@ -183,7 +230,13 @@ async def set_note_archived_status(note_id: int, archived: bool) -> bool:
         result = await conn.execute(
             "UPDATE notes SET is_archived = $1, updated_at = NOW() WHERE note_id = $2", archived,
             note_id)
-        return int(result.split(" ")[1]) > 0
+        ok = int(result.split(" ")[1]) > 0
+    if ok:
+        # Phase 3a: архив/разархив влияет на статус напоминания
+        from . import reminder_repo
+        if archived:
+            await reminder_repo.delete_note_reminder(note_id)
+    return ok
 
 
 async def set_note_completed_status(note_id: int, completed: bool) -> bool:
@@ -193,7 +246,12 @@ async def set_note_completed_status(note_id: int, completed: bool) -> bool:
         result = await conn.execute(
             "UPDATE notes SET is_completed = $1, is_archived = $1, updated_at = NOW() WHERE note_id = $2",
             completed, note_id)
-        return int(result.split(" ")[1]) > 0
+        ok = int(result.split(" ")[1]) > 0
+    if ok and completed:
+        # Phase 3a: выполненная задача больше не должна напоминать
+        from . import reminder_repo
+        await reminder_repo.delete_note_reminder(note_id)
+    return ok
 
 
 async def restore_note_from_archive(note_id: int) -> bool:
@@ -206,13 +264,83 @@ async def restore_note_from_archive(note_id: int) -> bool:
         return int(result.split(" ")[1]) > 0
 
 
-async def update_note_due_date(note_id: int, new_due_date: datetime) -> bool:
-    """Обновляет дату и время напоминания."""
+async def update_note_due_date(note_id: int, new_due_date: datetime | None) -> bool:
+    """Обновляет дату и время напоминания. None = убрать дату."""
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("UPDATE notes SET due_date = $1, updated_at = NOW() WHERE note_id = $2",
                                     new_due_date, note_id)
         return int(result.split(" ")[1]) > 0
+
+
+async def update_note_type(note_id: int, note_type: str, telegram_id: int) -> bool:
+    """Меняет type заметки (note|task|idea|shopping). Проверяет владельца."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE notes
+            SET type = $1, updated_at = NOW()
+            WHERE note_id = $2 AND telegram_id = $3
+            """,
+            note_type, note_id, telegram_id,
+        )
+        return int(result.split(" ")[1]) > 0
+
+
+async def update_note_fields(
+    note_id: int,
+    telegram_id: int,
+    *,
+    text: str | None = None,
+    category: str | None = None,
+    note_type: str | None = None,
+    due_date: datetime | None = None,
+    clear_due_date: bool = False,
+    recurrence_rule: str | None = None,
+    clear_recurrence: bool = False,
+) -> bool:
+    """Универсальный update по полям. Пустые параметры не меняют значение.
+
+    `clear_due_date=True` явно сбрасывает due_date → NULL.
+    `clear_recurrence=True` явно сбрасывает recurrence_rule → NULL.
+    """
+    sets: list[str] = []
+    params: list = []
+
+    def add(column: str, value):
+        params.append(value)
+        sets.append(f"{column} = ${len(params)}")
+
+    if text is not None:
+        add('corrected_text', text)
+    if category is not None:
+        add('category', category)
+    if note_type is not None:
+        add('type', note_type)
+    if clear_due_date:
+        add('due_date', None)
+    elif due_date is not None:
+        add('due_date', due_date)
+    if clear_recurrence:
+        add('recurrence_rule', None)
+    elif recurrence_rule is not None:
+        add('recurrence_rule', recurrence_rule)
+
+    if not sets:
+        return True  # ничего не менять — успех
+
+    sets.append("updated_at = NOW()")
+    params.append(note_id)
+    params.append(telegram_id)
+    query = (
+        f"UPDATE notes SET {', '.join(sets)} "
+        f"WHERE note_id = ${len(params) - 1} AND telegram_id = ${len(params)}"
+    )
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(query, *params)
+    return int(result.split(" ")[1]) > 0
 
 
 async def set_note_recurrence_rule(note_id: int, telegram_id: int, rule: str | None) -> bool:
@@ -229,7 +357,11 @@ async def delete_note(note_id: int, telegram_id: int) -> bool:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("DELETE FROM notes WHERE note_id = $1 AND telegram_id = $2", note_id, telegram_id)
-        return int(result.split(" ")[1]) > 0
+        ok = int(result.split(" ")[1]) > 0
+    if ok:
+        from . import reminder_repo
+        await reminder_repo.delete_note_reminder(note_id)
+    return ok
 
 
 async def get_notes_with_reminders() -> list[dict]:

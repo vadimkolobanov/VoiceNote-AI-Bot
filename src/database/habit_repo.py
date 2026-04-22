@@ -85,7 +85,11 @@ async def delete_habit(habit_id: int, user_telegram_id: int) -> bool:
     async with pool.acquire() as conn:
         query = "DELETE FROM habits WHERE id = $1 AND user_telegram_id = $2"
         result = await conn.execute(query, habit_id, user_telegram_id)
-        return int(result.split(" ")[1]) > 0
+        ok = int(result.split(" ")[1]) > 0
+    if ok:
+        from . import reminder_repo
+        await reminder_repo.delete_habit_reminder(habit_id)
+    return ok
 
 
 async def get_weekly_stats(habit_id: int, start_date: str) -> list[dict]:

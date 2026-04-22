@@ -383,7 +383,173 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_shopping_invites_code ON shopping_list_invites (code) WHERE consumed_at IS NULL;",
+
+    # --- Phase 2: notes typing ---
+    # Добавляем строгий enum type: 'note' (обычная), 'task' (с due_date),
+    # 'reminder' (одноразовое напоминание), 'idea'. category остаётся для обратной
+    # совместимости с ботом, но теперь это free-form подсказка, а не источник правды.
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='notes' AND column_name='type') THEN
+            ALTER TABLE notes ADD COLUMN type TEXT;
+            -- Backfill на основе существующих данных:
+            UPDATE notes SET type =
+                CASE
+                    WHEN due_date IS NOT NULL THEN 'task'
+                    WHEN LOWER(COALESCE(category, '')) LIKE 'задач%' THEN 'task'
+                    WHEN LOWER(COALESCE(category, '')) LIKE 'напомин%' THEN 'task'
+                    WHEN LOWER(COALESCE(category, '')) LIKE 'иде%' THEN 'idea'
+                    WHEN LOWER(COALESCE(category, '')) LIKE 'покуп%' THEN 'shopping'
+                    ELSE 'note'
+                END
+            WHERE type IS NULL;
+            ALTER TABLE notes ALTER COLUMN type SET NOT NULL;
+            ALTER TABLE notes ALTER COLUMN type SET DEFAULT 'note';
+        END IF;
+        -- Добавляем CHECK constraint только если ещё нет
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = 'notes_type_check' AND table_name = 'notes'
+        ) THEN
+            ALTER TABLE notes ADD CONSTRAINT notes_type_check
+                CHECK (type IN ('note', 'task', 'idea', 'shopping'));
+        END IF;
+    END $$;
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_notes_type ON notes (telegram_id, type, is_archived);",
+    "CREATE INDEX IF NOT EXISTS idx_notes_due_date_task ON notes (telegram_id, due_date) WHERE type = 'task' AND is_archived = FALSE AND is_completed = FALSE;",
+
+    # --- Phase 3a: unified reminders read-model ---
+    # Polymorphic таблица напоминаний. entity_type указывает на источник
+    # (note | habit | birthday), entity_id — ID в соответствующей таблице.
+    # FK намеренно нет (polymorphic). Синхронизацию поддерживает приложение:
+    # bootstrap-миграция при старте + sync-hooks в repo/scheduler.
+    """
+    CREATE TABLE IF NOT EXISTS reminders (
+        id                    BIGSERIAL PRIMARY KEY,
+        user_id               BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        entity_type           TEXT   NOT NULL CHECK (entity_type IN ('note', 'habit', 'birthday')),
+        entity_id             BIGINT NOT NULL,
+        title                 TEXT   NOT NULL,
+        rrule                 TEXT,                                -- NULL = one-shot
+        dtstart               TIMESTAMPTZ NOT NULL,
+        next_fire_at          TIMESTAMPTZ,
+        last_fired_at         TIMESTAMPTZ,
+        pre_reminder_minutes  INTEGER NOT NULL DEFAULT 0,
+        status                TEXT   NOT NULL DEFAULT 'active'
+                               CHECK (status IN ('active', 'paused', 'completed')),
+        created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (entity_type, entity_id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_reminders_fire ON reminders (next_fire_at) WHERE status = 'active';",
+    "CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders (user_id, status);",
+
+    # --- Phase 5: unified device pairings ---
+    # Единая таблица одноразовых кодов для сопряжения устройств / каналов входа.
+    # Заменяет mobile_activation_codes и users.alice_activation_code.
+    # platform: 'telegram' | 'alice' | 'mobile_app' | 'gosuslugi' | 'max'
+    """
+    CREATE TABLE IF NOT EXISTS device_pairings (
+        id                BIGSERIAL PRIMARY KEY,
+        user_telegram_id  BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        platform          TEXT   NOT NULL CHECK (platform IN (
+                              'telegram', 'alice', 'mobile_app', 'gosuslugi', 'max', 'email'
+                          )),
+        code              TEXT   NOT NULL,
+        expires_at        TIMESTAMPTZ NOT NULL,
+        consumed_at       TIMESTAMPTZ,
+        device_metadata   JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (platform, code)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_device_pairings_user ON device_pairings (user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_device_pairings_code_active ON device_pairings (platform, code) WHERE consumed_at IS NULL;",
 ]
+
+
+# --- Phase 5: backfill device_pairings from legacy tables ---
+DEVICE_PAIRINGS_BACKFILL_STATEMENT = """
+INSERT INTO device_pairings (user_telegram_id, platform, code, expires_at, consumed_at, created_at)
+SELECT telegram_id, 'mobile_app', code, expires_at, NULL, NOW()
+FROM mobile_activation_codes
+WHERE expires_at > NOW() - INTERVAL '30 days'
+ON CONFLICT (platform, code) DO NOTHING;
+
+INSERT INTO device_pairings (user_telegram_id, platform, code, expires_at, consumed_at, created_at)
+SELECT telegram_id, 'alice', alice_activation_code, alice_code_expires_at, NULL, NOW()
+FROM users
+WHERE alice_activation_code IS NOT NULL
+  AND alice_code_expires_at IS NOT NULL
+  AND alice_code_expires_at > NOW() - INTERVAL '30 days'
+ON CONFLICT (platform, code) DO NOTHING;
+"""
+
+
+# --- Phase 3a: one-time backfill of reminders from notes/habits/birthdays ---
+# Idempotent: полагается на UNIQUE (entity_type, entity_id).
+REMINDERS_BACKFILL_STATEMENT = """
+-- Заметки с due_date -> reminders (one-shot или recurring)
+INSERT INTO reminders (user_id, entity_type, entity_id, title, rrule,
+                       dtstart, next_fire_at, pre_reminder_minutes, status)
+SELECT
+    n.telegram_id,
+    'note',
+    n.note_id,
+    COALESCE(NULLIF(n.summary_text, ''), LEFT(n.corrected_text, 120)),
+    n.recurrence_rule,
+    n.due_date,
+    CASE
+        WHEN n.is_archived OR n.is_completed THEN NULL
+        WHEN n.due_date < NOW() AND n.recurrence_rule IS NULL THEN NULL
+        ELSE n.due_date
+    END,
+    COALESCE(u.pre_reminder_minutes, 0),
+    CASE
+        WHEN n.is_archived OR n.is_completed THEN 'completed'
+        WHEN n.due_date < NOW() AND n.recurrence_rule IS NULL THEN 'completed'
+        ELSE 'active'
+    END
+FROM notes n
+JOIN users u ON u.telegram_id = n.telegram_id
+WHERE n.due_date IS NOT NULL
+ON CONFLICT (entity_type, entity_id) DO NOTHING;
+
+-- Привычки -> reminders
+INSERT INTO reminders (user_id, entity_type, entity_id, title, rrule,
+                       dtstart, next_fire_at, status)
+SELECT
+    h.user_telegram_id,
+    'habit',
+    h.id,
+    h.name,
+    h.frequency_rule,
+    -- dtstart берём как created_at (без времени — пусть scheduler сам разберёт)
+    h.created_at,
+    NULL,                                 -- вычислит scheduler / repo при следующем старте
+    CASE WHEN h.is_active THEN 'active' ELSE 'paused' END
+FROM habits h
+ON CONFLICT (entity_type, entity_id) DO NOTHING;
+
+-- Дни рождения -> reminders (RRULE=YEARLY)
+INSERT INTO reminders (user_id, entity_type, entity_id, title, rrule,
+                       dtstart, next_fire_at, status)
+SELECT
+    b.user_telegram_id,
+    'birthday',
+    b.id,
+    b.person_name,
+    'FREQ=YEARLY;BYMONTH=' || b.birth_month::text || ';BYMONTHDAY=' || b.birth_day::text,
+    -- dtstart — ближайшая дата рождения в будущем либо сегодня
+    (date_trunc('day', NOW()))::timestamptz,
+    NULL,
+    'active'
+FROM birthdays b
+ON CONFLICT (entity_type, entity_id) DO NOTHING;
+"""
 
 
 # --- One-time data migration: notes with category='Покупки' → shopping_lists ---
@@ -522,6 +688,22 @@ async def init_db():
                 await connection.execute(SHOPPING_MIGRATION_STATEMENT)
             except Exception as e:
                 logger.error("Миграция shopping_lists провалилась: %s", e, exc_info=True)
+                raise
+
+            # Phase 3a: backfill единой таблицы reminders из notes/habits/birthdays
+            logger.info("Синхронизация таблицы reminders из существующих источников...")
+            try:
+                await connection.execute(REMINDERS_BACKFILL_STATEMENT)
+            except Exception as e:
+                logger.error("Backfill reminders провалился: %s", e, exc_info=True)
+                raise
+
+            # Phase 5: backfill device_pairings
+            logger.info("Миграция кодов сопряжения в device_pairings...")
+            try:
+                await connection.execute(DEVICE_PAIRINGS_BACKFILL_STATEMENT)
+            except Exception as e:
+                logger.error("Backfill device_pairings провалился: %s", e, exc_info=True)
                 raise
 
             logger.info("Схема базы данных актуальна.")

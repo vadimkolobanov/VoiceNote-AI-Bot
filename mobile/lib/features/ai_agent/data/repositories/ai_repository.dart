@@ -17,6 +17,9 @@ class AiRepository {
       );
       return (response.data!['reply'] as String?) ?? '';
     } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return 'AI-агент появится в ближайших обновлениях. Следите за новостями!';
+      }
       throw ApiException.fromDio(e);
     }
   }
@@ -35,6 +38,7 @@ class AiRepository {
           .map((e) => ChatMessage.fromJson(e as Map<String, dynamic>))
           .toList(growable: false);
     } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return const <ChatMessage>[];
       throw ApiException.fromDio(e);
     }
   }
@@ -50,6 +54,7 @@ class AiRepository {
           .map((e) => MemoryFact.fromJson(e as Map<String, dynamic>))
           .toList(growable: false);
     } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return const <MemoryFact>[];
       throw ApiException.fromDio(e);
     }
   }

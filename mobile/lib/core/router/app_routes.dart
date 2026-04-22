@@ -4,10 +4,13 @@ abstract final class AppRoutes {
   static const login = '/login';
 
   // Shell tabs
+  static const today = '/today';
   static const notes = '/notes';
+  static const tasks = '/tasks';
   static const habits = '/habits';
   static const agent = '/agent';
   static const profile = '/profile';
+  static const voiceCapture = '/voice';
 
   // Pushed screens
   static const createNote = '/notes/new';
@@ -19,6 +22,7 @@ abstract final class AppRoutes {
   static const settings = '/settings';
   static const memoryFacts = '/agent/memory';
   static const achievements = '/profile/achievements';
+  static const allReminders = '/tasks/all-reminders';
 
   static String noteDetailFor(int id) => '/notes/$id';
 }
