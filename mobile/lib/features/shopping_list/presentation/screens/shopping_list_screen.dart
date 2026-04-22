@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/core/utils/date_formatter.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/shopping_list/data/models/shopping_list.dart';
 import 'package:voicenote_ai/features/shopping_list/data/repositories/shopping_repository.dart';
 import 'package:voicenote_ai/features/shopping_list/presentation/screens/shopping_list_detail_screen.dart';
@@ -27,17 +28,20 @@ class _ShoppingListsScreenState extends ConsumerState<ShoppingListsScreen>
     final async = ref.watch(shoppingListsProvider(_showArchived));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Покупки'),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Покупки',
+        subtitle: async.valueOrNull == null ? null :
+          '${async.valueOrNull!.length} ${_showArchived ? "архивных" : "активных"}',
         actions: [
           IconButton(
-            tooltip: _showArchived ? 'Скрыть архив' : 'Показать архив',
-            icon: Icon(_showArchived ? Icons.unarchive_outlined : Icons.archive_outlined),
+            tooltip: _showArchived ? 'Активные' : 'Архив',
+            icon: Icon(_showArchived ? Icons.inbox_outlined : Icons.archive_outlined, size: 22),
             onPressed: () => setState(() => _showArchived = !_showArchived),
           ),
           IconButton(
             tooltip: 'Присоединиться по коду',
-            icon: const Icon(Icons.vpn_key_outlined),
+            icon: const Icon(Icons.vpn_key_outlined, size: 22),
             onPressed: () => _showJoinDialog(context),
           ),
         ],
@@ -211,84 +215,64 @@ class _ListCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return MxCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(
-                      color: summary.isArchived
-                          ? scheme.surfaceContainerHighest
-                          : scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      summary.isArchived ? Icons.archive : Icons.shopping_cart_outlined,
-                      color: summary.isArchived
-                          ? scheme.onSurfaceVariant
-                          : scheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          summary.title,
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          summary.isArchived
-                              ? 'Архив • ${DateFormatter.shortDayMonth(summary.archivedAt!)}'
-                              : 'Создан ${DateFormatter.relative(summary.createdAt)}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    '${summary.checkedCount}/${summary.itemsCount}',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: summary.isCompleted
-                              ? scheme.primary
-                              : scheme.onSurfaceVariant,
-                        ),
-                  ),
-                ],
+              MxAccentTile(
+                icon: summary.isArchived ? Icons.archive_outlined : Icons.shopping_cart_outlined,
+                accent: summary.isArchived ? MxAccent.neutral : MxAccent.tools,
+                size: 40,
               ),
-              if (summary.itemsCount > 0) ...[
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: summary.progress,
-                    minHeight: 6,
-                    backgroundColor: scheme.surfaceContainerHighest,
-                    color: summary.isCompleted ? scheme.primary : scheme.secondary,
-                  ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      summary.title,
+                      style: const TextStyle(
+                        color: MX.fg, fontWeight: FontWeight.w700, fontSize: 15,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      summary.isArchived
+                          ? 'Архив · ${DateFormatter.shortDayMonth(summary.archivedAt!)}'
+                          : 'Создан ${DateFormatter.relative(summary.createdAt)}',
+                      style: const TextStyle(color: MX.fgMicro, fontSize: 12),
+                    ),
+                  ],
                 ),
-              ],
+              ),
+              Text(
+                '${summary.checkedCount}/${summary.itemsCount}',
+                style: TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w700,
+                  color: summary.isCompleted ? MX.accentTools : MX.fgMuted,
+                ),
+              ),
             ],
           ),
-        ),
+          if (summary.itemsCount > 0) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: summary.progress,
+                minHeight: 4,
+                backgroundColor: MX.surfaceOverlay,
+                color: summary.isCompleted ? MX.accentTools : MX.accentAi,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

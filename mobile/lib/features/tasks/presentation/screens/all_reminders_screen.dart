@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/core/utils/date_formatter.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/tasks/data/models/reminder.dart';
 import 'package:voicenote_ai/features/tasks/data/repositories/reminders_repository.dart';
 import 'package:voicenote_ai/shared/widgets/app_error.dart';
@@ -16,7 +18,15 @@ class AllRemindersScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(allRemindersProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Все напоминания')),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Напоминания',
+        subtitle: async.valueOrNull == null ? null : '${async.valueOrNull!.length} активных',
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: () async => ref.invalidate(allRemindersProvider),
         child: async.when(

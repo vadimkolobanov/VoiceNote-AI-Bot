@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/router/app_routes.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/payments/data/models/subscription.dart';
 import 'package:voicenote_ai/features/payments/data/repositories/payments_repository.dart';
 
@@ -43,7 +45,19 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
     final body = _buildBody(context);
     if (widget.inline) return body;
     return Scaffold(
-      appBar: AppBar(title: const Text('Premium')),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Premium',
+        leading: IconButton(
+          icon: const Icon(Icons.close, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        actions: [
+          TextButton(onPressed: () {}, child: const Text('Восстановить',
+              style: TextStyle(color: MX.fgMuted, fontSize: 13))),
+          const SizedBox(width: 4),
+        ],
+      ),
       body: body,
     );
   }

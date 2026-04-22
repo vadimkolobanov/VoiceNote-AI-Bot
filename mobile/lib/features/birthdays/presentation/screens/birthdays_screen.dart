@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/birthdays/data/models/birthday.dart';
 import 'package:voicenote_ai/features/birthdays/data/repositories/birthdays_repository.dart';
 import 'package:voicenote_ai/shared/widgets/app_error.dart';
@@ -15,7 +17,21 @@ class BirthdaysScreen extends ConsumerWidget {
     final async = ref.watch(birthdaysListProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Дни рождения')),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Дни рождения',
+        subtitle: async.valueOrNull == null ? null :
+          '${async.valueOrNull!.length} контактов',
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.arrow_back, size: 22),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ),
+        actions: [
+          IconButton(icon: const Icon(Icons.add, size: 22), onPressed: () => _showAdd(context, ref)),
+        ],
+      ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => AppErrorView(

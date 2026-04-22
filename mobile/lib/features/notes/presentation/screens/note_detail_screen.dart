@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/core/utils/date_formatter.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/notes/data/models/note.dart';
 import 'package:voicenote_ai/features/notes/data/repositories/notes_repository.dart';
 import 'package:voicenote_ai/shared/widgets/app_error.dart';
@@ -176,17 +178,23 @@ class _NoteDetailScreenState extends ConsumerState<NoteDetailScreen> {
     final async = ref.watch(_noteProvider(widget.noteId));
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(async.valueOrNull?.isTask == true ? 'Задача' : 'Заметка'),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: async.valueOrNull?.isTask == true ? 'Задача' : 'Заметка',
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         actions: [
           if (_dirty && !_saving)
-            TextButton(onPressed: _save, child: const Text('Сохранить')),
+            TextButton(onPressed: _save, child: const Text('Сохранить',
+                style: TextStyle(color: MX.accentAi))),
           if (_saving)
             const Padding(
               padding: EdgeInsets.all(14),
               child: SizedBox(
                 width: 20, height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(strokeWidth: 2, color: MX.accentAi),
               ),
             ),
         ],

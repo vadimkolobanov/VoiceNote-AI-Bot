@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/profile/data/repositories/profile_repository.dart';
 import 'package:voicenote_ai/shared/widgets/app_error.dart';
 
@@ -11,7 +13,14 @@ class AchievementsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(achievementsProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Достижения')),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Достижения',
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) =>

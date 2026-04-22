@@ -22,6 +22,7 @@ import 'package:voicenote_ai/features/shopping_list/presentation/screens/shoppin
 import 'package:voicenote_ai/features/tasks/presentation/screens/all_reminders_screen.dart';
 import 'package:voicenote_ai/features/tasks/presentation/screens/tasks_screen.dart';
 import 'package:voicenote_ai/features/today/presentation/screens/today_screen.dart';
+import 'package:voicenote_ai/features/voice/presentation/voice_capture_screen.dart';
 // (Detail screen is pushed via MaterialPageRoute from the list screen.)
 import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 
@@ -83,13 +84,14 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: AppRoutes.habits,
             pageBuilder: (_, __) => const NoTransitionPage(child: HabitsScreen()),
           ),
-          GoRoute(
-            path: AppRoutes.agent,
-            pageBuilder: (_, __) => const NoTransitionPage(child: AiChatScreen()),
-          ),
         ],
       ),
-      // Profile is reachable from header/drawer, not a bottom tab.
+      // Reachable from drawer / header, not a bottom tab.
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.agent,
+        builder: (_, __) => const AiChatScreen(),
+      ),
       GoRoute(
         parentNavigatorKey: _rootKey,
         path: AppRoutes.profile,
@@ -98,7 +100,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         parentNavigatorKey: _rootKey,
         path: AppRoutes.voiceCapture,
-        builder: (_, __) => const CreateNoteScreen(),
+        pageBuilder: (_, __) => CustomTransitionPage(
+          opaque: true,
+          fullscreenDialog: true,
+          child: const VoiceCaptureScreen(),
+          transitionsBuilder: (_, animation, __, child) => FadeTransition(
+            opacity: animation, child: child,
+          ),
+        ),
       ),
 
       // Pushed screens (outside shell)

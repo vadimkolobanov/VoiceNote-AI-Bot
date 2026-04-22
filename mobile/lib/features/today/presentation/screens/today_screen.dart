@@ -6,15 +6,20 @@ import 'package:intl/intl.dart';
 import 'package:voicenote_ai/core/router/app_routes.dart';
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/core/utils/date_formatter.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/habits/application/habits_controller.dart';
+import 'package:voicenote_ai/features/habits/data/models/habit.dart';
 import 'package:voicenote_ai/features/notes/application/notes_controller.dart';
 import 'package:voicenote_ai/features/notes/data/models/note.dart';
 import 'package:voicenote_ai/features/notes/data/repositories/notes_repository.dart';
 import 'package:voicenote_ai/features/tasks/data/models/reminder.dart';
 import 'package:voicenote_ai/features/tasks/data/repositories/reminders_repository.dart';
+import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 
-/// «Сегодня» — dashboard. Первый экран после логина.
+/// «Сегодня» — dashboard. Первый экран после входа. Соответствует макету
+/// ScreenToday: AI greeting, 3 статы, напоминания (rows со stripe), привычки
+/// (check-list внутри карточки) и последние заметки.
 class TodayScreen extends ConsumerWidget {
   const TodayScreen({super.key});
 
@@ -23,8 +28,6 @@ class TodayScreen extends ConsumerWidget {
     final session = ref.watch(sessionControllerProvider);
     final remindersAsync = ref.watch(allRemindersProvider);
     final habitsAsync = ref.watch(habitsListProvider);
-    // notesControllerProvider возвращает NotesListState (не AsyncValue),
-    // поэтому читаем поля напрямую.
     final notesState = ref.watch(
       notesControllerProvider(const NotesQuery(
         segment: NotesSegment.active, type: NoteType.note,
@@ -32,155 +35,165 @@ class TodayScreen extends ConsumerWidget {
     );
 
     final now = DateTime.now();
-    final weekday = DateFormat('EEEE, d MMMM', 'ru').format(now);
-    final greeting = _greeting(now.hour);
+    final weekday = DateFormat('EEE, d MMMM', 'ru').format(now);
     final name = session.user?.firstName ?? 'друг';
+    final isVip = session.user?.isVip ?? false;
 
     return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        titleSpacing: 20,
-        title: Row(
-          children: [
-            Container(
-              width: 32, height: 32,
-              decoration: const BoxDecoration(
-                gradient: MX.brandGradient,
-                borderRadius: BorderRadius.all(Radius.circular(8)),
-              ),
-              child: const Center(
-                child: Text('М',
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Text('Методекс', style: TextStyle(fontWeight: FontWeight.w600)),
-          ],
-        ),
+      backgroundColor: MX.bgBase,
+      drawer: const MethodexDrawer(),
+      appBar: MxAppBar(
+        title: 'Сегодня',
+        subtitle: _capitalize(weekday),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () => context.push(AppRoutes.allReminders),
+            icon: const Icon(Icons.search, size: 22),
+            onPressed: () {},
           ),
           IconButton(
-            icon: const CircleAvatar(
-              radius: 16,
-              backgroundColor: MX.accentAi,
-              child: Icon(Icons.person_outline, color: MX.bgBase, size: 18),
-            ),
-            onPressed: () => context.push(AppRoutes.profile),
+            icon: const Icon(Icons.notifications_none, size: 22),
+            onPressed: () => context.push(AppRoutes.allReminders),
           ),
-          const SizedBox(width: 8),
         ],
       ),
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(allRemindersProvider);
-            ref.invalidate(habitsListProvider);
-          },
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
-            children: [
-              _Header(
-                subtitle: _capitalize(weekday),
-                title: '$greeting, $name',
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(allRemindersProvider);
+          ref.invalidate(habitsListProvider);
+        },
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
+          children: [
+            _AiGreetingCard(name: name, isVip: isVip),
+            _StatsRow(
+              tasksCount: _countToday(remindersAsync.valueOrNull),
+              habitsDone: _countHabitsDone(habitsAsync.valueOrNull),
+              habitsTotal: habitsAsync.valueOrNull?.length ?? 0,
+              notesCount: notesState.items.length,
+            ),
+            MxSectionTitle(
+              label: 'Напоминания',
+              meta: remindersAsync.valueOrNull == null
+                  ? null
+                  : '${_countToday(remindersAsync.valueOrNull)} на сегодня',
+              trailing: TextButton(
+                onPressed: () => context.go(AppRoutes.tasks),
+                child: const Text('Все',
+                    style: TextStyle(color: MX.fgMuted, fontSize: 12)),
               ),
-              const SizedBox(height: 20),
-              _AiGreetingCard(isVip: session.user?.isVip ?? false),
-              const SizedBox(height: 20),
-              _StatsRow(
-                tasksToday: _countToday(remindersAsync.valueOrNull),
-                habits: habitsAsync.valueOrNull?.length ?? 0,
-                notes: notesState.items.length,
+            ),
+            remindersAsync.when(
+              loading: () => const _SkeletonBlock(lines: 3),
+              error: (_, __) => const MxEmptyState(
+                icon: Icons.error_outline,
+                title: 'Не удалось загрузить',
               ),
-              const SizedBox(height: 28),
-              _SectionTitle(
-                label: 'На сегодня',
-                trailing: TextButton(
-                  onPressed: () => context.go(AppRoutes.tasks),
-                  child: const Text('Все →'),
-                ),
-              ),
-              const SizedBox(height: 8),
-              remindersAsync.when(
-                loading: () => const _Shimmer(),
-                error: (_, __) => const _EmptyHint('Не удалось загрузить'),
-                data: (all) {
-                  final today = _filterToday(all);
-                  if (today.isEmpty) {
-                    return const _EmptyHint('Сегодня свободно — можно позволить себе что-то хорошее.');
-                  }
-                  return Column(
-                    children: [for (final r in today.take(4)) _ReminderRow(reminder: r)],
+              data: (all) {
+                final today = _filterToday(all);
+                if (today.isEmpty) {
+                  return const MxEmptyState(
+                    icon: Icons.check_circle_outline,
+                    title: 'Сегодня свободно',
+                    subtitle: 'Можно позволить себе что-то хорошее.',
                   );
-                },
-              ),
-              const SizedBox(height: 28),
-              _SectionTitle(
-                label: 'Привычки',
-                trailing: TextButton(
-                  onPressed: () => context.go(AppRoutes.habits),
-                  child: const Text('Все →'),
-                ),
-              ),
-              const SizedBox(height: 8),
-              habitsAsync.when(
-                loading: () => const _Shimmer(),
-                error: (_, __) => const _EmptyHint('Не удалось загрузить'),
-                data: (habits) {
-                  if (habits.isEmpty) {
-                    return const _EmptyHint('Создайте первую привычку.');
-                  }
-                  return Column(
-                    children: [
-                      for (final h in habits.take(3))
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: _HabitPill(name: h.name, streak: h.streak, done: h.completedToday),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 28),
-              _SectionTitle(
-                label: 'Последние заметки',
-                trailing: TextButton(
-                  onPressed: () => context.go(AppRoutes.notes),
-                  child: const Text('Все →'),
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (notesState.items.isEmpty)
-                const _EmptyHint('Записей пока нет. Нажмите микрофон внизу.')
-              else
-                Column(
+                }
+                return Column(
                   children: [
-                    for (final n in notesState.items.take(3))
+                    for (final r in today.take(4))
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: _NoteRow(note: n),
+                        child: MxReminderRow(
+                          time: DateFormat('HH:mm').format(r.nextFireAt!.toLocal()),
+                          title: r.title,
+                          accent: _accentFor(r),
+                          repeat: r.isRecurring,
+                        ),
                       ),
                   ],
-                ),
-            ],
-          ),
+                );
+              },
+            ),
+            MxSectionTitle(
+              label: 'Привычки',
+              meta: habitsAsync.valueOrNull == null
+                  ? null
+                  : '${_countHabitsDone(habitsAsync.valueOrNull)} из ${habitsAsync.valueOrNull?.length ?? 0}',
+              trailing: TextButton(
+                onPressed: () => context.go(AppRoutes.habits),
+                child: const Text('Все',
+                    style: TextStyle(color: MX.fgMuted, fontSize: 12)),
+              ),
+            ),
+            habitsAsync.when(
+              loading: () => const _SkeletonBlock(lines: 2),
+              error: (_, __) => const SizedBox.shrink(),
+              data: (habits) {
+                if (habits.isEmpty) {
+                  return const MxEmptyState(
+                    icon: Icons.repeat,
+                    title: 'Пока нет привычек',
+                    subtitle: 'Создайте первую — начнём трекать.',
+                  );
+                }
+                return MxCard(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < habits.length && i < 5; i++) ...[
+                        _HabitChecklistRow(habit: habits[i]),
+                        if (i < habits.length - 1 && i < 4)
+                          const Divider(color: MX.lineFaint, height: 20, thickness: 0.5),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+            MxSectionTitle(
+              label: 'Недавно',
+              meta: 'Последние заметки',
+              trailing: TextButton(
+                onPressed: () => context.go(AppRoutes.notes),
+                child: const Text('Все',
+                    style: TextStyle(color: MX.fgMuted, fontSize: 12)),
+              ),
+            ),
+            if (notesState.items.isEmpty)
+              const MxEmptyState(
+                icon: Icons.edit_note_outlined,
+                title: 'Записей пока нет',
+                subtitle: 'Нажмите микрофон внизу, чтобы быстро записать мысль.',
+              )
+            else
+              Column(
+                children: [
+                  for (final n in notesState.items.take(3))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _TodayNoteRow(
+                        note: n,
+                        onTap: () => context.push(AppRoutes.noteDetailFor(n.id)),
+                      ),
+                    ),
+                ],
+              ),
+          ],
         ),
       ),
     );
   }
 
-  static String _greeting(int hour) {
-    if (hour < 6) return 'Доброй ночи';
-    if (hour < 12) return 'Доброе утро';
-    if (hour < 18) return 'Добрый день';
-    return 'Добрый вечер';
-  }
-
   static String _capitalize(String s) =>
       s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+  static MxAccent _accentFor(Reminder r) => switch (r.entityType) {
+        ReminderEntityType.note => MxAccent.ai,
+        ReminderEntityType.habit => MxAccent.tools,
+        ReminderEntityType.birthday => MxAccent.security,
+      };
+
+  static int _countHabitsDone(List<Habit>? habits) =>
+      habits == null ? 0 : habits.where((h) => h.completedToday).length;
 
   static int _countToday(List<Reminder>? all) {
     if (all == null) return 0;
@@ -208,79 +221,75 @@ class TodayScreen extends ConsumerWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Widgets
+// AI greeting card
 // ═══════════════════════════════════════════════════════════════════════════
 
-class _Header extends StatelessWidget {
-  const _Header({required this.subtitle, required this.title});
-  final String subtitle;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          subtitle.toUpperCase(),
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                letterSpacing: 1.2, fontWeight: FontWeight.w600,
-                color: MX.fgMicro,
-              ),
-        ),
-        const SizedBox(height: 6),
-        Text(title, style: Theme.of(context).textTheme.displaySmall),
-      ],
-    );
-  }
-}
-
 class _AiGreetingCard extends StatelessWidget {
-  const _AiGreetingCard({required this.isVip});
+  const _AiGreetingCard({required this.name, required this.isVip});
+  final String name;
   final bool isVip;
+
   @override
   Widget build(BuildContext context) {
+    final hour = DateTime.now().hour;
+    final greeting = hour < 6
+        ? 'Доброй ночи'
+        : hour < 12
+            ? 'Доброе утро'
+            : hour < 18
+                ? 'Добрый день'
+                : 'Добрый вечер';
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: MX.accentAiSoft,
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x0F00E5FF), Color(0x05FFFFFF)],
+        ),
         borderRadius: BorderRadius.circular(MX.rLg),
         border: Border.all(color: MX.accentAiLine),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40, height: 40,
-            decoration: const BoxDecoration(
-              gradient: MX.brandGradient,
-              borderRadius: BorderRadius.all(Radius.circular(10)),
-            ),
-            child: const Center(
-              child: Text('М',
-                  style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, size: 14, color: MX.accentAi),
+              const SizedBox(width: 6),
+              Text(
+                isVip ? 'АССИСТЕНТ · VIP' : 'АССИСТЕНТ',
+                style: const TextStyle(
+                  color: MX.accentAi, fontSize: 11,
+                  fontWeight: FontWeight.w800, letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '$greeting, $name. ${isVip ? "Показать краткую сводку дня?" : "Включите VIP, чтобы я помнил всё о вас."}',
+            style: const TextStyle(
+              color: MX.fg, fontSize: 16, fontWeight: FontWeight.w500,
+              height: 1.4, letterSpacing: -0.1,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Секретарь',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: MX.accentAi,
-                          fontWeight: FontWeight.w700,
-                        )),
-                const SizedBox(height: 4),
-                Text(
-                  isVip
-                      ? 'Помню 0 фактов о вас. Спросите что-нибудь в AI-чате.'
-                      : 'Разблокируйте AI-ассистента и полную память в Premium.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              MxPrimaryButton(
+                label: isVip ? 'Да, покажи' : 'Узнать о VIP',
+                height: 36,
+                onTap: () {},
+              ),
+              const SizedBox(width: 8),
+              MxGhostButton(
+                label: 'Открыть чат',
+                height: 36,
+                onTap: () {},
+              ),
+            ],
           ),
         ],
       ),
@@ -288,29 +297,46 @@ class _AiGreetingCard extends StatelessWidget {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Stats row
+// ═══════════════════════════════════════════════════════════════════════════
+
 class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.tasksToday, required this.habits, required this.notes});
-  final int tasksToday;
-  final int habits;
-  final int notes;
+  const _StatsRow({
+    required this.tasksCount,
+    required this.habitsDone,
+    required this.habitsTotal,
+    required this.notesCount,
+  });
+  final int tasksCount;
+  final int habitsDone;
+  final int habitsTotal;
+  final int notesCount;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        _StatCell(value: tasksToday, label: 'на сегодня', color: MX.accentAi),
-        const SizedBox(width: 10),
-        _StatCell(value: habits, label: 'привычек', color: MX.accentTools),
-        const SizedBox(width: 10),
-        _StatCell(value: notes, label: 'заметок', color: MX.fgMuted),
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Row(
+        children: [
+          _StatCell(value: '$tasksCount', label: 'задачи', color: MX.fg),
+          const SizedBox(width: 8),
+          _StatCell(
+            value: habitsTotal > 0 ? '$habitsDone/$habitsTotal' : '0',
+            label: 'привычки',
+            color: MX.accentTools,
+          ),
+          const SizedBox(width: 8),
+          _StatCell(value: '$notesCount', label: 'заметок', color: MX.fg),
+        ],
+      ),
     );
   }
 }
 
 class _StatCell extends StatelessWidget {
   const _StatCell({required this.value, required this.label, required this.color});
-  final int value;
+  final String value;
   final String label;
   final Color color;
 
@@ -318,7 +344,7 @@ class _StatCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
           color: MX.surfaceOverlay,
           borderRadius: BorderRadius.circular(MX.rLg),
@@ -327,15 +353,16 @@ class _StatCell extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('$value',
-                style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      color: color, height: 1.0,
-                    )),
+            Text(
+              value,
+              style: TextStyle(
+                color: color, fontSize: 22, fontWeight: FontWeight.w700, height: 1.0,
+              ),
+            ),
             const SizedBox(height: 4),
             Text(label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: MX.fgMicro, letterSpacing: 0.6,
-                    )),
+                style: const TextStyle(
+                    color: MX.fgMicro, fontSize: 11, fontWeight: FontWeight.w500)),
           ],
         ),
       ),
@@ -343,193 +370,140 @@ class _StatCell extends StatelessWidget {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.label, this.trailing});
-  final String label;
-  final Widget? trailing;
+// ═══════════════════════════════════════════════════════════════════════════
+// Habit checklist row
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _HabitChecklistRow extends StatelessWidget {
+  const _HabitChecklistRow({required this.habit});
+  final Habit habit;
 
   @override
   Widget build(BuildContext context) {
+    final done = habit.completedToday;
     return Row(
       children: [
+        AnimatedContainer(
+          duration: MX.durFast,
+          width: 22, height: 22,
+          decoration: BoxDecoration(
+            color: done ? MX.accentTools : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: done ? MX.accentTools : MX.lineBright, width: 1.5,
+            ),
+          ),
+          child: done ? const Icon(Icons.check, size: 14, color: MX.bgBase) : null,
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: Text(
-            label.toUpperCase(),
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: MX.fgMicro, letterSpacing: 1.2,
-                  fontWeight: FontWeight.w700,
-                ),
+            habit.name,
+            style: TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w500,
+              color: done ? MX.fgMuted : MX.fg,
+              decoration: done ? TextDecoration.lineThrough : null,
+            ),
           ),
         ),
-        if (trailing != null) trailing!,
+        if (habit.streak > 0) ...[
+          const Icon(Icons.local_fire_department, size: 14, color: MX.statusWarning),
+          const SizedBox(width: 2),
+          Text('${habit.streak}',
+              style: const TextStyle(
+                color: MX.statusWarning, fontSize: 12, fontWeight: FontWeight.w700,
+              )),
+        ],
       ],
     );
   }
 }
 
-class _ReminderRow extends StatelessWidget {
-  const _ReminderRow({required this.reminder});
-  final Reminder reminder;
+// ═══════════════════════════════════════════════════════════════════════════
+// Recent note row
+// ═══════════════════════════════════════════════════════════════════════════
 
-  @override
-  Widget build(BuildContext context) {
-    final time = reminder.nextFireAt != null
-        ? DateFormat('HH:mm').format(reminder.nextFireAt!.toLocal())
-        : '—';
-    final Color dotColor = switch (reminder.entityType) {
-      ReminderEntityType.note => MX.accentAi,
-      ReminderEntityType.habit => MX.accentTools,
-      ReminderEntityType.birthday => MX.accentPurple,
-    };
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: MX.surfaceOverlay,
-        borderRadius: BorderRadius.circular(MX.rMd),
-        border: Border.all(color: MX.line),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 8, height: 8,
-            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 52,
-            child: Text(time,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: MX.fgMuted, fontFeatures: const [],
-                    )),
-          ),
-          Expanded(
-            child: Text(reminder.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    )),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HabitPill extends StatelessWidget {
-  const _HabitPill({required this.name, required this.streak, required this.done});
-  final String name;
-  final int streak;
-  final bool done;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: done ? MX.accentToolsSoft : MX.surfaceOverlay,
-        borderRadius: BorderRadius.circular(MX.rMd),
-        border: Border.all(color: done ? MX.accentToolsLine : MX.line),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            done ? Icons.check_circle : Icons.radio_button_unchecked,
-            color: done ? MX.accentTools : MX.fgGhost,
-            size: 22,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(name,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w500,
-                      decoration: done ? TextDecoration.lineThrough : null,
-                    )),
-          ),
-          if (streak > 0) ...[
-            const Icon(Icons.local_fire_department, color: MX.statusWarning, size: 16),
-            const SizedBox(width: 2),
-            Text('$streak',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: MX.statusWarning, fontWeight: FontWeight.w700,
-                    )),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _NoteRow extends StatelessWidget {
-  const _NoteRow({required this.note});
+class _TodayNoteRow extends StatelessWidget {
+  const _TodayNoteRow({required this.note, this.onTap});
   final Note note;
+  final VoidCallback? onTap;
+
+  IconData get _icon => note.isShoppingList
+      ? Icons.shopping_cart_outlined
+      : Icons.edit_note_outlined;
+
+  MxAccent get _accent => note.isShoppingList ? MxAccent.tools : MxAccent.neutral;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: MX.surfaceOverlay,
-        borderRadius: BorderRadius.circular(MX.rMd),
-        border: Border.all(color: MX.line),
-      ),
+    return MxCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(14),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.edit_note, color: MX.fgMuted, size: 18),
-          const SizedBox(width: 10),
+          MxAccentTile(icon: _icon, accent: _accent),
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              note.summaryText?.isNotEmpty == true ? note.summaryText! : note.correctedText,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  note.summaryText?.isNotEmpty == true
+                      ? note.summaryText!
+                      : note.correctedText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: MX.fg, fontSize: 14, fontWeight: FontWeight.w600,
                   ),
+                ),
+                if ((note.summaryText ?? '').isNotEmpty &&
+                    note.correctedText != note.summaryText) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    note.correctedText,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: MX.fgMuted, fontSize: 12, height: 1.4),
+                  ),
+                ],
+              ],
             ),
           ),
-          Text(DateFormatter.relative(note.createdAt),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: MX.fgMicro)),
+          const SizedBox(width: 10),
+          Text(
+            DateFormatter.relative(note.createdAt),
+            style: const TextStyle(color: MX.fgMicro, fontSize: 11),
+          ),
         ],
       ),
     );
   }
 }
 
-class _Shimmer extends StatelessWidget {
-  const _Shimmer();
+// ═══════════════════════════════════════════════════════════════════════════
+// Skeleton
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({this.lines = 3});
+  final int lines;
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < lines; i++)
           Container(
             margin: const EdgeInsets.only(bottom: 8),
-            height: 44,
+            height: 52,
             decoration: BoxDecoration(
               color: MX.surfaceOverlay,
-              borderRadius: BorderRadius.circular(MX.rMd),
+              borderRadius: BorderRadius.circular(MX.rLg),
+              border: Border.all(color: MX.line),
             ),
           ),
       ],
-    );
-  }
-}
-
-class _EmptyHint extends StatelessWidget {
-  const _EmptyHint(this.text);
-  final String text;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: MX.surfaceOverlay,
-        borderRadius: BorderRadius.circular(MX.rMd),
-        border: Border.all(color: MX.line),
-      ),
-      child: Text(text,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: MX.fgMuted)),
     );
   }
 }

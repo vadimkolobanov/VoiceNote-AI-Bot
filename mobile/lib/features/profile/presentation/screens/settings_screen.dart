@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/profile/data/repositories/profile_repository.dart';
 
@@ -60,17 +62,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _initialized = true;
     }
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Настройки'),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Настройки',
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         actions: [
           TextButton(
             onPressed: _saving ? null : _save,
             child: _saving
                 ? const SizedBox(
                     width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(strokeWidth: 2, color: MX.accentAi),
                   )
-                : const Text('Сохранить'),
+                : const Text('Сохранить',
+                    style: TextStyle(color: MX.accentAi, fontSize: 13, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

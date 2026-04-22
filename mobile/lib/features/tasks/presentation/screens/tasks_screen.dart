@@ -3,14 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/router/app_routes.dart';
-// ignore: unused_import
-// ^ go_router already provides context.push via app_routes consumers.
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/notes/application/notes_controller.dart';
 import 'package:voicenote_ai/features/notes/data/models/note.dart';
 import 'package:voicenote_ai/features/notes/data/repositories/notes_repository.dart';
 import 'package:voicenote_ai/features/tasks/presentation/widgets/task_card.dart';
-import 'package:voicenote_ai/features/voice/presentation/voice_bar.dart';
 import 'package:voicenote_ai/shared/widgets/app_error.dart';
+import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 import 'package:voicenote_ai/shared/widgets/loading_shimmer.dart';
 
 /// Отдельный экран задач: та же сущность `notes`, но type=task.
@@ -51,33 +51,34 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
     final controller = ref.read(notesControllerProvider(_query).notifier);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Задачи'),
+      backgroundColor: MX.bgBase,
+      drawer: const MethodexDrawer(),
+      appBar: MxAppBar(
+        title: 'Задачи',
+        subtitle: state.items.isEmpty ? null : '${state.items.length} всего',
         actions: [
           IconButton(
             tooltip: 'Все напоминания',
-            icon: const Icon(Icons.notifications_none),
+            icon: const Icon(Icons.notifications_none, size: 22),
             onPressed: () => context.push(AppRoutes.allReminders),
           ),
+          IconButton(icon: const Icon(Icons.add, size: 22), onPressed: () {}),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: SegmentedButton<NotesSegment>(
-              style: SegmentedButton.styleFrom(visualDensity: VisualDensity.compact),
-              segments: const [
-                ButtonSegment(value: NotesSegment.active, label: Text('Предстоящие')),
-                ButtonSegment(value: NotesSegment.archive, label: Text('Выполнено')),
-              ],
-              selected: {_segment},
-              onSelectionChanged: (s) => setState(() => _segment = s.first),
-            ),
-          ),
-        ),
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: MxFilterPills(
+              selected: _segment == NotesSegment.active ? 'active' : 'archive',
+              onSelected: (v) => setState(() =>
+                  _segment = v == 'active' ? NotesSegment.active : NotesSegment.archive),
+              items: const [
+                MxFilterPill(value: 'active', label: 'Предстоящие'),
+                MxFilterPill(value: 'archive', label: 'Выполнено'),
+              ],
+            ),
+          ),
           Expanded(
             child: RefreshIndicator(
               onRefresh: controller.refresh,
@@ -130,7 +131,6 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
               ),
             ),
           ),
-          const VoiceBar(),
         ],
       ),
     );

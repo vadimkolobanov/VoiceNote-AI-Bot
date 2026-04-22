@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/router/app_routes.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/ai_agent/application/ai_chat_controller.dart';
 import 'package:voicenote_ai/features/ai_agent/presentation/widgets/chat_bubble.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
@@ -69,12 +71,18 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen> {
     final state = ref.watch(aiChatProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('AI Агент'),
+      backgroundColor: MX.bgBase,
+      appBar: MxAppBar(
+        title: 'Ассистент',
+        subtitle: 'Помнит 0 фактов',
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         actions: [
           IconButton(
             tooltip: 'Память',
-            icon: const Icon(Icons.psychology_alt_outlined),
+            icon: const Icon(Icons.psychology_alt_outlined, size: 22),
             onPressed: () => context.push(AppRoutes.memoryFacts),
           ),
         ],

@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/core/utils/date_formatter.dart';
+import 'package:voicenote_ai/core/widgets/mx_widgets.dart';
 import 'package:voicenote_ai/features/habits/application/habits_controller.dart';
 import 'package:voicenote_ai/features/habits/presentation/widgets/habit_card.dart';
 import 'package:voicenote_ai/shared/widgets/app_error.dart';
+import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 
 class HabitsScreen extends ConsumerWidget {
   const HabitsScreen({super.key});
@@ -15,12 +18,17 @@ class HabitsScreen extends ConsumerWidget {
     final async = ref.watch(habitsListProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Сегодня, ${DateFormatter.dayMonth(DateTime.now())}'),
+      backgroundColor: MX.bgBase,
+      drawer: const MethodexDrawer(),
+      appBar: MxAppBar(
+        title: 'Привычки',
+        subtitle: async.valueOrNull == null
+            ? null
+            : '${async.valueOrNull!.length} активных · ${async.valueOrNull!.where((h) => h.completedToday).length} сегодня',
         actions: [
           IconButton(
             tooltip: 'Создать привычку',
-            icon: const Icon(Icons.add),
+            icon: const Icon(Icons.add, size: 22),
             onPressed: () => _showCreate(context, ref),
           ),
         ],

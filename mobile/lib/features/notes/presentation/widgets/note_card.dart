@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:voicenote_ai/core/theme/app_theme.dart';
+import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/core/utils/date_formatter.dart';
 import 'package:voicenote_ai/features/notes/data/models/note.dart';
 
@@ -100,7 +101,7 @@ class NoteCard extends StatelessWidget {
                 tooltip: note.isCompleted ? 'Выполнено' : 'Отметить выполненным',
                 icon: Icon(
                   note.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
-                  color: note.isCompleted ? AppTheme.success : scheme.outline,
+                  color: note.isCompleted ? MX.accentTools : scheme.outline,
                 ),
                 onPressed: note.isCompleted ? null : onCompleteTap,
               ),
