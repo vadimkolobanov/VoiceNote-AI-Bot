@@ -706,6 +706,27 @@ async def init_db():
                 logger.error("Backfill device_pairings провалился: %s", e, exc_info=True)
                 raise
 
+            # PostgreSQL 17+ убрал deprecated алиасы часовых поясов.
+            # Нормализуем устаревшие значения в `users.timezone` один раз.
+            logger.info("Нормализация устаревших timezone-алиасов...")
+            try:
+                await connection.execute("""
+                    UPDATE users SET timezone = 'Europe/Kyiv'
+                     WHERE timezone = 'Europe/Kiev';
+                    UPDATE users SET timezone = 'Asia/Kolkata'
+                     WHERE timezone = 'Asia/Calcutta';
+                    UPDATE users SET timezone = 'Asia/Ho_Chi_Minh'
+                     WHERE timezone = 'Asia/Saigon';
+                    UPDATE users SET timezone = 'Asia/Yangon'
+                     WHERE timezone = 'Asia/Rangoon';
+                    UPDATE users SET timezone = 'America/Nuuk'
+                     WHERE timezone = 'America/Godthab';
+                    UPDATE users SET timezone = 'UTC'
+                     WHERE timezone IS NULL OR timezone = '';
+                """)
+            except Exception as e:
+                logger.warning("Нормализация timezone не удалась (не критично): %s", e)
+
             logger.info("Схема базы данных актуальна.")
 
 

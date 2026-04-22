@@ -14,6 +14,26 @@ from ..web.routes import bot_instance
 logger = logging.getLogger(__name__)
 
 
+# Устаревшие алиасы IANA tzdb, удалённые в PostgreSQL 17+. Приложение уже
+# не должно их создавать (миграция в connection.py нормализует users.timezone
+# при старте), но на случай, если где-то осталось в памяти/кэше/external source
+# — маппим к каноническим именам при чтении.
+_DEPRECATED_TZ_ALIASES = {
+    'Europe/Kiev': 'Europe/Kyiv',
+    'Asia/Calcutta': 'Asia/Kolkata',
+    'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+    'Asia/Rangoon': 'Asia/Yangon',
+    'America/Godthab': 'America/Nuuk',
+}
+
+
+def normalize_timezone(tz: str | None) -> str:
+    """Канонизирует IANA tzdb alias. None / пусто → 'UTC'."""
+    if not tz:
+        return 'UTC'
+    return _DEPRECATED_TZ_ALIASES.get(tz, tz)
+
+
 def get_level_for_xp(xp: int) -> int:
     """Вычисляет уровень на основе накопленного опыта."""
     return int((xp / 100) ** 0.5) + 1
@@ -140,6 +160,21 @@ async def get_user_profile(telegram_id: int) -> dict | None:
             except Exception as e:
                 logger.warning("Не удалось обновить level для %s: %s", telegram_id, e)
         profile['level'] = canonical_level
+
+        # PostgreSQL 17+ больше не принимает Europe/Kiev и другие устаревшие
+        # алиасы — нормализуем, чтобы не упасть в AT TIME ZONE запросах.
+        stored_tz = profile.get('timezone')
+        canonical_tz = normalize_timezone(stored_tz)
+        if canonical_tz != stored_tz:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE users SET timezone = $1 WHERE telegram_id = $2",
+                        canonical_tz, telegram_id,
+                    )
+            except Exception as e:
+                logger.warning("Не удалось нормализовать timezone для %s: %s", telegram_id, e)
+        profile['timezone'] = canonical_tz
 
     if profile:
         await cache_service.set_user_profile_to_cache(telegram_id, profile.copy())
