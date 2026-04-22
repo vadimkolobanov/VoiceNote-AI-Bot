@@ -5,7 +5,7 @@ import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/network/dio_client.dart';
 import 'package:voicenote_ai/features/notes/data/models/note.dart';
 
-enum NotesSegment { active, archive, shopping }
+enum NotesSegment { active, archive }
 
 class NotesRepository {
   NotesRepository(this._dio);
@@ -23,7 +23,6 @@ class NotesRepository {
           'page': page,
           'per_page': perPage,
           'archived': segment == NotesSegment.archive,
-          if (segment == NotesSegment.shopping) 'category': 'покупки',
         },
       );
       return PaginatedNotes.fromJson(response.data!);

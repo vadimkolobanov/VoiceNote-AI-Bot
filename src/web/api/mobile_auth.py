@@ -184,3 +184,60 @@ async def logout(
 async def me(current_user: dict = Depends(get_current_user)) -> dict:
     """Текущий пользователь."""
     return current_user
+
+
+# ============================================================
+# DEV-режим: вход под существующим Telegram-пользователем.
+# Позволяет просматривать реальные заметки из БД без регистрации.
+# В production убрать или защитить флагом.
+# ============================================================
+
+class DevUserItem(BaseModel):
+    telegram_id: int
+    first_name: str | None = None
+    username: str | None = None
+    notes_count: int = 0
+
+
+@router.get("/dev-users", response_model=list[DevUserItem])
+async def list_existing_telegram_users(limit: int = 50) -> list[dict]:
+    """Список реальных Telegram-пользователей из БД (для выбора на экране входа)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT u.telegram_id,
+                   u.first_name,
+                   u.username,
+                   COALESCE((
+                       SELECT COUNT(*) FROM notes n WHERE n.telegram_id = u.telegram_id
+                   ), 0) AS notes_count
+            FROM users u
+            WHERE u.telegram_id > 0           -- исключаем синтетических mobile-юзеров
+            ORDER BY notes_count DESC, u.telegram_id ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+class DevLoginRequest(BaseModel):
+    telegram_id: int
+
+
+@router.post("/dev-login", response_model=Token)
+async def dev_login(payload: DevLoginRequest) -> dict:
+    """Вход под существующим Telegram-пользователем (без пароля, dev-режим)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT telegram_id FROM users WHERE telegram_id = $1",
+            payload.telegram_id,
+        )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+    return await _issue_tokens(row["telegram_id"])

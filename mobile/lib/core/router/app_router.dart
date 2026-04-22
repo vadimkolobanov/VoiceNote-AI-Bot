@@ -19,6 +19,7 @@ import 'package:voicenote_ai/features/profile/presentation/screens/achievements_
 import 'package:voicenote_ai/features/profile/presentation/screens/profile_screen.dart';
 import 'package:voicenote_ai/features/profile/presentation/screens/settings_screen.dart';
 import 'package:voicenote_ai/features/shopping_list/presentation/screens/shopping_list_screen.dart';
+// (Detail screen is pushed via MaterialPageRoute from the list screen.)
 import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
@@ -99,7 +100,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         parentNavigatorKey: _rootKey,
         path: AppRoutes.shopping,
-        builder: (_, __) => const ShoppingListScreen(),
+        builder: (_, __) => const ShoppingListsScreen(),
       ),
       GoRoute(
         parentNavigatorKey: _rootKey,

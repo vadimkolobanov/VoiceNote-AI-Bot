@@ -65,7 +65,6 @@ class _NotesListScreenState extends ConsumerState<NotesListScreen> {
               segments: const [
                 ButtonSegment(value: NotesSegment.active, label: Text('Активные')),
                 ButtonSegment(value: NotesSegment.archive, label: Text('Архив')),
-                ButtonSegment(value: NotesSegment.shopping, label: Text('Покупки')),
               ],
               selected: {_segment},
               onSelectionChanged: (s) => setState(() => _segment = s.first),

@@ -298,9 +298,10 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email)) WHERE email IS NOT NULL;",
     "CREATE SEQUENCE IF NOT EXISTS mobile_user_id_seq START WITH 1 INCREMENT BY 1;",
 
-    # --- Subscriptions & payments (YooKassa) ---
+    # --- Mobile subscriptions & payments (YooKassa) ---
+    # Префикс `mobile_` чтобы не конфликтовать с существующими таблицами бота.
     """
-    CREATE TABLE IF NOT EXISTS subscriptions (
+    CREATE TABLE IF NOT EXISTS mobile_subscriptions (
         id BIGSERIAL PRIMARY KEY,
         user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
         plan TEXT NOT NULL CHECK (plan IN ('monthly','yearly')),
@@ -311,10 +312,10 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         cancelled_at TIMESTAMPTZ
     );
     """,
-    "CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions (user_telegram_id);",
-    "CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions (status, expires_at);",
+    "CREATE INDEX IF NOT EXISTS idx_mobile_subscriptions_user ON mobile_subscriptions (user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_mobile_subscriptions_active ON mobile_subscriptions (status, expires_at);",
     """
-    CREATE TABLE IF NOT EXISTS payments (
+    CREATE TABLE IF NOT EXISTS mobile_payments (
         id BIGSERIAL PRIMARY KEY,
         yookassa_payment_id TEXT UNIQUE NOT NULL,
         user_telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
@@ -327,8 +328,137 @@ CREATE_AND_UPDATE_TABLES_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     """,
-    "CREATE INDEX IF NOT EXISTS idx_payments_user ON payments (user_telegram_id);",
+    "CREATE INDEX IF NOT EXISTS idx_mobile_payments_user ON mobile_payments (user_telegram_id);",
+
+    # --- Phase 1: shopping lists as first-class entity ---
+    """
+    CREATE TABLE IF NOT EXISTS shopping_lists (
+        id           BIGSERIAL PRIMARY KEY,
+        owner_id     BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        title        TEXT   NOT NULL DEFAULT 'Список покупок',
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        archived_at  TIMESTAMPTZ,
+        legacy_note_id BIGINT UNIQUE  -- pointer to the original notes row we migrated from
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_shopping_lists_owner ON shopping_lists (owner_id);",
+    "CREATE INDEX IF NOT EXISTS idx_shopping_lists_active ON shopping_lists (owner_id) WHERE archived_at IS NULL;",
+
+    """
+    CREATE TABLE IF NOT EXISTS shopping_list_items (
+        id          BIGSERIAL PRIMARY KEY,
+        list_id     BIGINT NOT NULL REFERENCES shopping_lists (id) ON DELETE CASCADE,
+        name        TEXT   NOT NULL,
+        quantity    TEXT,                          -- '1 кг', '2 шт' и т.п., опционально
+        position    INTEGER NOT NULL DEFAULT 0,    -- порядок в списке
+        checked_at  TIMESTAMPTZ,
+        checked_by  BIGINT REFERENCES users (telegram_id) ON DELETE SET NULL,
+        added_by    BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_shopping_items_list ON shopping_list_items (list_id, position);",
+
+    """
+    CREATE TABLE IF NOT EXISTS shopping_list_members (
+        list_id    BIGINT NOT NULL REFERENCES shopping_lists (id) ON DELETE CASCADE,
+        user_id    BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        role       TEXT   NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'member')),
+        joined_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (list_id, user_id)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_shopping_members_user ON shopping_list_members (user_id);",
+
+    """
+    CREATE TABLE IF NOT EXISTS shopping_list_invites (
+        id          BIGSERIAL PRIMARY KEY,
+        list_id     BIGINT NOT NULL REFERENCES shopping_lists (id) ON DELETE CASCADE,
+        code        TEXT   NOT NULL UNIQUE,          -- 6-символьный код
+        created_by  BIGINT NOT NULL REFERENCES users (telegram_id) ON DELETE CASCADE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at  TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        consumed_by BIGINT REFERENCES users (telegram_id) ON DELETE SET NULL
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_shopping_invites_code ON shopping_list_invites (code) WHERE consumed_at IS NULL;",
 ]
+
+
+# --- One-time data migration: notes with category='Покупки' → shopping_lists ---
+# Выполняется отдельно (не в CREATE_AND_UPDATE_TABLES_STATEMENTS), один раз,
+# после того как таблицы созданы.
+SHOPPING_MIGRATION_STATEMENT = """
+DO $$
+DECLARE
+    rec RECORD;
+    new_list_id BIGINT;
+    item_rec JSONB;
+    pos INT;
+BEGIN
+    -- 1) Создаём shopping_lists из notes с категорией "покупки" (любой регистр)
+    FOR rec IN
+        SELECT n.note_id,
+               n.telegram_id,
+               COALESCE(NULLIF(n.summary_text, ''), 'Список покупок') AS title,
+               n.created_at,
+               n.is_archived,
+               n.updated_at,
+               COALESCE(n.llm_analysis_json -> 'items', '[]'::jsonb) AS items
+        FROM notes n
+        WHERE LOWER(n.category) LIKE 'покуп%'
+          AND NOT EXISTS (
+              SELECT 1 FROM shopping_lists sl WHERE sl.legacy_note_id = n.note_id
+          )
+    LOOP
+        INSERT INTO shopping_lists (owner_id, title, created_at, archived_at, legacy_note_id)
+        VALUES (
+            rec.telegram_id,
+            rec.title,
+            rec.created_at,
+            CASE WHEN rec.is_archived THEN COALESCE(rec.updated_at, NOW()) ELSE NULL END,
+            rec.note_id
+        )
+        RETURNING id INTO new_list_id;
+
+        -- Owner → member с role='owner'
+        INSERT INTO shopping_list_members (list_id, user_id, role, joined_at)
+        VALUES (new_list_id, rec.telegram_id, 'owner', rec.created_at)
+        ON CONFLICT DO NOTHING;
+
+        -- 2) Товары из llm_analysis_json.items -> shopping_list_items
+        pos := 0;
+        FOR item_rec IN SELECT * FROM jsonb_array_elements(rec.items)
+        LOOP
+            INSERT INTO shopping_list_items (
+                list_id, name, quantity, position,
+                checked_at, checked_by, added_by, created_at
+            )
+            VALUES (
+                new_list_id,
+                COALESCE(item_rec ->> 'item_name', item_rec ->> 'name', 'Без названия'),
+                item_rec ->> 'quantity',
+                pos,
+                CASE WHEN COALESCE((item_rec ->> 'checked')::boolean, FALSE)
+                     THEN rec.updated_at ELSE NULL END,
+                CASE WHEN COALESCE((item_rec ->> 'checked')::boolean, FALSE)
+                     THEN (item_rec ->> 'added_by')::BIGINT ELSE NULL END,
+                COALESCE((item_rec ->> 'added_by')::BIGINT, rec.telegram_id),
+                rec.created_at
+            );
+            pos := pos + 1;
+        END LOOP;
+
+        -- 3) Участников из note_shares
+        INSERT INTO shopping_list_members (list_id, user_id, role, joined_at)
+        SELECT new_list_id, ns.shared_with_telegram_id, 'member', ns.created_at
+        FROM note_shares ns
+        WHERE ns.note_id = rec.note_id
+        ON CONFLICT DO NOTHING;
+    END LOOP;
+END $$;
+"""
 
 
 db_pool: asyncpg.Pool | None = None
@@ -384,6 +514,15 @@ async def init_db():
                     """,
                     ach.code, ach.name, ach.description, ach.icon, ach.xp_reward
                 )
+
+            # Idempotent: переносит notes с категорией "Покупки" в shopping_lists,
+            # затем следующие запуски скипают их через legacy_note_id UNIQUE constraint.
+            logger.info("Миграция списков покупок из notes в shopping_lists...")
+            try:
+                await connection.execute(SHOPPING_MIGRATION_STATEMENT)
+            except Exception as e:
+                logger.error("Миграция shopping_lists провалилась: %s", e, exc_info=True)
+                raise
 
             logger.info("Схема базы данных актуальна.")
 
