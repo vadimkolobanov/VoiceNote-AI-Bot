@@ -7,7 +7,6 @@ import 'package:voicenote_ai/features/ai_agent/presentation/screens/ai_chat_scre
 import 'package:voicenote_ai/features/ai_agent/presentation/screens/memory_facts_screen.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/login_screen.dart';
-import 'package:voicenote_ai/features/auth/presentation/screens/register_screen.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/splash_screen.dart';
 import 'package:voicenote_ai/features/birthdays/presentation/screens/birthdays_screen.dart';
 import 'package:voicenote_ai/features/habits/presentation/screens/habits_screen.dart';
@@ -38,8 +37,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final location = state.matchedLocation;
 
       final isSplash = location == AppRoutes.splash;
-      final isAuthRoute =
-          location == AppRoutes.login || location == AppRoutes.register;
+      final isAuthRoute = location == AppRoutes.login;
 
       if (status == SessionStatus.unknown) {
         return isSplash ? null : AppRoutes.splash;
@@ -59,10 +57,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.login,
         builder: (_, __) => const LoginScreen(),
-      ),
-      GoRoute(
-        path: AppRoutes.register,
-        builder: (_, __) => const RegisterScreen(),
       ),
 
       ShellRoute(

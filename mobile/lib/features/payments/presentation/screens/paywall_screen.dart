@@ -109,7 +109,9 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
             onTap: () => setState(() => _selected = SubscriptionPlan.monthly),
           ),
           const SizedBox(height: 24),
-          FilledButton(
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
             onPressed: _loading ? null : _subscribe,
             child: _loading
                 ? const SizedBox(
@@ -117,6 +119,7 @@ class _PaywallScreenState extends ConsumerState<PaywallScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                   )
                 : const Text('Подписаться'),
+          ),
           ),
           const SizedBox(height: 12),
           Text(

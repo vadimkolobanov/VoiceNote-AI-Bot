@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/network/dio_client.dart';
 import 'package:voicenote_ai/features/auth/data/models/auth_tokens.dart';
+import 'package:voicenote_ai/features/auth/data/models/dev_user.dart';
 import 'package:voicenote_ai/features/auth/data/models/user.dart';
 
 class AuthRepository {
@@ -61,6 +62,30 @@ class AuthRepository {
     try {
       final response = await _dio.get<Map<String, dynamic>>('/profile/me');
       return User.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  /// Dev-режим: список существующих Telegram-пользователей для быстрого входа.
+  Future<List<DevUser>> listDevUsers() async {
+    try {
+      final response = await _dio.get<List<dynamic>>('/auth/email/dev-users');
+      return (response.data ?? const [])
+          .map((e) => DevUser.fromJson(e as Map<String, dynamic>))
+          .toList(growable: false);
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  Future<AuthTokens> devLogin(int telegramId) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/auth/email/dev-login',
+        data: {'telegram_id': telegramId},
+      );
+      return AuthTokens.fromJson(response.data!);
     } on DioException catch (e) {
       throw ApiException.fromDio(e);
     }

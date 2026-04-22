@@ -85,18 +85,27 @@ class SessionController extends StateNotifier<SessionState> {
     state = SessionState(status: SessionStatus.authenticated, user: user);
   }
 
+  Future<void> devLogin(int telegramId) async {
+    final tokens = await _repo.devLogin(telegramId);
+    await _storage.save(access: tokens.accessToken, refresh: tokens.refreshToken);
+    final user = await _repo.fetchMe();
+    state = SessionState(status: SessionStatus.authenticated, user: user);
+  }
+
   Future<void> logout() async {
     final refreshToken = await _storage.readRefresh();
     if (refreshToken != null) {
       await _repo.logout(refreshToken);
     }
     await _storage.clear();
+    _ref.invalidate(authRepositoryProvider); // forces providers depending on it to rebuild
     state = const SessionState(status: SessionStatus.unauthenticated);
   }
 
   /// Called by Dio's refresh interceptor when refresh fails.
   Future<void> signalExpired() async {
     await _storage.clear();
+    _ref.invalidate(authRepositoryProvider);
     state = const SessionState(status: SessionStatus.unauthenticated);
   }
 

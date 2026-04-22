@@ -105,14 +105,16 @@ abstract final class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size.fromHeight(52),
+          // Height floor only — zero width so buttons don't demand infinite
+          // width when placed inside Row/Column without Expanded.
+          minimumSize: const Size(0, 48),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           textStyle: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(0, 48),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           side: BorderSide(color: scheme.outline),
         ),

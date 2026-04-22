@@ -112,16 +112,29 @@ async def track_habit(
     return {"detail": "Tracked successfully.", "habit_id": habit_id, "date": str(track_date), "status": request.habit_status}
 
 
-@router.get("/{habit_id}/stats", response_model=list[HabitStatsEntry], tags=["Habits"])
+@router.get("/{habit_id}/stats", tags=["Habits"])
 async def get_habit_stats(
         habit_id: int,
         days: int = 7,
         current_user: dict = Depends(get_current_user)
 ):
-    """Возвращает статистику привычки за последние N дней."""
+    """Возвращает статистику привычки за последние N дней.
+
+    Форматируем даты в ISO-строки, чтобы фронт парсил через `DateTime.parse`.
+    """
     start_date = date.today() - timedelta(days=days)
-    stats = await habit_repo.get_weekly_stats(habit_id, str(start_date))
-    return stats
+    try:
+        stats = await habit_repo.get_weekly_stats(habit_id, start_date)
+    except Exception as e:
+        logger.exception("Failed to load habit stats for habit_id=%s: %s", habit_id, e)
+        return []
+    return [
+        {
+            "date": row["track_date"].isoformat() if row.get("track_date") else None,
+            "status": row.get("status") or "done",
+        }
+        for row in stats
+    ]
 
 
 @router.delete("/{habit_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Habits"])

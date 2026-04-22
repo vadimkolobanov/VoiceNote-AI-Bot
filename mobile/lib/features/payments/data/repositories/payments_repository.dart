@@ -26,6 +26,14 @@ class PaymentsRepository {
       final response = await _dio.get<Map<String, dynamic>>('/payments/subscription');
       return Subscription.fromJson(response.data!);
     } on DioException catch (e) {
+      // Бэкенд ещё может не иметь этого endpoint-а — трактуем как "нет подписки".
+      if (e.response?.statusCode == 404) {
+        return const Subscription(
+          status: 'inactive',
+          plan: null,
+          autoRenew: false,
+        );
+      }
       throw ApiException.fromDio(e);
     }
   }

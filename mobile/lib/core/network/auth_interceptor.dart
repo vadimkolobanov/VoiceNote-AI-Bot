@@ -115,7 +115,8 @@ class AuthInterceptor extends Interceptor {
 
   static bool _isAuthEndpoint(String path) {
     return path.contains('/auth/email/login') ||
-        path.contains('/auth/email/register') ||
+        path.contains('/auth/email/dev-login') ||
+        path.contains('/auth/email/dev-users') ||
         path.contains('/auth/refresh');
   }
 }
