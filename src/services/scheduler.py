@@ -14,7 +14,7 @@ from apscheduler.executors.asyncio import AsyncIOExecutor
 from aiogram.utils.markdown import hbold, hcode, hitalic
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from ..database import note_repo, birthday_repo, user_repo, habit_repo
+from ..database import note_repo, birthday_repo, user_repo, habit_repo, reminder_repo
 from ..bot.common_utils.callbacks import NoteAction
 from .tz_utils import format_datetime_for_user
 from . import push_service, weather_service, llm
@@ -80,6 +80,18 @@ def add_reminder_to_scheduler(bot: Bot, note: dict):
         )
         logger.info(f"Основное напоминание для заметки #{note_id} запланировано на {final_due_date_utc.isoformat()}")
 
+        # Phase 3a: синхронизируем unified reminders read-model
+        asyncio.create_task(reminder_repo.upsert_note_reminder(
+            user_id=note['telegram_id'],
+            note_id=note_id,
+            title=note.get('summary_text') or note.get('corrected_text', '')[:250],
+            due_date=final_due_date_utc,
+            recurrence_rule=note.get('recurrence_rule'),
+            pre_reminder_minutes=note.get('pre_reminder_minutes', 0) if is_vip else 0,
+            is_completed=note.get('is_completed', False),
+            is_archived=note.get('is_archived', False),
+        ))
+
     if is_vip:
         pre_reminder_minutes = note.get('pre_reminder_minutes', 0)
         if pre_reminder_minutes > 0:
@@ -116,6 +128,8 @@ def remove_reminder_from_scheduler(note_id: int):
                 logger.warning(f"Ошибка при удалении задачи {job.id}: {e}")
     if jobs_removed_count > 0:
         logger.info(f"Удалено {jobs_removed_count} напоминаний для заметки #{note_id} из планировщика.")
+        # Phase 3a: чистим единую таблицу reminders
+        asyncio.create_task(reminder_repo.delete_note_reminder(note_id))
 
 
 async def send_reminder_notification(bot: Bot, telegram_id: int, note_id: int, note_text: str, due_date: datetime,
@@ -503,6 +517,16 @@ async def setup_habit_reminders(bot: Bot):
                 **cron_kwargs
             )
             count += 1
+
+            # Phase 3a: sync reminders read-model
+            asyncio.create_task(reminder_repo.upsert_habit_reminder(
+                user_id=habit['user_telegram_id'],
+                habit_id=habit['id'],
+                name=habit['name'],
+                frequency_rule=habit['frequency_rule'],
+                is_active=habit.get('is_active', True),
+                reminder_time=habit.get('reminder_time'),
+            ))
         except Exception as e:
             logger.error(f"Ошибка при настройке напоминания для привычки #{habit['id']}: {e}")
 

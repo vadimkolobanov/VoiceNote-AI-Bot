@@ -33,6 +33,10 @@ class _ShoppingListsScreenState extends ConsumerState<ShoppingListsScreen>
         title: 'Покупки',
         subtitle: async.valueOrNull == null ? null :
           '${async.valueOrNull!.length} ${_showArchived ? "архивных" : "активных"}',
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, size: 22),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         actions: [
           IconButton(
             tooltip: _showArchived ? 'Активные' : 'Архив',

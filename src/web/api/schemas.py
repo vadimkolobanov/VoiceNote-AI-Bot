@@ -36,6 +36,7 @@ class UserProfile(BaseModel):
 class Note(BaseModel):
     note_id: int
     owner_id: int
+    type: str = "note"                # 'note' | 'task' | 'idea' | 'shopping'
     summary_text: str | None
     corrected_text: str
     category: str | None

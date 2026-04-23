@@ -5,6 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voicenote_ai/core/router/app_router.dart';
 import 'package:voicenote_ai/core/theme/app_theme.dart';
 
+/// Глобальный messenger — чтобы SnackBar-ы показывались одним и тем же
+/// ScaffoldMessenger-ом независимо от текущего экрана/роута. Это решает
+/// случаи, когда context исчезает до показа (async операции + pop).
+final rootMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
 class VoiceNoteApp extends ConsumerWidget {
   const VoiceNoteApp({super.key});
 
@@ -15,6 +20,7 @@ class VoiceNoteApp extends ConsumerWidget {
       title: 'Методекс Секретарь',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
+      scaffoldMessengerKey: rootMessengerKey,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       // Дизайн спроектирован dark-first; light — pragmatic fallback.

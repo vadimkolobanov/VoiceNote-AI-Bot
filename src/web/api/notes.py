@@ -3,8 +3,9 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, B
 from datetime import datetime
 import pytz
 from aiogram import Bot
+from pydantic import BaseModel, Field
 
-from src.database import note_repo
+from src.database import note_repo, reminder_repo
 from src.core.config import NOTES_PER_PAGE
 from .dependencies import get_current_user
 from .schemas import (
@@ -48,15 +49,27 @@ async def get_notes(
         current_user: dict = Depends(get_current_user),
         page: int = Query(1, ge=1),
         per_page: int = Query(NOTES_PER_PAGE, ge=1, le=100),
-        archived: bool = False
+        archived: bool = False,
+        type: str | None = Query(
+            default='note',
+            description="Filter: note | task | idea | shopping | all",
+            pattern="^(note|task|idea|shopping|all)$",
+        ),
 ):
-    """Возвращает пагинированный список заметок пользователя."""
+    """Возвращает пагинированный список записей пользователя.
+
+    По умолчанию — только простые заметки (`type='note'`). Для ленты задач
+    мобилка передаёт `type=task` (они отсортированы по due_date). `type=all`
+    возвращает всё (для обратной совместимости).
+    """
     user_id = current_user['telegram_id']
+    effective_type = None if type == 'all' else type
     notes, total_items = await note_repo.get_paginated_notes_for_user(
         telegram_id=user_id,
         page=page,
         per_page=per_page,
-        archived=archived
+        archived=archived,
+        note_type=effective_type,
     )
     total_pages = (total_items + per_page - 1) // per_page
     if total_pages == 0:
@@ -91,6 +104,66 @@ async def update_note(note_id: int, request_data: NoteUpdateRequest, current_use
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update note")
 
     updated_note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
+    return updated_note
+
+
+class NotePatchRequest(BaseModel):
+    """Partial update. Все поля опциональные. Явные sentinels для сброса полей.
+
+    - `clear_due_date=True` → выставить due_date в NULL
+    - `clear_recurrence=True` → выставить recurrence_rule в NULL
+    """
+    text: str | None = Field(default=None, min_length=1)
+    category: str | None = None
+    type: str | None = Field(default=None, pattern="^(note|task|idea|shopping)$")
+    due_date: datetime | None = None
+    clear_due_date: bool = False
+    recurrence_rule: str | None = None
+    clear_recurrence: bool = False
+
+
+@router.patch("/{note_id}", response_model=Note, tags=["Notes"])
+async def patch_note(
+    note_id: int,
+    payload: NotePatchRequest,
+    current_user: dict = Depends(get_current_user),
+    request: Request = None,
+):
+    """Частичное обновление заметки/задачи. Меняет только переданные поля."""
+    note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
+    if not note or note.get('owner_id') != current_user['telegram_id']:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found or you are not the owner")
+
+    ok = await note_repo.update_note_fields(
+        note_id,
+        current_user['telegram_id'],
+        text=payload.text,
+        category=payload.category,
+        note_type=payload.type,
+        due_date=payload.due_date,
+        clear_due_date=payload.clear_due_date,
+        recurrence_rule=payload.recurrence_rule,
+        clear_recurrence=payload.clear_recurrence,
+    )
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to patch note")
+
+    updated_note = await note_repo.get_note_by_id(note_id, current_user['telegram_id'])
+
+    # Sync scheduler + reminders, если менялась due_date / recurrence
+    if payload.due_date is not None or payload.clear_due_date or \
+       payload.recurrence_rule is not None or payload.clear_recurrence:
+        bot: Bot = request.app.state.bot if request else None
+        if bot is not None:
+            from src.services.scheduler import add_reminder_to_scheduler, remove_reminder_from_scheduler
+            if updated_note and updated_note.get('due_date'):
+                from src.database import user_repo
+                user = await user_repo.get_user_profile(current_user['telegram_id'])
+                add_reminder_to_scheduler(bot, {**updated_note, **(user or {})})
+            else:
+                remove_reminder_from_scheduler(note_id)
+                await reminder_repo.delete_note_reminder(note_id)
+
     return updated_note
 
 

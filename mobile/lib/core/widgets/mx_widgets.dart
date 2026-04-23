@@ -44,10 +44,23 @@ class MxAppBar extends StatelessWidget implements PreferredSizeWidget {
       toolbarHeight: subtitle == null ? 56 : 72,
       leading: leading ??
           Builder(
-            builder: (ctx) => IconButton(
-              icon: const Icon(Icons.menu, size: 22),
-              onPressed: onMenuPressed ?? () => Scaffold.of(ctx).openDrawer(),
-            ),
+            builder: (ctx) {
+              final scaffold = Scaffold.maybeOf(ctx);
+              final hasDrawer = scaffold?.hasDrawer ?? false;
+              // Если у окружающего Scaffold нет drawer — показываем back-кнопку,
+              // чтобы пользователь мог вернуться назад, а не застревал на
+              // мёртвом hamburger-е.
+              if (!hasDrawer && onMenuPressed == null) {
+                return IconButton(
+                  icon: const Icon(Icons.arrow_back, size: 22),
+                  onPressed: () => Navigator.of(ctx).maybePop(),
+                );
+              }
+              return IconButton(
+                icon: const Icon(Icons.menu, size: 22),
+                onPressed: onMenuPressed ?? () => scaffold?.openDrawer(),
+              );
+            },
           ),
       title: showLogo
           ? _LogoTitle(title: title, subtitle: subtitle)
