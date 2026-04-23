@@ -9,7 +9,13 @@ from aiogram import Bot
 from aiogram.utils.markdown import hbold
 
 from ..database import user_repo, note_repo
-from ..bot.modules.notes.services import process_and_save_note
+# M0: src/bot/modules/notes/ удалён (docs/PRODUCT_PLAN.md §16.2).
+# В M2 Alice-канал будет переписан на POST /moments.
+async def process_and_save_note(*args, **kwargs):
+    raise NotImplementedError(
+        "process_and_save_note удалён в M0 вместе с bot.modules.notes. "
+        "В M2 будет реализован через /moments (см. docs/PRODUCT_PLAN.md §5.2, §14)."
+    )
 from .models import AliceRequest, AliceResponse
 
 logger = logging.getLogger(__name__)

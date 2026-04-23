@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel
 
 from src.services.stt import recognize_speech_yandex
-from src.bot.modules.notes.services import process_and_save_note
+# M0: src/bot/modules/notes/ удалён (docs/PRODUCT_PLAN.md §16.2).
+# Endpoint останется до M2, затем заменяется на /voice/moment (§5.2).
+async def process_and_save_note(*args, **kwargs):
+    raise NotImplementedError(
+        "process_and_save_note удалён в M0. "
+        "В M2 будет реализован через /voice/moment (docs/PRODUCT_PLAN.md §5.2, §6.1)."
+    )
 from src.database import user_repo
 from src.core.config import YANDEX_STT_CONFIGURED, MAX_DAILY_STT_RECOGNITIONS_MVP
 from .dependencies import get_current_user

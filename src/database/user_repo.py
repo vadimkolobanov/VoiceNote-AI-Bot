@@ -195,8 +195,11 @@ async def set_onboarding_status(telegram_id: int, status: bool) -> bool:
 
 
 async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
-    """Устанавливает VIP-статус для пользователя и инвалидирует кэш."""
-    from ..services.gamification_service import check_and_grant_achievements
+    """Устанавливает VIP-статус для пользователя и инвалидирует кэш.
+
+    M0: вызов check_and_grant_achievements убран вместе с gamification_service.
+    Поле is_vip будет вытеснено полем users.pro_until в M1 (docs/PRODUCT_PLAN.md §4.3).
+    """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("UPDATE users SET is_vip = $1, updated_at = NOW() WHERE telegram_id = $2", is_vip,
@@ -204,8 +207,6 @@ async def set_user_vip_status(telegram_id: int, is_vip: bool) -> bool:
         success = int(result.split(" ")[1]) > 0
         if success:
             await cache_service.delete_user_profile_from_cache(telegram_id)
-            if is_vip:
-                await check_and_grant_achievements(bot_instance, telegram_id)
         return success
 
 
@@ -416,69 +417,10 @@ async def add_xp_and_check_level_up(bot: Bot, user_id: int, amount: int, silent_
 
 
 async def grant_achievement(bot: Bot, user_id: int, achievement_code: str, silent: bool = False):
-    """Присваивает пользователю достижение и начисляет опыт."""
-    import asyncpg
-    from ..services.gamification_service import ACHIEVEMENTS_BY_CODE
-
-    pool = await get_db_pool()
-    achievement = ACHIEVEMENTS_BY_CODE.get(achievement_code)
-    if not achievement:
-        return
-
-    async with pool.acquire() as conn:
-        try:
-            await conn.execute("INSERT INTO user_achievements (user_telegram_id, achievement_code) VALUES ($1, $2)",
-                               user_id, achievement_code)
-
-            await add_xp_and_check_level_up(bot, user_id, achievement.xp_reward, silent_level_up=silent)
-
-            if not silent:
-                user_profile = await get_user_profile(user_id)
-                user_name = user_profile.get('first_name', 'пользователь')
-                
-                # Получаем все достижения пользователя для определения, первое ли это
-                user_achievements = await get_user_achievements_codes(user_id)
-                is_first_achievement = len(user_achievements) == 1
-                
-                # Определяем важность достижения по XP награде
-                is_important_achievement = achievement.xp_reward >= 150
-                
-                # Персонализируем сообщение в зависимости от типа достижения
-                if is_first_achievement:
-                    text = (
-                        f"🎉 {hbold('Ваше первое достижение!')}\n\n"
-                        f"{user_name}, вы получили:\n"
-                        f"{achievement.icon} {hbold(achievement.name)}\n"
-                        f"«{achievement.description}»\n\n"
-                        f"✨ +{achievement.xp_reward} XP\n\n"
-                        f"Продолжайте в том же духе! 🚀"
-                    )
-                elif is_important_achievement:
-                    text = (
-                        f"🏆 {hbold('ВЕЛИКОЛЕПНО!')} 🏆\n\n"
-                        f"{user_name}, вы достигли невероятного результата!\n\n"
-                        f"{achievement.icon} {hbold(achievement.name)}\n"
-                        f"«{achievement.description}»\n\n"
-                        f"✨ +{achievement.xp_reward} XP\n\n"
-                        f"Вы настоящий мастер продуктивности! 👑"
-                    )
-                else:
-                    text = (
-                        f"🏆 {hbold('Новое достижение!')} 🏆\n\n"
-                        f"{user_name}, вы получили достижение:\n"
-                        f"{achievement.icon} {hbold(achievement.name)}\n"
-                        f"«{achievement.description}»\n\n"
-                        f"Награда: +{achievement.xp_reward} XP ✨"
-                    )
-                
-                if bot:
-                    await bot.send_message(user_id, text, parse_mode="HTML")
-
-        except asyncpg.UniqueViolationError:
-            # Достижение уже было выдано ранее - это нормально, просто игнорируем
-            logger.debug(f"Достижение {achievement_code} уже было выдано пользователю {user_id}")
-        except Exception as e:
-            logger.error(f"Ошибка при выдаче достижения {achievement_code} пользователю {user_id}: {e}", exc_info=True)
+    """M0 stub. Геймификация удалена; user_achievements + users.xp вычищаются в M1
+    (docs/PRODUCT_PLAN.md §4.9). Функция оставлена как noop, чтобы не ломать
+    возможные legacy call-sites до завершения миграции схемы."""
+    return None
 
 
 async def get_user_achievements_codes(user_id: int) -> set:

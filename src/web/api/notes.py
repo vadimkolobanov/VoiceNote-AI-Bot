@@ -11,7 +11,13 @@ from .dependencies import get_current_user
 from .schemas import (
     PaginatedNotesResponse, Note, NoteCreateRequest, NoteUpdateRequest
 )
-from src.bot.modules.notes.services import process_and_save_note
+# M0: src/bot/modules/notes/ удалён (docs/PRODUCT_PLAN.md §16.2).
+# Endpoint останется в /api/v1/notes до M2, после чего заменяется /moments (§5.2).
+async def process_and_save_note(*args, **kwargs):
+    raise NotImplementedError(
+        "process_and_save_note удалён в M0. "
+        "В M2 будет заменён на /moments pipeline (docs/PRODUCT_PLAN.md §5.2, §6.1)."
+    )
 from src.services.llm import search_notes_with_llm
 
 router = APIRouter()

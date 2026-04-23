@@ -654,7 +654,8 @@ async def close_db_pool():
 
 async def init_db():
     """Инициализирует схему базы данных, выполняя все DDL-запросы."""
-    from src.services.gamification_service import ACHIEVEMENTS_LIST
+    # M0: геймификация удалена (docs/PRODUCT_PLAN.md §14/§4.9).
+    # Блок синхронизации справочника achievements снят вместе с gamification_service.
     pool = await get_db_pool()
     async with pool.acquire() as connection:
         async with connection.transaction():
@@ -665,21 +666,6 @@ async def init_db():
                 except Exception as e:
                     logger.error(f"Ошибка при выполнении SQL-запроса:\n{statement}\nОшибка: {e}")
                     raise
-
-            logger.info("Синхронизация справочника достижений...")
-            for ach in ACHIEVEMENTS_LIST:
-                await connection.execute(
-                    """
-                    INSERT INTO achievements (code, name, description, icon, xp_reward)
-                    VALUES ($1, $2, $3, $4, $5)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        description = EXCLUDED.description,
-                        icon = EXCLUDED.icon,
-                        xp_reward = EXCLUDED.xp_reward;
-                    """,
-                    ach.code, ach.name, ach.description, ach.icon, ach.xp_reward
-                )
 
             # Idempotent: переносит notes с категорией "Покупки" в shopping_lists,
             # затем следующие запуски скипают их через legacy_note_id UNIQUE constraint.
