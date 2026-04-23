@@ -91,3 +91,5 @@ email-validator>=2.1
 pgvector>=0.3
 greenlet>=3.0
 python-multipart>=0.0.9
+Jinja2>=3.1
+
