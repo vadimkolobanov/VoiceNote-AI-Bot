@@ -16,6 +16,11 @@ from .api.voice import router as voice_router
 from .api.mobile_auth import router as mobile_auth_router
 from .api.reminders import router as reminders_router
 
+# v1 — новая API-поверхность (PRODUCT_PLAN.md §5.2). Старые роуты из
+# src/web/api/*.py остаются до M2 и будут вычищены при переходе на /moments.
+from .api.v1.auth import router as v1_auth_router
+from .api.v1.health import router as v1_health_router
+
 
 def get_fastapi_app(bot: Bot) -> FastAPI:
     """
@@ -50,9 +55,8 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     async def alice_webhook_endpoint(request: AliceRequest) -> AliceResponse:
         return await handle_alice_request(request)
 
-    @app.get("/api/v1/health", tags=["Health Check"])
-    async def health_check():
-        return {"status": "OK"}
+    # /health — liveness + БД ping (PRODUCT_PLAN.md §11.1).
+    app.include_router(v1_health_router)
 
     @app.get("/auth/callback", response_class=HTMLResponse)
     async def telegram_auth_callback():
@@ -88,7 +92,13 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
         </html>
         """
 
-    app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
+    # v1 (новая схема; PRODUCT_PLAN.md §5.2). Монтируется ПЕРВЫМ, чтобы роут
+    # /api/v1/auth/email/register не пересекался со старым /api/v1/auth/login.
+    app.include_router(v1_auth_router, prefix="/api/v1")
+
+    # Legacy (до M2). Старый auth_router пока оставлен на /api/v1/auth/login
+    # и /code — они не пересекаются с /email/* из v1_auth_router.
+    app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication (legacy)"])
     app.include_router(profile_router, prefix="/api/v1/profile", tags=["Profile"])
     app.include_router(notes_router, prefix="/api/v1/notes", tags=["Notes"])
     app.include_router(birthdays_router, prefix="/api/v1/birthdays", tags=["Birthdays"])

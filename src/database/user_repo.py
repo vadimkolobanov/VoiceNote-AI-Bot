@@ -7,9 +7,9 @@ from aiogram.utils.markdown import hbold
 
 from .connection import get_db_pool
 from ..services import cache_service
-# ACHIEVEMENTS_BY_CODE импортируется лениво внутри grant_achievement()
-# чтобы избежать циклического импорта с gamification_service
-from ..web.routes import bot_instance
+# M0: импорт ``bot_instance`` из web.routes удалён — он нужен был только для
+# gamification-зависимых функций, которые теперь no-op. Циркулярная цепочка
+# (user_repo -> web.routes -> user_repo) разорвана.
 
 logger = logging.getLogger(__name__)
 
