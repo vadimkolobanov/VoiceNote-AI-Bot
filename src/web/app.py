@@ -20,6 +20,7 @@ from .api.reminders import router as reminders_router
 # src/web/api/*.py остаются до M2 и будут вычищены при переходе на /moments.
 from .api.v1.auth import router as v1_auth_router
 from .api.v1.health import router as v1_health_router
+from .api.v1.moments import router as v1_moments_router
 
 
 def get_fastapi_app(bot: Bot) -> FastAPI:
@@ -95,6 +96,7 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     # v1 (новая схема; PRODUCT_PLAN.md §5.2). Монтируется ПЕРВЫМ, чтобы роут
     # /api/v1/auth/email/register не пересекался со старым /api/v1/auth/login.
     app.include_router(v1_auth_router, prefix="/api/v1")
+    app.include_router(v1_moments_router, prefix="/api/v1")
 
     # Legacy (до M2). Старый auth_router пока оставлен на /api/v1/auth/login
     # и /code — они не пересекаются с /email/* из v1_auth_router.
