@@ -20,3 +20,8 @@ venv/
 /V_*
 /V_02.MD
 firebase-service-account.json
+
+# Local editor/tooling
+.claude/
+.design_bundle/
+*.code-workspace
