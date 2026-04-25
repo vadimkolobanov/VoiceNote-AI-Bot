@@ -20,6 +20,8 @@ venv/
 /V_*
 /V_02.MD
 firebase-service-account.json
+voicenoteai-*-firebase-adminsdk-*.json
+*-firebase-adminsdk-*.json
 
 # Local editor/tooling
 .claude/

@@ -9,10 +9,12 @@ from typing import Any, Optional
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     String,
     func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -34,11 +36,16 @@ class Subscription(Base):
     plan: Mapped[str] = mapped_column(String(32), nullable=False)
     # 'pro_monthly' | 'pro_yearly'
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    # 'pending' | 'active' | 'cancelled' | 'failed'
+    # 'pending' | 'active' | 'cancelled' | 'failed' | 'past_due'
 
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     raw_payload: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+
+    auto_renew: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=true()
+    )
+    payment_method_id: Mapped[Optional[str]] = mapped_column(String(128))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

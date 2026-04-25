@@ -1,0 +1,49 @@
+# docker-compose.dev.yml
+#
+# Локальный dev-стек: Postgres 16 с предустановленным pgvector + Redis 7.
+# НЕ прод. Прод по плану — managed Postgres (см. PRODUCT_PLAN.md §11.1, §17.1).
+#
+# Запуск:
+#     docker compose -f docker-compose.dev.yml up -d
+#
+# Подключение из приложения:
+#     DB_HOST=localhost DB_PORT=5433  DB_NAME=voicenote_dev  DB_USER=dev  DB_PASSWORD=dev
+#     REDIS_HOST=localhost REDIS_PORT=6380
+#
+# Порты 5433/6380 — чтобы не конфликтовать с возможно запущенными локальными
+# инстансами Postgres/Redis.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: voicenote-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: voicenote_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - voicenote_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev -d voicenote_dev"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: voicenote-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  voicenote_pgdata:

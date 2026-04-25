@@ -82,6 +82,20 @@ INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY")
 # Флаг для включения/выключения функции погоды
 WEATHER_SERVICE_ENABLED = True
 
+# --- Billing / YooKassa (PRODUCT_PLAN.md §8) ---
+# 'mock' (имитация без сети) | 'yookassa' (боевой режим).
+# Тест/прод на стороне YooKassa определяется по shop_id+secret_key — те же
+# api.yookassa.ru, но разные ключи (test_xxx и live_xxx).
+YK_MODE = os.environ.get("YK_MODE", "mock")
+YK_SHOP_ID = os.environ.get("YK_SHOP_ID")
+YK_SECRET_KEY = os.environ.get("YK_SECRET_KEY")
+YK_RETURN_URL = os.environ.get("YK_RETURN_URL", "voicenote://payment/success")
+YK_API_BASE = os.environ.get("YK_API_BASE", "https://api.yookassa.ru/v3")
+
+# Цены планов (PRODUCT_PLAN.md §8.1). Хардкод — при изменении правится здесь.
+PLAN_MONTHLY_PRICE_RUB = "400.00"
+PLAN_YEARLY_PRICE_RUB = "3490.00"
+
 
 def check_initial_config():
     """
