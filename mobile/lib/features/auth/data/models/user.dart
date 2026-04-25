@@ -1,47 +1,65 @@
+/// User — отражает `UserPublic` из backend `/api/v1/auth/*` ответов.
+///
+/// Поля 1:1 совпадают с docs/PRODUCT_PLAN.md §4.3 + §5.2. is_pro вычисляется
+/// бэком из `pro_until` и приходит уже как boolean.
 class User {
   const User({
     required this.id,
-    required this.firstName,
-    required this.isVip,
-    required this.level,
-    required this.xp,
     required this.timezone,
-    this.cityName,
+    required this.locale,
+    required this.isPro,
+    required this.createdAtIso,
+    this.email,
+    this.displayName,
+    this.digestHour,
   });
 
   final int id;
-  final String firstName;
-  final bool isVip;
-  final int level;
-  final int xp;
+  final String? email;
+  final String? displayName;
   final String timezone;
-  final String? cityName;
+  final String locale;
+  final int? digestHour;
+  final bool isPro;
+  final String createdAtIso;
 
   factory User.fromJson(Map<String, dynamic> json) => User(
-        id: (json['telegram_id'] as num).toInt(),
-        firstName: (json['first_name'] as String?) ?? 'Пользователь',
-        isVip: (json['is_vip'] as bool?) ?? false,
-        level: (json['level'] as num?)?.toInt() ?? 1,
-        xp: (json['xp'] as num?)?.toInt() ?? 0,
-        timezone: (json['timezone'] as String?) ?? 'UTC',
-        cityName: json['city_name'] as String?,
+        id: (json['id'] as num).toInt(),
+        email: json['email'] as String?,
+        displayName: json['display_name'] as String?,
+        timezone: (json['timezone'] as String?) ?? 'Europe/Moscow',
+        locale: (json['locale'] as String?) ?? 'ru',
+        digestHour: (json['digest_hour'] as num?)?.toInt(),
+        isPro: (json['is_pro'] as bool?) ?? false,
+        createdAtIso: (json['created_at'] as String?) ?? '',
       );
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'email': email,
+        'display_name': displayName,
+        'timezone': timezone,
+        'locale': locale,
+        'digest_hour': digestHour,
+        'is_pro': isPro,
+        'created_at': createdAtIso,
+      };
+
   User copyWith({
-    String? firstName,
-    bool? isVip,
-    int? level,
-    int? xp,
+    String? displayName,
     String? timezone,
-    String? cityName,
+    String? locale,
+    int? digestHour,
+    bool? isPro,
   }) =>
       User(
         id: id,
-        firstName: firstName ?? this.firstName,
-        isVip: isVip ?? this.isVip,
-        level: level ?? this.level,
-        xp: xp ?? this.xp,
+        email: email,
+        displayName: displayName ?? this.displayName,
         timezone: timezone ?? this.timezone,
-        cityName: cityName ?? this.cityName,
+        locale: locale ?? this.locale,
+        digestHour: digestHour ?? this.digestHour,
+        isPro: isPro ?? this.isPro,
+        createdAtIso: createdAtIso,
       );
 }

@@ -90,7 +90,7 @@ class AuthInterceptor extends Interceptor {
     try {
       final response = await _refreshDio.post<Map<String, dynamic>>(
         '${Env.apiUrl}/auth/refresh',
-        data: {'refresh_token': refresh},
+        data: {'refresh': refresh},
         options: Options(
           headers: {'Content-Type': 'application/json'},
           // 401 here means refresh itself expired.
@@ -99,8 +99,8 @@ class AuthInterceptor extends Interceptor {
       );
       final body = response.data;
       if (response.statusCode == 200 && body is Map<String, dynamic>) {
-        final access = body['access_token'] as String?;
-        final newRefresh = body['refresh_token'] as String? ?? refresh;
+        final access = body['access'] as String?;
+        final newRefresh = body['refresh'] as String? ?? refresh;
         if (access != null) {
           await _storage.save(access: access, refresh: newRefresh);
           return access;
@@ -115,8 +115,7 @@ class AuthInterceptor extends Interceptor {
 
   static bool _isAuthEndpoint(String path) {
     return path.contains('/auth/email/login') ||
-        path.contains('/auth/email/dev-login') ||
-        path.contains('/auth/email/dev-users') ||
+        path.contains('/auth/email/register') ||
         path.contains('/auth/refresh');
   }
 }

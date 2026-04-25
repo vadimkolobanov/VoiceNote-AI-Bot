@@ -1,28 +1,16 @@
-/// Canonical route paths used across the app.
+/// Маршруты приложения (PRODUCT_PLAN.md §7.4).
 abstract final class AppRoutes {
   static const splash = '/';
   static const login = '/login';
 
-  // Shell tabs
+  // 4 нижних таба
   static const today = '/today';
-  static const notes = '/notes';
-  static const tasks = '/tasks';
-  static const habits = '/habits';
-  static const agent = '/agent';
+  static const timeline = '/timeline';
+  static const rhythm = '/rhythm';
   static const profile = '/profile';
-  static const voiceCapture = '/voice';
 
-  // Pushed screens
-  static const createNote = '/notes/new';
-  static const noteDetail = '/notes/:id';
-  static const shopping = '/shopping';
-  static const birthdays = '/birthdays';
-  static const paywall = '/paywall';
-  static const payment = '/payment';
-  static const settings = '/settings';
-  static const memoryFacts = '/agent/memory';
-  static const achievements = '/profile/achievements';
-  static const allReminders = '/tasks/all-reminders';
+  // Модал-диалоги, доступные с любого таба
+  static const voiceCapture = '/capture';
 
-  static String noteDetailFor(int id) => '/notes/$id';
+  // Прочие push-экраны (детали, paywall и т. д.) появятся в M5/M6
 }

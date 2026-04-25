@@ -1,14 +1,25 @@
+import 'user.dart';
+
+/// Ответ на `/api/v1/auth/email/{register,login}` или `/auth/refresh`.
+///
+/// Поля называются `access`/`refresh` — точно так же как в backend
+/// `TokenPairResponse` (PRODUCT_PLAN.md §5.2). У `/auth/refresh` нет user.
 class AuthTokens {
   const AuthTokens({
-    required this.accessToken,
-    required this.refreshToken,
+    required this.access,
+    required this.refresh,
+    this.user,
   });
 
-  final String accessToken;
-  final String refreshToken;
+  final String access;
+  final String refresh;
+  final User? user;
 
   factory AuthTokens.fromJson(Map<String, dynamic> json) => AuthTokens(
-        accessToken: json['access_token'] as String,
-        refreshToken: json['refresh_token'] as String,
+        access: json['access'] as String,
+        refresh: json['refresh'] as String,
+        user: json['user'] is Map<String, dynamic>
+            ? User.fromJson(json['user'] as Map<String, dynamic>)
+            : null,
       );
 }

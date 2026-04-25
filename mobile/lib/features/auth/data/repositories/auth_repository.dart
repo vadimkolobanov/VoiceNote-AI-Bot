@@ -4,13 +4,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/network/dio_client.dart';
 import 'package:voicenote_ai/features/auth/data/models/auth_tokens.dart';
-import 'package:voicenote_ai/features/auth/data/models/dev_user.dart';
 import 'package:voicenote_ai/features/auth/data/models/user.dart';
 
+/// Auth-API клиент. Поверхность контрактов — PRODUCT_PLAN.md §5.2.
 class AuthRepository {
   AuthRepository(this._dio);
 
   final Dio _dio;
+
+  Future<AuthTokens> register({
+    required String email,
+    required String password,
+    String? displayName,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/auth/email/register',
+        data: {
+          'email': email.trim(),
+          'password': password,
+          if (displayName != null && displayName.trim().isNotEmpty)
+            'display_name': displayName.trim(),
+        },
+      );
+      return AuthTokens.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
 
   Future<AuthTokens> login({
     required String email,
@@ -27,19 +48,11 @@ class AuthRepository {
     }
   }
 
-  Future<AuthTokens> register({
-    required String email,
-    required String password,
-    required String firstName,
-  }) async {
+  Future<AuthTokens> refresh(String refreshToken) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
-        '/auth/email/register',
-        data: {
-          'email': email.trim(),
-          'password': password,
-          'first_name': firstName.trim(),
-        },
+        '/auth/refresh',
+        data: {'refresh': refreshToken},
       );
       return AuthTokens.fromJson(response.data!);
     } on DioException catch (e) {
@@ -49,43 +62,16 @@ class AuthRepository {
 
   Future<void> logout(String refreshToken) async {
     try {
-      await _dio.post<void>(
-        '/auth/email/logout',
-        data: {'refresh_token': refreshToken},
-      );
+      await _dio.post<void>('/auth/logout', data: {'refresh': refreshToken});
     } on DioException {
-      // logout is best-effort
+      // logout — best-effort
     }
   }
 
-  Future<User> fetchMe() async {
+  Future<User> fetchProfile() async {
     try {
-      final response = await _dio.get<Map<String, dynamic>>('/profile/me');
+      final response = await _dio.get<Map<String, dynamic>>('/profile');
       return User.fromJson(response.data!);
-    } on DioException catch (e) {
-      throw ApiException.fromDio(e);
-    }
-  }
-
-  /// Dev-режим: список существующих Telegram-пользователей для быстрого входа.
-  Future<List<DevUser>> listDevUsers() async {
-    try {
-      final response = await _dio.get<List<dynamic>>('/auth/email/dev-users');
-      return (response.data ?? const [])
-          .map((e) => DevUser.fromJson(e as Map<String, dynamic>))
-          .toList(growable: false);
-    } on DioException catch (e) {
-      throw ApiException.fromDio(e);
-    }
-  }
-
-  Future<AuthTokens> devLogin(int telegramId) async {
-    try {
-      final response = await _dio.post<Map<String, dynamic>>(
-        '/auth/email/dev-login',
-        data: {'telegram_id': telegramId},
-      );
-      return AuthTokens.fromJson(response.data!);
     } on DioException catch (e) {
       throw ApiException.fromDio(e);
     }
