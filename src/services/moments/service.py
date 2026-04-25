@@ -19,6 +19,7 @@ import uuid as uuid_module
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,8 +32,9 @@ from .heuristics import TrivialResult, classify_trivial_text
 
 logger = logging.getLogger(__name__)
 
-EXTRACT_FACETS_VERSION = "extract_facets_v1"
+EXTRACT_FACETS_VERSION = "extract_facets_v2"
 FREE_HISTORY_DAYS = 30  # §2.4: free видит только 30 дней
+DEFAULT_HOUR_LOCAL = 9  # §6.2 v2: если пользователь не назвал час — 09:00 local
 
 
 # --- DTO-входы/выходы ------------------------------------------------------
@@ -98,7 +100,8 @@ class MomentService:
             1. Если ``client_id`` уже есть в БД — вернуть существующий.
             2. Попробовать skip-LLM эвристику.
             3. Если не зашло — сходить в LLMRouter (facet_extract).
-            4. Сохранить.
+            4. Сохранить главный момент + любые `extras` (доп. моменты,
+               которые LLM извлёк из того же сообщения, см. §6.2 v2).
         """
         # Идемпотентность (§4.10).
         if payload.client_id is not None:
@@ -112,17 +115,80 @@ class MomentService:
         if not raw_text:
             raise ValueError("raw_text is empty")
 
-        title, facets, llm_version = await self._derive_structure(
+        title, facets, llm_version, extras = await self._derive_structure(
             raw_text, user
         )
 
-        # Пользовательские override'ы имеют приоритет над LLM-ответом.
-        occurs_at = payload.occurs_at_override
-        rrule = payload.rrule_override
+        # Главный момент.
+        main = self._build_moment(
+            user=user,
+            raw_text=raw_text,
+            payload=payload,
+            title=title,
+            facets=facets,
+            llm_version=llm_version,
+            client_id=payload.client_id,
+        )
+        self._session.add(main)
+        await self._session.flush()
 
-        # Если override не указан, вытаскиваем из facets (LLM-ветка).
+        # Дочерние из extras (например, ДР Дианы из «завтра Диане купить
+        # подарок на день рождения»). Сохраняем в той же транзакции —
+        # клиент о них узнаёт через GET /moments следующим запросом.
+        for extra in extras:
+            try:
+                child_title = (
+                    (extra.get("title") or "").strip()
+                    or _fallback_title_from_text(raw_text)
+                )
+                if len(child_title) > 120:
+                    child_title = child_title[:117] + "…"
+                child = self._build_moment(
+                    user=user,
+                    raw_text=raw_text,  # тот же исходный текст
+                    payload=payload,
+                    title=child_title,
+                    facets=extra,
+                    llm_version=llm_version,
+                    client_id=None,  # extras всегда новые, без идемпотентности
+                )
+                self._session.add(child)
+            except Exception as exc:  # noqa: BLE001 — extras best-effort
+                logger.warning("Skipping extra due to error: %s", exc)
+        await self._session.flush()
+
+        return main
+
+    def _build_moment(
+        self,
+        *,
+        user: User,
+        raw_text: str,
+        payload: MomentCreate,
+        title: str,
+        facets: dict[str, Any],
+        llm_version: Optional[str],
+        client_id: Optional[uuid_module.UUID],
+    ) -> Moment:
+        """Собирает Moment из (title, facets, ...) с применением общих правил:
+        override-полей клиента, normalize 00:00 default-часом, summary."""
+        user_tz = user.timezone or "Europe/Moscow"
+
+        # Override от клиента имеют наивысший приоритет (только для главного).
+        # Для extras их нет — там client_id=None.
+        override_occurs_at = (
+            payload.occurs_at_override if client_id == payload.client_id else None
+        )
+        override_rrule = (
+            payload.rrule_override if client_id == payload.client_id else None
+        )
+
+        occurs_at = override_occurs_at
         if occurs_at is None:
             occurs_at = _parse_iso_utc(facets.get("occurs_at"))
+            occurs_at = _normalize_midnight_default(occurs_at, user_tz, raw_text)
+
+        rrule = override_rrule
         if rrule is None:
             rrule = _nonblank_or_none(facets.get("rrule"))
 
@@ -132,11 +198,9 @@ class MomentService:
         if len(raw_text) > 200:
             summary = _nonblank_or_none(facets.get("summary"))
 
-        # ``facets`` в БД — компактный объект без зеркал временных полей;
-        # дедуп колонок решается БД-индексами (§4.1 — «дублируют facets»).
         clean_facets = _clean_facets_for_storage(facets)
 
-        moment = Moment(
+        return Moment(
             user_id=user.id,
             raw_text=raw_text,
             source=payload.source,
@@ -151,11 +215,8 @@ class MomentService:
             status="active",
             created_via=payload.created_via,
             llm_version=llm_version,
-            client_id=payload.client_id,
+            client_id=client_id,
         )
-        self._session.add(moment)
-        await self._session.flush()
-        return moment
 
     async def bulk_create(
         self,
@@ -289,25 +350,27 @@ class MomentService:
         self,
         raw_text: str,
         user: User,
-    ) -> tuple[str, dict[str, Any], Optional[str]]:
-        """Возвращает (title, facets, llm_version).
+    ) -> tuple[str, dict[str, Any], Optional[str], list[dict[str, Any]]]:
+        """Возвращает (title, facets, llm_version, extras).
 
         ``llm_version=None`` означает, что pipeline прошёл через skip-LLM
-        (т. е. никакого LLM-вызова не было).
+        (т. е. никакого LLM-вызова не было). ``extras`` — список
+        дополнительных моментов из того же сообщения (например, ДР персоны
+        упомянутый вместе с задачей «купить подарок»). См. §6.2 v2.
         """
         # 1. Skip-LLM.
         trivial = classify_trivial_text(raw_text)
         if trivial is not None:
-            return trivial.title, trivial.facets, None
+            return trivial.title, trivial.facets, None, []
 
         # 2. LLM-путь (если роутер сконфигурирован).
         if self._router is None:
-            # Деградация: берём raw_text как title, facets — пустой note.
             title = _fallback_title_from_text(raw_text)
-            return title, {"kind": "note", "topics": []}, None
+            return title, {"kind": "note", "topics": []}, None, []
 
         user_tz = user.timezone or "Europe/Moscow"
         now_utc = datetime.now(timezone.utc)
+        tomorrow_local = _local_tomorrow_at(user_tz, hour=DEFAULT_HOUR_LOCAL)
         try:
             prompt = render_prompt(
                 "extract_facets",
@@ -317,14 +380,17 @@ class MomentService:
                 current_day_of_week=_day_of_week_ru(now_utc),
                 recent_titles=[],
                 recent_facts=[],
-                tomorrow_15h_utc=(now_utc + timedelta(days=1)).replace(
-                    hour=12, minute=0, second=0, microsecond=0
-                ).isoformat(),
+                tomorrow_9h_utc=tomorrow_local.astimezone(timezone.utc).isoformat(),
+                tomorrow_15h_utc=tomorrow_local.replace(hour=15)
+                .astimezone(timezone.utc)
+                .isoformat(),
+                tomorrow_month=tomorrow_local.month,
+                tomorrow_day=tomorrow_local.day,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to render extract_facets prompt: %s", exc)
             title = _fallback_title_from_text(raw_text)
-            return title, {"kind": "note", "topics": []}, None
+            return title, {"kind": "note", "topics": []}, None, []
 
         try:
             response = await self._router.chat(
@@ -334,25 +400,31 @@ class MomentService:
                 user_id=user.id,
                 json_mode=True,
                 temperature=0.1,
-                max_tokens=1024,
+                max_tokens=1500,
             )
-        except Exception as exc:  # noqa: BLE001 — включая LLMRouterError
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "LLMRouter failed for moment extract, falling back to raw: %s", exc
             )
             title = _fallback_title_from_text(raw_text)
-            return title, {"kind": "note", "topics": []}, None
+            return title, {"kind": "note", "topics": []}, None, []
 
         facets = _parse_facets_json(response.content)
         if facets is None:
             title = _fallback_title_from_text(raw_text)
-            return title, {"kind": "note", "topics": []}, EXTRACT_FACETS_VERSION
+            return title, {"kind": "note", "topics": []}, EXTRACT_FACETS_VERSION, []
+
+        # extras достаём ДО clean — иначе они уплывут вместе с зеркалами.
+        raw_extras = facets.get("extras") or []
+        extras: list[dict[str, Any]] = [
+            e for e in raw_extras if isinstance(e, dict)
+        ]
 
         title = (facets.get("title") or "").strip() or _fallback_title_from_text(raw_text)
         if len(title) > 120:
             title = title[:117] + "…"
 
-        return title, facets, EXTRACT_FACETS_VERSION
+        return title, facets, EXTRACT_FACETS_VERSION, extras
 
 
 # --- helpers ---------------------------------------------------------------
@@ -382,10 +454,69 @@ def _nonblank_or_none(v: Any) -> Optional[str]:
 
 
 def _clean_facets_for_storage(facets: dict[str, Any]) -> dict[str, Any]:
-    """Убираем из facets зеркала временных колонок (title, occurs_at, rrule),
-    которые уже лежат в реальных колонках moments. Остальное — сохраняем."""
-    mirrored = {"title", "summary", "occurs_at", "rrule", "rrule_until"}
+    """Убираем из facets зеркала временных колонок (title, occurs_at, rrule)
+    и поле extras (оно — flow-instruction для сервиса, в БД не нужно)."""
+    mirrored = {
+        "title",
+        "summary",
+        "occurs_at",
+        "rrule",
+        "rrule_until",
+        "extras",
+    }
     return {k: v for k, v in facets.items() if k not in mirrored}
+
+
+def _local_tomorrow_at(tz_name: str, *, hour: int) -> datetime:
+    """Возвращает «завтра, {hour}:00» в указанной таймзоне как aware-datetime."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("Europe/Moscow")
+    now_local = datetime.now(tz)
+    tomorrow = (now_local + timedelta(days=1)).replace(
+        hour=hour, minute=0, second=0, microsecond=0
+    )
+    return tomorrow
+
+
+# Слова, которые означают «время явно полночь / ночь» — для них 00:00 ок.
+_MIDNIGHT_KEYWORDS = (
+    "в полночь",
+    "полночью",
+    "в 00",
+    "в 24",
+    "ночью",
+    "около полуночи",
+    "после полуночи",
+)
+
+
+def _normalize_midnight_default(
+    occurs_at: Optional[datetime],
+    tz_name: str,
+    raw_text: str,
+) -> Optional[datetime]:
+    """Если LLM вернул 00:00 локального времени, а в тексте полночь не
+    упомянута — поднимаем до DEFAULT_HOUR_LOCAL (09:00). Иначе оставляем
+    как есть. См. §6.2 v2 «Правила времени».
+    """
+    if occurs_at is None:
+        return None
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("Europe/Moscow")
+    local = occurs_at.astimezone(tz)
+    if local.hour != 0 or local.minute != 0:
+        return occurs_at  # время указано — не трогаем
+
+    lower = raw_text.lower()
+    if any(kw in lower for kw in _MIDNIGHT_KEYWORDS):
+        return occurs_at  # пользователь явно сказал про полночь
+
+    fixed_local = local.replace(hour=DEFAULT_HOUR_LOCAL)
+    return fixed_local.astimezone(timezone.utc)
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)

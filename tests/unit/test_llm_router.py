@@ -165,6 +165,9 @@ class TestPromptRender:
             recent_titles=[],
             recent_facts=[],
             tomorrow_15h_utc="2026-04-24T12:00:00+00:00",
+            tomorrow_9h_utc="2026-04-24T06:00:00+00:00",
+            tomorrow_month=4,
+            tomorrow_day=24,
         )
         assert "купить молоко" in out
         assert "Europe/Moscow" in out

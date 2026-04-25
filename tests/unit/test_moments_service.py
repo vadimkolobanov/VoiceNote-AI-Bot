@@ -254,7 +254,7 @@ class TestCreateLLM:
         assert m.title == "позвонить Ане по договору"
         assert m.facets["kind"] == "task"
         assert m.facets["people"] == ["Аня"]
-        assert m.llm_version == "extract_facets_v1"
+        assert m.llm_version == "extract_facets_v2"
 
     async def test_llm_failure_falls_back_to_raw_title(
         self, session: _FakeSession, user: User
@@ -406,3 +406,116 @@ class TestOverrides:
             MomentCreate(raw_text="созвон", occurs_at_override=override),
         )
         assert m.occurs_at == override
+
+
+class TestExtras:
+    """LLM может вернуть extras[] — сервис обязан создать дочерние моменты.
+
+    Проверяет багфикс v2 для «завтра Диане купить подарок на ДР».
+    """
+
+    async def test_extras_create_additional_moments(
+        self, session: _FakeSession, user: User
+    ) -> None:
+        payload = {
+            "title": "купить подарок Диане",
+            "summary": None,
+            "kind": "task",
+            "occurs_at": None,
+            "rrule": None,
+            "rrule_until": None,
+            "people": ["Диана"],
+            "places": [],
+            "topics": ["семья"],
+            "priority": "high",
+            "mood": None,
+            "shopping_items": [],
+            "extras": [
+                {
+                    "title": "ДР Дианы",
+                    "summary": None,
+                    "kind": "birthday",
+                    "occurs_at": None,
+                    "rrule": "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=26",
+                    "rrule_until": None,
+                    "people": ["Диана"],
+                    "places": [],
+                    "topics": ["семья"],
+                    "priority": "normal",
+                    "mood": None,
+                    "shopping_items": [],
+                }
+            ],
+        }
+        router, _ = _make_router(json.dumps(payload))
+        svc = MomentService(session, llm_router=router)
+
+        main = await svc.create_from_text(
+            user,
+            MomentCreate(raw_text="завтра Диане купить подарок на день рождения"),
+        )
+
+        # Главный — task
+        assert main.title == "купить подарок Диане"
+        assert main.facets["kind"] == "task"
+        # extras не утекли в БД-record главного
+        assert "extras" not in main.facets
+        # Сессия содержит и главный, и дочерний
+        assert len(session.moments) == 2
+        birthday = next(m for m in session.moments if m.facets["kind"] == "birthday")
+        assert birthday.title == "ДР Дианы"
+        assert birthday.rrule == "FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=26"
+        assert birthday.facets["people"] == ["Диана"]
+
+    async def test_no_extras_no_extra_moments(
+        self, session: _FakeSession, user: User
+    ) -> None:
+        payload = {
+            "title": "позвонить маме",
+            "summary": None,
+            "kind": "task",
+            "occurs_at": None,
+            "rrule": None,
+            "rrule_until": None,
+            "people": ["мама"],
+            "places": [],
+            "topics": ["семья"],
+            "priority": "normal",
+            "mood": None,
+            "shopping_items": [],
+            "extras": [],
+        }
+        router, _ = _make_router(json.dumps(payload))
+        svc = MomentService(session, llm_router=router)
+
+        await svc.create_from_text(
+            user, MomentCreate(raw_text="надо не забыть позвонить сегодня маме")
+        )
+        assert len(session.moments) == 1
+
+    async def test_malformed_extras_dont_crash(
+        self, session: _FakeSession, user: User
+    ) -> None:
+        """LLM иногда галюнит — extras с не-dict'ами игнорируются."""
+        payload = {
+            "title": "купить молоко",
+            "summary": None,
+            "kind": "shopping",
+            "occurs_at": None,
+            "rrule": None,
+            "rrule_until": None,
+            "people": [],
+            "places": [],
+            "topics": ["покупки"],
+            "priority": "normal",
+            "mood": None,
+            "shopping_items": [{"text": "молоко", "qty": 1, "unit": "", "checked": False}],
+            "extras": ["string-not-dict", 42, None],
+        }
+        router, _ = _make_router(json.dumps(payload))
+        svc = MomentService(session, llm_router=router)
+
+        await svc.create_from_text(
+            user, MomentCreate(raw_text="надо завтра не забыть про молоко")
+        )
+        assert len(session.moments) == 1  # только главный, мусорные extras отброшены
