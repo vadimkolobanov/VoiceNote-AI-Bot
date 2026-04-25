@@ -8,6 +8,9 @@ LLM-роутер инжектится через FastAPI dependency и созд�
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +60,24 @@ def get_moment_service(
 # --- helpers ----------------------------------------------------------------
 
 
-def _to_out(m: Moment) -> MomentOut:
+def _safe_zone(tz_name: Optional[str]) -> ZoneInfo:
+    """ZoneInfo по имени из профиля; fallback на Europe/Moscow."""
+    try:
+        return ZoneInfo(tz_name or "Europe/Moscow")
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("Europe/Moscow")
+
+
+def _to_local_iso(dt: Optional[datetime], tz: ZoneInfo) -> Optional[str]:
+    """UTC datetime → naive ISO в указанной TZ.
+    Возвращаем строку без offset (мобилка парсит как «локальное» время)."""
+    if dt is None:
+        return None
+    return dt.astimezone(tz).replace(tzinfo=None).isoformat()
+
+
+def _to_out(m: Moment, user: User) -> MomentOut:
+    tz = _safe_zone(user.timezone)
     return MomentOut(
         id=m.id,
         client_id=m.client_id,
@@ -66,8 +86,10 @@ def _to_out(m: Moment) -> MomentOut:
         summary=m.summary,
         facets=m.facets or {},
         occurs_at=m.occurs_at,
+        occurs_at_local=_to_local_iso(m.occurs_at, tz),
         rrule=m.rrule,
         rrule_until=m.rrule_until,
+        rrule_until_local=_to_local_iso(m.rrule_until, tz),
         status=m.status,  # type: ignore[arg-type]
         source=m.source,  # type: ignore[arg-type]
         audio_url=m.audio_url,
@@ -111,7 +133,7 @@ async def create_moment(
             audio_url=payload.audio_url,
         ),
     )
-    return _to_out(moment)
+    return _to_out(moment, user)
 
 
 @router.post("/bulk", response_model=MomentsBulkOut)
@@ -132,7 +154,7 @@ async def bulk_create(
         for it in payload.items
     ]
     saved = await service.bulk_create(user, creates)
-    return MomentsBulkOut(items=[_to_out(m) for m in saved])
+    return MomentsBulkOut(items=[_to_out(m, user) for m in saved])
 
 
 @router.get("", response_model=MomentsListOut)
@@ -152,7 +174,9 @@ async def list_moments(
         items = await service.list_timeline(user, cursor=cursor, limit=limit)
 
     next_cursor = items[-1].id if len(items) == limit and view == "timeline" else None
-    return MomentsListOut(items=[_to_out(m) for m in items], next_cursor=next_cursor)
+    return MomentsListOut(
+        items=[_to_out(m, user) for m in items], next_cursor=next_cursor
+    )
 
 
 @router.get("/{moment_id}", response_model=MomentOut)
@@ -167,7 +191,7 @@ async def get_moment(
         _raise_not_found()
     except MomentForbidden:
         _raise_forbidden()
-    return _to_out(m)
+    return _to_out(m, user)
 
 
 @router.patch("/{moment_id}", response_model=MomentOut)
@@ -196,7 +220,7 @@ async def patch_moment(
         _raise_not_found()
     except MomentForbidden:
         _raise_forbidden()
-    return _to_out(m)
+    return _to_out(m, user)
 
 
 @router.delete("/{moment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -226,7 +250,7 @@ async def complete_moment(
         _raise_not_found()
     except MomentForbidden:
         _raise_forbidden()
-    return _to_out(m)
+    return _to_out(m, user)
 
 
 @router.post("/{moment_id}/snooze", response_model=MomentOut)
@@ -242,4 +266,4 @@ async def snooze_moment(
         _raise_not_found()
     except MomentForbidden:
         _raise_forbidden()
-    return _to_out(m)
+    return _to_out(m, user)

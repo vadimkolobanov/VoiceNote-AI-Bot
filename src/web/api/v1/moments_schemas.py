@@ -17,7 +17,13 @@ View = Literal["today", "timeline", "rhythm"]
 
 
 class MomentOut(BaseModel):
-    """Ответ по §5.3."""
+    """Ответ по §5.3.
+
+    `occurs_at` всегда UTC (для расчётов на клиенте). `occurs_at_local` —
+    naive ISO-строка (без offset) в TZ профиля пользователя; мобилка
+    использует её для отображения, чтобы не зависеть от TZ устройства.
+    То же — для `rrule_until` / `rrule_until_local`.
+    """
 
     id: int
     client_id: Optional[uuid.UUID] = None
@@ -26,8 +32,10 @@ class MomentOut(BaseModel):
     summary: Optional[str] = None
     facets: dict[str, Any] = Field(default_factory=dict)
     occurs_at: Optional[datetime] = None
+    occurs_at_local: Optional[str] = None
     rrule: Optional[str] = None
     rrule_until: Optional[datetime] = None
+    rrule_until_local: Optional[str] = None
     status: Status
     source: Source
     audio_url: Optional[str] = None
