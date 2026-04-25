@@ -12,5 +12,7 @@ abstract final class AppRoutes {
   // Модал-диалоги, доступные с любого таба
   static const voiceCapture = '/capture';
 
-  // Прочие push-экраны (детали, paywall и т. д.) появятся в M5/M6
+  // Push-экраны
+  static const momentDetails = '/moment/:id';
+  static String momentFor(int id) => '/moment/$id';
 }

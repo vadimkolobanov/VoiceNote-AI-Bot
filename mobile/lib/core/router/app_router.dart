@@ -6,6 +6,7 @@ import 'package:voicenote_ai/core/router/app_routes.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/login_screen.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/splash_screen.dart';
+import 'package:voicenote_ai/features/moment_details/presentation/moment_details_screen.dart';
 import 'package:voicenote_ai/features/profile/presentation/profile_screen.dart';
 import 'package:voicenote_ai/features/rhythm/presentation/rhythm_screen.dart';
 import 'package:voicenote_ai/features/timeline/presentation/timeline_screen.dart';
@@ -79,6 +80,14 @@ final routerProvider = Provider<GoRouter>((ref) {
           transitionsBuilder: (_, animation, __, child) =>
               FadeTransition(opacity: animation, child: child),
         ),
+      ),
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.momentDetails,
+        builder: (_, state) {
+          final id = int.parse(state.pathParameters['id']!);
+          return MomentDetailsScreen(momentId: id);
+        },
       ),
     ],
     errorBuilder: (_, state) => Scaffold(
