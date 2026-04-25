@@ -10,6 +10,30 @@ final todayProvider = FutureProvider.autoDispose<List<Moment>>((ref) async {
   return list.items;
 });
 
+/// Rhythm-feed (только habits и cycles). PRODUCT_PLAN.md §2.5.
+/// Бэк возвращает все моменты с rrule в одном списке; разделение на
+/// habits/cycles делаем на клиенте по `facets.kind`.
+final rhythmProvider = FutureProvider.autoDispose<RhythmData>((ref) async {
+  final repo = ref.watch(momentsRepositoryProvider);
+  final list = await repo.list(view: 'rhythm', limit: 200);
+  final habits = <Moment>[];
+  final cycles = <Moment>[];
+  for (final m in list.items) {
+    if (m.kind == 'habit') {
+      habits.add(m);
+    } else {
+      cycles.add(m);
+    }
+  }
+  return RhythmData(habits: habits, cycles: cycles);
+});
+
+class RhythmData {
+  const RhythmData({required this.habits, required this.cycles});
+  final List<Moment> habits;
+  final List<Moment> cycles;
+}
+
 /// Timeline пагинация — PRODUCT_PLAN.md §2.4. Простая `keep-state` реализация:
 /// первая страница приходит автоматически; `loadMore()` догружает следующую
 /// до тех пор, пока не отдадут пустой `next_cursor`.

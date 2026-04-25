@@ -15,4 +15,6 @@ abstract final class AppRoutes {
   // Push-экраны
   static const momentDetails = '/moment/:id';
   static String momentFor(int id) => '/moment/$id';
+  static const facts = '/facts';
+  static const paywall = '/paywall';
 }
