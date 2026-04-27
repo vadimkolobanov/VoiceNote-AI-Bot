@@ -1,0 +1,49 @@
+name: deploy
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'alembic/**'
+      - 'requirements.txt'
+      - 'dev_app.py'
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.VPS_SSH_KEY }}
+          known_hosts: unnecessary
+          name: id_ed25519
+
+      - name: Trust host
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} bash -s <<'EOF'
+          set -euo pipefail
+          cd /opt/methodex
+          git fetch --all
+          git reset --hard origin/master
+          ./.venv/bin/pip install -q --upgrade pip
+          ./.venv/bin/pip install -q -r requirements.txt
+          ./.venv/bin/python -m alembic upgrade head
+          sudo /bin/systemctl restart methodex-api
+          sleep 4
+          sudo /bin/systemctl status methodex-api --no-pager | head -15
+          curl -fsS -m 10 http://127.0.0.1:8765/health
+          EOF
