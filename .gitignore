@@ -7,7 +7,6 @@ env/
 venv/
 .venv/
 .git/
-.github/
 .idea/
 *.db
 *.log
@@ -20,6 +19,8 @@ venv/
 /V_*
 /V_02.MD
 firebase-service-account.json
+deploy/_*.tmp
+deploy/secrets/
 voicenoteai-*-firebase-adminsdk-*.json
 *-firebase-adminsdk-*.json
 
