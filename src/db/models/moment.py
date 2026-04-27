@@ -23,8 +23,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base
 
-# Размерность BGE-M3 — см. PRODUCT_PLAN.md §4.1 / §6.0.
-EMBEDDING_DIM = 1024
+# Размерность multilingual-e5-small (self-hosted CPU). M3 BGE-M3 = 1024 — апгрейд позже.
+EMBEDDING_DIM = 384
 
 
 class Moment(Base):
@@ -63,6 +63,7 @@ class Moment(Base):
         String(16), nullable=False, server_default="active"
     )  # 'active' | 'done' | 'archived' | 'trashed'
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     # --- Эмбеддинг (BGE-M3, self-hosted, §6.0 / §6.7.6) ---
     embedding: Mapped[Optional[Any]] = mapped_column(Vector(EMBEDDING_DIM))

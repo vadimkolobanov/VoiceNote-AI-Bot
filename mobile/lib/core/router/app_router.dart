@@ -7,6 +7,7 @@ import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/login_screen.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/splash_screen.dart';
 import 'package:voicenote_ai/features/facts/presentation/facts_screen.dart';
+import 'package:voicenote_ai/features/learning/presentation/learning_screen.dart';
 import 'package:voicenote_ai/features/moment_details/presentation/moment_details_screen.dart';
 import 'package:voicenote_ai/features/paywall/presentation/paywall_screen.dart';
 import 'package:voicenote_ai/features/profile/presentation/profile_screen.dart';
@@ -95,6 +96,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootKey,
         path: AppRoutes.facts,
         builder: (_, __) => const FactsScreen(),
+      ),
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.learning,
+        builder: (_, __) => const LearningScreen(),
       ),
       GoRoute(
         parentNavigatorKey: _rootKey,

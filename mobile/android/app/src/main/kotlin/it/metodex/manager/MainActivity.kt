@@ -1,4 +1,4 @@
-package com.voicenoteai.voicenote_ai
+package it.metodex.manager
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -90,6 +90,16 @@ class MomentsRepository {
     }
   }
 
+  Future<Moment> uncomplete(int id) async {
+    try {
+      final response =
+          await _dio.post<Map<String, dynamic>>('/moments/$id/uncomplete');
+      return Moment.fromJson(response.data!);
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
   Future<Moment> snooze(int id, DateTime until) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(

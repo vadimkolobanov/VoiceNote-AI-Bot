@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/features/moments/data/models/moment.dart';
@@ -25,6 +26,7 @@ class MomentCard extends StatelessWidget {
     final t = Theme.of(context);
     final color = _accentForKind(moment.kind);
 
+    const overdueColor = Color(0xFFFF453A);
     return Material(
       color: MX.surfaceOverlay,
       borderRadius: BorderRadius.circular(MX.rMd),
@@ -35,7 +37,14 @@ class MomentCard extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(MX.rMd),
-            border: Border.all(color: MX.line),
+            border: Border.all(
+              color: moment.isOverdue
+                  ? overdueColor.withAlpha(120)
+                  : MX.line,
+            ),
+            color: moment.isOverdue
+                ? overdueColor.withAlpha(15)
+                : null,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -58,22 +67,55 @@ class MomentCard extends StatelessWidget {
                     Text(
                       moment.title.isEmpty ? '(без названия)' : moment.title,
                       style: t.textTheme.bodyLarge?.copyWith(
-                        decoration: moment.isDone ? TextDecoration.lineThrough : null,
-                        color: moment.isDone ? MX.fgFaint : MX.fg,
+                        decoration: moment.completedToday
+                            ? TextDecoration.lineThrough
+                            : null,
+                        color: moment.completedToday ? MX.fgFaint : MX.fg,
                         fontWeight: FontWeight.w600,
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (moment.occursAt != null) ...[
+                    if (moment.isOverdue) ...[
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          const Icon(Icons.schedule, size: 14, color: MX.fgMuted),
+                          const Icon(LucideIcons.alertTriangle,
+                              size: 14, color: overdueColor),
                           const SizedBox(width: 4),
-                          Text(
-                            _formatWhen(moment.occursAt!),
-                            style: t.textTheme.bodySmall?.copyWith(color: MX.fgMuted),
+                          Expanded(
+                            child: Text(
+                              moment.occursAt != null
+                                  ? 'Просрочено · ${_formatOverdue(moment.occursAt!)}'
+                                  : 'Просрочено',
+                              style: t.textTheme.bodySmall?.copyWith(
+                                color: overdueColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ] else if (moment.nextReminderAt != null || moment.isHabit) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            moment.isHabit ? LucideIcons.repeat : LucideIcons.clock,
+                            size: 14,
+                            color: MX.fgMuted,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              moment.nextReminderAt != null
+                                  ? _formatWhen(moment.nextReminderAt!)
+                                  : _rruleHumanRu(moment.rrule),
+                              style: t.textTheme.bodySmall
+                                  ?.copyWith(color: MX.fgMuted),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                       ),
@@ -89,13 +131,22 @@ class MomentCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (onComplete != null && moment.isActive)
+              if (onComplete != null)
                 IconButton(
-                  iconSize: 22,
+                  iconSize: 24,
                   visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.check_circle_outline, color: MX.fgMuted),
+                  icon: Icon(
+                    moment.completedToday
+                        ? LucideIcons.checkCircle2
+                        : LucideIcons.circle,
+                    color: moment.completedToday
+                        ? const Color(0xFF34C759)
+                        : MX.fgMuted,
+                  ),
                   onPressed: onComplete,
-                  tooltip: 'Готово',
+                  tooltip: moment.completedToday
+                      ? (moment.isHabit ? 'Снять отметку на сегодня' : 'Вернуть в активные')
+                      : 'Выполнено',
                 )
               else
                 const SizedBox(width: 8),
@@ -110,20 +161,20 @@ class MomentCard extends StatelessWidget {
 IconData _iconForKind(String kind) {
   switch (kind) {
     case 'task':
-      return Icons.notifications_active_outlined;
+      return LucideIcons.bell;
     case 'shopping':
-      return Icons.shopping_basket_outlined;
+      return LucideIcons.shoppingCart;
     case 'habit':
-      return Icons.repeat;
+      return LucideIcons.repeat;
     case 'birthday':
-      return Icons.cake_outlined;
+      return LucideIcons.gift;
     case 'cycle':
-      return Icons.event_repeat_outlined;
+      return LucideIcons.calendar;
     case 'thought':
-      return Icons.auto_awesome_outlined;
+      return LucideIcons.sparkles;
     case 'note':
     default:
-      return Icons.sticky_note_2_outlined;
+      return LucideIcons.fileText;
   }
 }
 
@@ -145,6 +196,44 @@ Color _accentForKind(String kind) {
     default:
       return MX.fgMuted;
   }
+}
+
+String _rruleHumanRu(String? rrule) {
+  if (rrule == null || rrule.isEmpty) return 'Регулярно';
+  final parts = <String, String>{};
+  for (final kv in rrule.split(';')) {
+    final i = kv.indexOf('=');
+    if (i > 0) parts[kv.substring(0, i).toUpperCase()] = kv.substring(i + 1).toUpperCase();
+  }
+  final freq = parts['FREQ'] ?? '';
+  switch (freq) {
+    case 'DAILY':
+      return 'Каждый день';
+    case 'WEEKLY':
+      final days = parts['BYDAY'];
+      if (days == null || days.isEmpty) return 'Каждую неделю';
+      const map = {
+        'MO': 'пн', 'TU': 'вт', 'WE': 'ср', 'TH': 'чт',
+        'FR': 'пт', 'SA': 'сб', 'SU': 'вс',
+      };
+      final names = days.split(',').map((d) => map[d.trim()] ?? d).join(', ');
+      return 'По $names';
+    case 'MONTHLY':
+      return 'Каждый месяц';
+    case 'YEARLY':
+      return 'Каждый год';
+    default:
+      return 'Регулярно';
+  }
+}
+
+String _formatOverdue(DateTime when) {
+  final now = DateTime.now();
+  final diff = now.difference(when);
+  if (diff.inMinutes < 60) return '${diff.inMinutes} мин назад';
+  if (diff.inHours < 24) return '${diff.inHours} ч назад';
+  if (diff.inDays < 7) return '${diff.inDays} дн назад';
+  return DateFormat('d MMM', 'ru').format(when);
 }
 
 String _formatWhen(DateTime when) {

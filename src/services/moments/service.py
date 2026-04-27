@@ -21,10 +21,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models import Moment, User
+from src.db.models import Fact, HabitCompletion, Moment, User
 from src.services.llm_router import LLMRouter, LLMTask
 from src.services.llm_router.prompts.loader import render as render_prompt
 
@@ -119,6 +120,14 @@ class MomentService:
             raw_text, user
         )
 
+        # Эмбеддинг для main + всех extras считается из исходного raw_text.
+        embedding = None
+        try:
+            from src.services.embeddings import embed_text as _embed
+            embedding = await _embed(raw_text, kind="doc")
+        except Exception:
+            logger.exception("embedding skipped for moment")
+
         # Главный момент.
         main = self._build_moment(
             user=user,
@@ -129,6 +138,8 @@ class MomentService:
             llm_version=llm_version,
             client_id=payload.client_id,
         )
+        if embedding is not None:
+            main.embedding = embedding
         self._session.add(main)
         await self._session.flush()
 
@@ -152,6 +163,8 @@ class MomentService:
                     llm_version=llm_version,
                     client_id=None,  # extras всегда новые, без идемпотентности
                 )
+                if embedding is not None:
+                    child.embedding = embedding
                 self._session.add(child)
             except Exception as exc:  # noqa: BLE001 — extras best-effort
                 logger.warning("Skipping extra due to error: %s", exc)
@@ -240,8 +253,11 @@ class MomentService:
         return m
 
     async def list_today(self, user: User, *, limit: int = 50) -> list[Moment]:
-        """Моменты с occurs_at в ближайшие 24 часа + без времени, созданные
-        за последние сутки. Порядок: сначала по времени, потом по created_at.
+        """Сегодняшний экран:
+        - одноразовые активные моменты с ``occurs_at`` в ближайшие 24 часа
+        - одноразовые активные без времени, созданные за последние сутки
+        - все привычки (rrule != null) — отметка «выполнено сегодня»
+          вычисляется отдельно через ``completed_today_map``.
         """
         now = datetime.now(timezone.utc)
         horizon = now + timedelta(hours=24)
@@ -249,20 +265,30 @@ class MomentService:
         stmt = (
             select(Moment)
             .where(Moment.user_id == user.id)
-            .where(Moment.status == "active")
+            .where(Moment.status != "trashed")
+            .where(Moment.status != "archived")
             .where(
                 or_(
-                    and_(Moment.occurs_at.is_not(None), Moment.occurs_at < horizon),
+                    Moment.rrule.is_not(None),
                     and_(
-                        Moment.occurs_at.is_(None),
-                        Moment.created_at >= now - timedelta(hours=24),
+                        Moment.status == "active",
+                        or_(
+                            and_(Moment.occurs_at.is_not(None), Moment.occurs_at < horizon),
+                            and_(
+                                Moment.occurs_at.is_(None),
+                                Moment.created_at >= now - timedelta(hours=24),
+                            ),
+                        ),
                     ),
                 )
             )
             .order_by(Moment.occurs_at.asc().nulls_last(), Moment.created_at.desc())
-            .limit(limit)
         )
-        return list((await self._session.scalars(stmt)).all())
+        rows = list((await self._session.scalars(stmt)).all())
+        # Точная фильтрация на Python: yearly DR не показывать если не сегодня,
+        # one-shot из прошлого не тащить, habit без часа — оставлять.
+        filtered = [m for m in rows if is_relevant_today(m, user)]
+        return filtered[:limit]
 
     async def list_timeline(
         self,
@@ -328,15 +354,107 @@ class MomentService:
         return m
 
     async def complete(self, user: User, moment_id: int) -> Moment:
+        """«Выполнить».
+
+        Для одноразового момента — статус становится ``done``.
+        Для привычки (``rrule != null``) — пишется отметка за сегодняшний
+        день в ``habit_completions``; статус не трогаем, завтра привычка
+        снова появится в Сегодня как невыполненная.
+        """
         m = await self.get(user, moment_id)
-        m.status = "done"
-        m.completed_at = datetime.now(timezone.utc)
+        if m.rrule:
+            today = _user_today(user)
+            stmt = (
+                pg_insert(HabitCompletion)
+                .values(moment_id=m.id, user_id=user.id, completed_on=today)
+                .on_conflict_do_nothing(constraint="uq_habit_completion_day")
+            )
+            await self._session.execute(stmt)
+        else:
+            m.status = "done"
+            m.completed_at = datetime.now(timezone.utc)
         return m
+
+    async def uncomplete(self, user: User, moment_id: int) -> Moment:
+        """Откат «Выполнить» (для привычек удаляем сегодняшнюю отметку)."""
+        m = await self.get(user, moment_id)
+        if m.rrule:
+            today = _user_today(user)
+            await self._session.execute(
+                delete(HabitCompletion).where(
+                    HabitCompletion.moment_id == m.id,
+                    HabitCompletion.completed_on == today,
+                )
+            )
+        else:
+            m.status = "active"
+            m.completed_at = None
+        return m
+
+    async def _load_recent_facts(
+        self, user_id: int, *, limit: int = 10
+    ) -> list[dict[str, str]]:
+        rows = await self._session.scalars(
+            select(Fact)
+            .where(Fact.user_id == user_id)
+            .order_by(Fact.updated_at.desc())
+            .limit(limit)
+        )
+        out: list[dict[str, str]] = []
+        for f in rows.all():
+            value = f.value or {}
+            brief = ""
+            if isinstance(value, dict):
+                for k in ("name", "summary", "label", "what"):
+                    if value.get(k):
+                        brief = str(value[k])[:60]
+                        break
+            out.append({"kind": f.kind, "key": f.key, "value_brief": brief or f.key})
+        return out
+
+    async def is_completed_today(self, user: User, moment: Moment) -> bool:
+        """True, если момент считается выполненным сегодня (для UI)."""
+        if not moment.rrule:
+            return moment.status == "done"
+        today = _user_today(user)
+        row = await self._session.scalar(
+            select(HabitCompletion.id).where(
+                HabitCompletion.moment_id == moment.id,
+                HabitCompletion.completed_on == today,
+            )
+        )
+        return row is not None
+
+    async def completed_today_map(
+        self, user: User, moments: Iterable[Moment]
+    ) -> dict[int, bool]:
+        """Пакетно: вернуть {moment_id: completed_today} для списка."""
+        moments = list(moments)
+        result: dict[int, bool] = {}
+        habit_ids: list[int] = []
+        for m in moments:
+            if m.rrule:
+                habit_ids.append(m.id)
+            else:
+                result[m.id] = m.status == "done"
+        if habit_ids:
+            today = _user_today(user)
+            rows = await self._session.scalars(
+                select(HabitCompletion.moment_id).where(
+                    HabitCompletion.moment_id.in_(habit_ids),
+                    HabitCompletion.completed_on == today,
+                )
+            )
+            done_set = set(rows.all())
+            for mid in habit_ids:
+                result[mid] = mid in done_set
+        return result
 
     async def snooze(self, user: User, moment_id: int, until: datetime) -> Moment:
         m = await self.get(user, moment_id)
         m.occurs_at = until
         m.status = "active"
+        m.notified_at = None  # сбрасываем, чтобы scheduler уведомил снова
         return m
 
     async def soft_delete(self, user: User, moment_id: int) -> Moment:
@@ -371,6 +489,9 @@ class MomentService:
         user_tz = user.timezone or "Europe/Moscow"
         now_utc = datetime.now(timezone.utc)
         tomorrow_local = _local_tomorrow_at(user_tz, hour=DEFAULT_HOUR_LOCAL)
+        # Подсасываем top-10 последних фактов: LLM нормализует имена/места
+        # к существующим ключам, а не плодит «Диана» / «Дианочка» / «Ди».
+        recent_facts = await self._load_recent_facts(user.id, limit=10)
         try:
             prompt = render_prompt(
                 "extract_facets",
@@ -379,7 +500,7 @@ class MomentService:
                 current_datetime_iso=now_utc.isoformat(),
                 current_day_of_week=_day_of_week_ru(now_utc),
                 recent_titles=[],
-                recent_facts=[],
+                recent_facts=recent_facts,
                 tomorrow_9h_utc=tomorrow_local.astimezone(timezone.utc).isoformat(),
                 tomorrow_15h_utc=tomorrow_local.replace(hour=15)
                 .astimezone(timezone.utc)
@@ -465,6 +586,112 @@ def _clean_facets_for_storage(facets: dict[str, Any]) -> dict[str, Any]:
         "extras",
     }
     return {k: v for k, v in facets.items() if k not in mirrored}
+
+
+def _user_tz(user: User) -> ZoneInfo:
+    try:
+        return ZoneInfo(user.timezone)
+    except (ZoneInfoNotFoundError, AttributeError, TypeError):
+        return ZoneInfo("Europe/Moscow")
+
+
+def _user_today(user: User):
+    """Сегодняшняя дата в TZ пользователя."""
+    return datetime.now(_user_tz(user)).date()
+
+
+def compute_next_reminder(moment: Moment, user: User) -> Optional[datetime]:
+    """Следующее срабатывание момента в UTC.
+
+    Для одноразового — ``occurs_at`` если ещё в будущем, иначе None.
+    Для rrule:
+      - если ``occurs_at`` задан (в нём время-внутри-дня) → считаем через rrulestr
+      - если ``occurs_at`` отсутствует — у привычки нет конкретного часа,
+        возвращаем None (UI покажет текстом «каждый день» / «каждую неделю»).
+    """
+    now = datetime.now(timezone.utc)
+    if moment.rrule:
+        if moment.occurs_at is None:
+            return None
+        try:
+            from dateutil.rrule import rrulestr
+        except Exception:
+            return moment.occurs_at if moment.occurs_at > now else None
+        try:
+            dtstart = moment.occurs_at
+            if dtstart.tzinfo is None:
+                dtstart = dtstart.replace(tzinfo=timezone.utc)
+            rule = rrulestr(moment.rrule, dtstart=dtstart)
+            nxt = rule.after(now, inc=True) if dtstart > now else rule.after(now, inc=False)
+            if nxt is None:
+                return None
+            if nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=timezone.utc)
+            if moment.rrule_until and nxt > moment.rrule_until:
+                return None
+            return nxt
+        except Exception:
+            return None
+    if moment.occurs_at and moment.occurs_at > now:
+        return moment.occurs_at
+    return None
+
+
+def _rrule_fires_today(rrule: str, today_weekday_idx: int) -> bool:
+    """Грубая проверка: правило срабатывает сегодня?
+
+    Поддерживает FREQ=DAILY (всегда True) и FREQ=WEEKLY;BYDAY=… (проверяет
+    день недели). MONTHLY/YEARLY → False (для них нужен compute_next_reminder
+    и явный occurs_at, иначе мы не знаем дату).
+    """
+    parts = {}
+    for kv in rrule.split(";"):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            parts[k.strip().upper()] = v.strip().upper()
+    freq = parts.get("FREQ", "")
+    if freq == "DAILY":
+        return True
+    if freq == "WEEKLY":
+        days = parts.get("BYDAY", "")
+        if not days:
+            return True  # каждую неделю — без уточнения дня считаем как «всегда»
+        weekday_codes = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
+        today_code = weekday_codes[today_weekday_idx]
+        return today_code in {d.strip() for d in days.split(",")}
+    return False
+
+
+def is_relevant_today(moment: Moment, user: User) -> bool:
+    """Должен ли момент попадать в Сегодня для UI."""
+    if moment.status in ("trashed", "archived"):
+        return False
+    tz = _user_tz(user)
+    now_tz = datetime.now(tz)
+    today = now_tz.date()
+    horizon_end = datetime.combine(today, datetime.min.time(), tz) + timedelta(days=1)
+
+    if moment.rrule:
+        # 1. Привычка с явным временем (occurs_at) — смотрим, попадает ли
+        #    следующее срабатывание в сегодняшнее окно.
+        if moment.occurs_at is not None:
+            nxt = compute_next_reminder(moment, user)
+            if nxt is None:
+                return False
+            return nxt < horizon_end
+        # 2. Привычка без времени — ориентируемся на FREQ
+        return _rrule_fires_today(moment.rrule, today.weekday())
+
+    if moment.status == "done":
+        return False  # одноразовый и уже выполнен — не показываем
+
+    if moment.occurs_at is not None:
+        occurs_local = moment.occurs_at.astimezone(tz)
+        today_start_tz = datetime.combine(today, datetime.min.time(), tz)
+        return today_start_tz <= occurs_local < horizon_end
+
+    # без времени — показываем только если создан за последние 24ч
+    return moment.created_at >= datetime.now(timezone.utc) - timedelta(hours=24)
 
 
 def _local_tomorrow_at(tz_name: str, *, hour: int) -> datetime:

@@ -5,6 +5,7 @@ import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:voicenote_ai/app.dart';
 import 'package:voicenote_ai/core/config/env.dart';
+import 'package:voicenote_ai/features/push/push_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,7 @@ Future<void> main() async {
 
   await Env.init();
   await initializeDateFormatting('ru');
+  await PushService.initFirebase();
 
   runApp(const ProviderScope(child: VoiceNoteApp()));
 }

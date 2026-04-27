@@ -1,6 +1,11 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
@@ -31,14 +36,100 @@ class AskSheet extends ConsumerStatefulWidget {
 
 class _AskSheetState extends ConsumerState<AskSheet> {
   final _ctl = TextEditingController();
+  final _stt = stt.SpeechToText();
   bool _busy = false;
+  bool _sttReady = false;
+  bool _listening = false;
+  String _liveText = '';
   AgentAnswer? _answer;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _initStt();
+  }
+
+  Future<void> _initStt() async {
+    try {
+      final ok = await _stt.initialize(
+        onStatus: (_) {},
+        onError: (_) {
+          if (mounted && _listening) setState(() => _listening = false);
+        },
+      );
+      if (mounted) setState(() => _sttReady = ok);
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
     _ctl.dispose();
+    _stt.cancel();
     super.dispose();
+  }
+
+  Future<void> _startListening() async {
+    if (_busy || _listening) return;
+    HapticFeedback.mediumImpact();
+    if (!_sttReady) {
+      final mic = await Permission.microphone.request();
+      if (!mic.isGranted) return;
+      await _initStt();
+      if (!_sttReady) return;
+    }
+    setState(() {
+      _liveText = '';
+      _listening = true;
+    });
+    await _stt.listen(
+      onResult: (r) {
+        if (!mounted) return;
+        setState(() => _liveText = r.recognizedWords);
+      },
+      listenOptions: stt.SpeechListenOptions(
+        partialResults: true,
+        cancelOnError: true,
+        listenMode: stt.ListenMode.dictation,
+      ),
+      pauseFor: const Duration(seconds: 30),
+      listenFor: const Duration(seconds: 60),
+      localeId: 'ru_RU',
+    );
+  }
+
+  /// Released: положить текст в поле и сразу отправить запрос.
+  Future<void> _stopAndAsk() async {
+    if (!_listening) return;
+    HapticFeedback.lightImpact();
+    final captured = _liveText.trim();
+    try {
+      await _stt.stop();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _listening = false;
+      if (captured.isNotEmpty) {
+        final cur = _ctl.text.trim();
+        _ctl.text = cur.isEmpty ? captured : '$cur $captured';
+      }
+      _liveText = '';
+    });
+    if (_ctl.text.trim().isNotEmpty) {
+      await _ask();
+    }
+  }
+
+  Future<void> _cancelListening() async {
+    if (!_listening) return;
+    try {
+      await _stt.cancel();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _listening = false;
+      _liveText = '';
+    });
   }
 
   Future<void> _ask() async {
@@ -66,8 +157,11 @@ class _AskSheetState extends ConsumerState<AskSheet> {
     final t = Theme.of(context);
     final mq = MediaQuery.of(context);
 
+    // Снизу либо клавиатура (viewInsets.bottom), либо запас под центральный
+    // мик-FAB из AppShell (~80px). Берём максимум, чтобы кнопка «Спросить»
+    // не уходила под FAB на Хронике/Сегодня.
     return Padding(
-      padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: max(mq.viewInsets.bottom, 80)),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: mq.size.height * 0.85),
         child: Column(
@@ -101,8 +195,9 @@ class _AskSheetState extends ConsumerState<AskSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: TextField(
                   controller: _ctl,
-                  autofocus: true,
+                  autofocus: false,
                   maxLines: 3,
+                  enabled: !_busy && !_listening,
                   textInputAction: TextInputAction.send,
                   onSubmitted: (_) => _ask(),
                   style: t.textTheme.bodyLarge,
@@ -123,21 +218,75 @@ class _AskSheetState extends ConsumerState<AskSheet> {
                 ),
               ),
               const SizedBox(height: 12),
+              if (_listening)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    _liveText.isEmpty ? 'Слушаю…' : _liveText,
+                    textAlign: TextAlign.center,
+                    style: t.textTheme.bodyMedium
+                        ?.copyWith(color: MX.accentAi),
+                  ),
+                ),
+              if (_busy)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    'Думаю…',
+                    textAlign: TextAlign.center,
+                    style: t.textTheme.bodyMedium?.copyWith(color: MX.fgMuted),
+                  ),
+                ),
+              const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _busy ? null : _ask,
-                    icon: _busy
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.send_outlined, size: 18),
-                    label: Text(_busy ? 'Думаю…' : 'Спросить'),
-                  ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: (_busy || _listening) ? null : _ask,
+                        icon: const Icon(Icons.send_outlined, size: 16),
+                        label: const Text('Спросить'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      onLongPressStart: (_) => _startListening(),
+                      onLongPressEnd: (_) => _stopAndAsk(),
+                      onLongPressCancel: _cancelListening,
+                      onTap: () {
+                        if (!_listening) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Зажми и держи микрофон.'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        width: 56,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          gradient: _listening
+                              ? const LinearGradient(
+                                  colors: [
+                                    Color(0xFFFF5C5C),
+                                    Color(0xFFFF2D55)
+                                  ],
+                                )
+                              : MX.brandGradient,
+                          borderRadius: BorderRadius.circular(MX.rMd),
+                        ),
+                        child: Icon(
+                          _listening ? Icons.stop : Icons.mic,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 12),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import 'package:voicenote_ai/core/router/app_routes.dart';
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
@@ -57,7 +58,7 @@ class _MicFab extends StatelessWidget {
                 shape: BoxShape.circle,
                 boxShadow: MX.fabGlow,
               ),
-              child: const Icon(Icons.mic, color: Colors.white, size: 30),
+              child: const Icon(LucideIcons.mic, color: Colors.white, size: 28),
             ),
           ),
         ),
@@ -71,10 +72,10 @@ class _BottomBar extends StatelessWidget {
   final String currentLocation;
 
   static const _tabs = <_TabSpec>[
-    _TabSpec(path: AppRoutes.today, icon: Icons.today_outlined, activeIcon: Icons.today, label: 'Сегодня'),
-    _TabSpec(path: AppRoutes.timeline, icon: Icons.history_outlined, activeIcon: Icons.history, label: 'Хроника'),
-    _TabSpec(path: AppRoutes.rhythm, icon: Icons.repeat_outlined, activeIcon: Icons.repeat, label: 'Ритм'),
-    _TabSpec(path: AppRoutes.profile, icon: Icons.person_outline, activeIcon: Icons.person, label: 'Профиль'),
+    _TabSpec(path: AppRoutes.today, icon: LucideIcons.calendar, activeIcon: LucideIcons.calendar, label: 'Сегодня'),
+    _TabSpec(path: AppRoutes.timeline, icon: LucideIcons.layers, activeIcon: LucideIcons.layers, label: 'Хроника'),
+    _TabSpec(path: AppRoutes.rhythm, icon: LucideIcons.repeat, activeIcon: LucideIcons.repeat, label: 'Ритм'),
+    _TabSpec(path: AppRoutes.profile, icon: LucideIcons.user, activeIcon: LucideIcons.user, label: 'Профиль'),
   ];
 
   @override

@@ -18,8 +18,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models import AgentMessage, Moment, User
+from src.db.models import AgentMessage, Fact, Moment, User
 from src.db.session import get_session
+from src.services.embeddings import embed_text
 from src.services.llm_router import LLMRouter, LLMTask, build_default_router
 from src.services.llm_router.base import LLMRouterError
 
@@ -84,27 +85,84 @@ def _require_pro(user: User) -> None:
         )
 
 
-async def _fetch_recent_moments(
-    session: AsyncSession, user: User, limit: int = 10
+async def _fetch_relevant_moments(
+    session: AsyncSession,
+    user: User,
+    *,
+    query_embedding: list[float] | None,
+    limit: int = 10,
 ) -> list[Moment]:
-    stmt = (
+    """Релевантные моменты под вопрос:
+    - если есть эмбеддинг запроса и в базе есть моменты с эмбеддингом —
+      ищем top-K по cosine distance (<=>);
+    - иначе fallback на последние по дате.
+    """
+    base = (
         select(Moment)
         .where(Moment.user_id == user.id)
         .where(Moment.status != "trashed")
-        .order_by(Moment.created_at.desc())
-        .limit(limit)
     )
+    if query_embedding is not None:
+        stmt = (
+            base.where(Moment.embedding.is_not(None))
+            .order_by(Moment.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
+        rows = list((await session.scalars(stmt)).all())
+        if rows:
+            return rows
+    stmt = base.order_by(Moment.created_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
 
 
-def _build_context_block(moments: list[Moment]) -> str:
-    if not moments:
+async def _fetch_relevant_facts(
+    session: AsyncSession,
+    user: User,
+    *,
+    query_embedding: list[float] | None,
+    limit: int = 8,
+) -> list[Fact]:
+    base = select(Fact).where(Fact.user_id == user.id)
+    if query_embedding is not None:
+        stmt = (
+            base.where(Fact.embedding.is_not(None))
+            .order_by(Fact.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
+        rows = list((await session.scalars(stmt)).all())
+        if rows:
+            return rows
+    stmt = base.order_by(Fact.updated_at.desc()).limit(limit)
+    return list((await session.scalars(stmt)).all())
+
+
+def _fact_line(f: Fact) -> str:
+    val = f.value or {}
+    if isinstance(val, dict):
+        bits: list[str] = []
+        for k in ("name", "role", "summary", "label", "what", "when", "details", "address", "age"):
+            v = val.get(k)
+            if v not in (None, ""):
+                bits.append(f"{k}={v}")
+        body = ", ".join(bits) or str(val)
+    else:
+        body = str(val)
+    return f"- [{f.kind}] {f.key}: {body}"
+
+
+def _build_context_block(moments: list[Moment], facts: list[Fact]) -> str:
+    chunks: list[str] = []
+    if facts:
+        chunks.append("Что я знаю о пользователе (долгоиграющие факты):")
+        chunks.extend(_fact_line(f) for f in facts)
+    if moments:
+        chunks.append("\nРелевантные записи (для текущего вопроса):")
+        for m in moments:
+            when = m.occurs_at.isoformat() if m.occurs_at else m.created_at.isoformat()
+            chunks.append(f"- #{m.id} [{when}] {m.title}: {m.raw_text[:200]}")
+    if not chunks:
         return "Релевантных записей пользователя не найдено."
-    lines = ["Записи пользователя (от новых к старым):"]
-    for m in moments:
-        when = m.occurs_at.isoformat() if m.occurs_at else m.created_at.isoformat()
-        lines.append(f"- #{m.id} [{when}] {m.title}: {m.raw_text[:200]}")
-    return "\n".join(lines)
+    return "\n".join(chunks)
 
 
 # --- endpoints -------------------------------------------------------------
@@ -119,9 +177,15 @@ async def ask_agent(
 ) -> AgentAskOut:
     _require_pro(user)
 
-    # Контекст: последние 10 моментов. BGE-M3 + top-10 по косинусу — в M3.
-    moments = await _fetch_recent_moments(session, user, limit=10)
-    context_block = _build_context_block(moments)
+    # Векторный recall: эмбеддим вопрос → top-K моментов и фактов по cosine.
+    q_emb = await embed_text(payload.question, kind="query")
+    moments = await _fetch_relevant_moments(
+        session, user, query_embedding=q_emb, limit=10
+    )
+    facts = await _fetch_relevant_facts(
+        session, user, query_embedding=q_emb, limit=8
+    )
+    context_block = _build_context_block(moments, facts)
 
     system = (
         "Ты — умный внимательный друг пользователя. Отвечаешь только на "

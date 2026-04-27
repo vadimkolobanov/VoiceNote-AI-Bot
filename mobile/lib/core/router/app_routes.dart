@@ -16,5 +16,6 @@ abstract final class AppRoutes {
   static const momentDetails = '/moment/:id';
   static String momentFor(int id) => '/moment/$id';
   static const facts = '/facts';
+  static const learning = '/learning';
   static const paywall = '/paywall';
 }

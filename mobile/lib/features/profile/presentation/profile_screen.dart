@@ -31,7 +31,9 @@ class ProfileScreen extends ConsumerWidget {
           sliver: SliverList(
             delegate: SliverChildListDelegate.fixed([
               if (user != null) _Header(user: user) else const SizedBox.shrink(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              const _StatsSection(),
+              const SizedBox(height: 16),
               _MenuTile(
                 icon: Icons.badge_outlined,
                 title: 'Имя',
@@ -59,6 +61,12 @@ class ProfileScreen extends ConsumerWidget {
                 onTap: () => context.push('/facts'),
               ),
               _MenuTile(
+                icon: Icons.auto_stories_outlined,
+                title: 'Расскажи о себе',
+                subtitle: 'Обучи память — рассказом, не задачей',
+                onTap: () => context.push('/learning'),
+              ),
+              _MenuTile(
                 icon: Icons.workspace_premium_outlined,
                 title: 'Подписка Pro',
                 subtitle: user?.isPro == true ? 'Активна' : 'Не активна — оформить',
@@ -70,6 +78,14 @@ class ProfileScreen extends ConsumerWidget {
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
                   child: Text('Выйти', style: TextStyle(color: MX.accentSecurity)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => _confirmDeleteAccount(context, ref),
+                child: const Text(
+                  'Удалить мою память',
+                  style: TextStyle(color: MX.accentSecurity),
                 ),
               ),
             ]),
@@ -137,6 +153,49 @@ class ProfileScreen extends ConsumerWidget {
         ref.read(profileRepositoryProvider).patch(digestHour: result));
   }
 
+  Future<void> _confirmDeleteAccount(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: MX.bgElevated,
+        title: const Text('Удалить мою память?'),
+        content: const Text(
+          'Сразу уйдёт всё: моменты, привычки, факты, токены устройств. '
+          'Откатить нельзя.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Удалить всё',
+              style: TextStyle(color: MX.accentSecurity),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(profileRepositoryProvider).deleteAccount();
+      // Чистим локальную сессию и кидаем на login.
+      await ref.read(sessionControllerProvider.notifier).logout();
+    } on ApiException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
   Future<void> _patch(BuildContext context, WidgetRef ref,
       Future<User> Function() op) async {
     try {
@@ -158,6 +217,182 @@ class ProfileScreen extends ConsumerWidget {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
       }
     }
+  }
+}
+
+class _StatsSection extends ConsumerWidget {
+  const _StatsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = Theme.of(context);
+    final stats = ref.watch(profileStatsProvider);
+    return stats.when(
+      loading: () => Container(
+        height: 120,
+        decoration: BoxDecoration(
+          color: MX.surfaceOverlay,
+          borderRadius: BorderRadius.circular(MX.rLg),
+          border: Border.all(color: MX.line),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2, color: MX.accentAi),
+          ),
+        ),
+      ),
+      error: (e, _) => const SizedBox.shrink(),
+      data: (s) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: MX.surfaceOverlay,
+          borderRadius: BorderRadius.circular(MX.rLg),
+          border: Border.all(color: MX.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Статистика', style: t.textTheme.titleMedium),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _StatTile(
+                    icon: Icons.check_circle_outline,
+                    color: const Color(0xFF34C759),
+                    label: 'Сегодня',
+                    value: '${s.doneToday}',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _StatTile(
+                    icon: Icons.warning_amber_rounded,
+                    color: s.overdueCount > 0
+                        ? const Color(0xFFFF453A)
+                        : MX.fgMuted,
+                    label: 'Просрочено',
+                    value: '${s.overdueCount}',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _StatTile(
+                    icon: Icons.list_alt_outlined,
+                    color: MX.accentAi,
+                    label: 'Активных',
+                    value: '${s.activeCount}',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.calendar_today_outlined,
+                    size: 14, color: MX.fgMuted),
+                const SizedBox(width: 6),
+                Text(
+                  'Эта неделя: ${s.weekCompleted}/${s.weekPlanned}',
+                  style: t.textTheme.bodySmall?.copyWith(color: MX.fgMuted),
+                ),
+                const Spacer(),
+                Text(
+                  'Всего: ${s.totalMoments}',
+                  style: t.textTheme.bodySmall?.copyWith(color: MX.fgMuted),
+                ),
+              ],
+            ),
+            if (s.habitStreaks.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Divider(height: 1, color: MX.line),
+              const SizedBox(height: 12),
+              Text('Серии', style: t.textTheme.labelMedium?.copyWith(color: MX.fgMuted)),
+              const SizedBox(height: 6),
+              for (final h in s.habitStreaks) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.local_fire_department,
+                          size: 16, color: Color(0xFFFF9F0A)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(h.title,
+                            style: t.textTheme.bodyMedium,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      Text(
+                        '${h.streakDays} ${_dayWord(h.streakDays)}',
+                        style: t.textTheme.bodySmall?.copyWith(
+                          color: MX.fg,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _dayWord(int n) {
+  final m100 = n % 100;
+  if (m100 >= 11 && m100 <= 14) return 'дней';
+  switch (n % 10) {
+    case 1:
+      return 'день';
+    case 2:
+    case 3:
+    case 4:
+      return 'дня';
+    default:
+      return 'дней';
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withAlpha(15),
+        borderRadius: BorderRadius.circular(MX.rMd),
+        border: Border.all(color: color.withAlpha(40)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(height: 6),
+          Text(value, style: t.textTheme.titleLarge?.copyWith(
+            color: MX.fg, fontWeight: FontWeight.w700,
+          )),
+          Text(label, style: t.textTheme.bodySmall?.copyWith(color: MX.fgMuted)),
+        ],
+      ),
+    );
   }
 }
 

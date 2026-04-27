@@ -27,6 +27,11 @@ class Moment {
     this.rruleUntilIso,
     this.rruleUntilLocalIso,
     this.audioUrl,
+    this.isHabit = false,
+    this.completedToday = false,
+    this.isOverdue = false,
+    this.nextReminderAtIso,
+    this.nextReminderAtLocalIso,
   });
 
   final int id;
@@ -46,6 +51,11 @@ class Moment {
   final String createdAtIso;
   final String updatedAtIso;
   final String createdVia;
+  final bool isHabit;
+  final bool completedToday;
+  final bool isOverdue;
+  final String? nextReminderAtIso;
+  final String? nextReminderAtLocalIso;
 
   // ── derived ────────────────────────────────────────────────────────────
   String get kind => (facets['kind'] as String?) ?? 'note';
@@ -69,9 +79,21 @@ class Moment {
   DateTime get createdAt =>
       DateTime.tryParse(createdAtIso)?.toLocal() ?? DateTime.now();
 
-  bool get hasReminder => occursAt != null;
+  bool get hasReminder => occursAt != null || nextReminderAt != null;
   bool get isDone => status == 'done';
   bool get isActive => status == 'active';
+
+  /// Следующее срабатывание в TZ профиля. Для привычек — следующий день,
+  /// для одноразового — moment.occurs_at если в будущем.
+  DateTime? get nextReminderAt {
+    if (nextReminderAtLocalIso != null && nextReminderAtLocalIso!.isNotEmpty) {
+      return DateTime.tryParse(nextReminderAtLocalIso!);
+    }
+    if (nextReminderAtIso != null) {
+      return DateTime.tryParse(nextReminderAtIso!)?.toLocal();
+    }
+    return null;
+  }
 
   factory Moment.fromJson(Map<String, dynamic> json) => Moment(
         id: (json['id'] as num).toInt(),
@@ -92,6 +114,11 @@ class Moment {
         createdAtIso: (json['created_at'] as String?) ?? '',
         updatedAtIso: (json['updated_at'] as String?) ?? '',
         createdVia: (json['created_via'] as String?) ?? 'mobile',
+        isHabit: (json['is_habit'] as bool?) ?? false,
+        completedToday: (json['completed_today'] as bool?) ?? false,
+        isOverdue: (json['is_overdue'] as bool?) ?? false,
+        nextReminderAtIso: json['next_reminder_at'] as String?,
+        nextReminderAtLocalIso: json['next_reminder_at_local'] as String?,
       );
 
   Map<String, dynamic> toJson() => {

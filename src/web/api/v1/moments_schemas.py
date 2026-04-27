@@ -42,6 +42,11 @@ class MomentOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     created_via: CreatedVia
+    is_habit: bool = False
+    completed_today: bool = False
+    is_overdue: bool = False
+    next_reminder_at: Optional[datetime] = None
+    next_reminder_at_local: Optional[str] = None
 
 
 # --- POST /moments ---------------------------------------------------------

@@ -5,6 +5,7 @@ import 'package:voicenote_ai/core/storage/secure_storage.dart';
 import 'package:voicenote_ai/features/auth/data/models/auth_tokens.dart';
 import 'package:voicenote_ai/features/auth/data/models/user.dart';
 import 'package:voicenote_ai/features/auth/data/repositories/auth_repository.dart';
+import 'package:voicenote_ai/features/push/push_service.dart';
 
 enum SessionStatus { unknown, unauthenticated, authenticated }
 
@@ -44,8 +45,18 @@ class SessionController extends StateNotifier<SessionState> {
 
   @override
   set state(SessionState value) {
+    final prev = super.state;
     super.state = value;
     refresh.value++;
+    if (prev.status != SessionStatus.authenticated &&
+        value.status == SessionStatus.authenticated) {
+      // ignore: discarded_futures
+      _ref.read(pushServiceProvider).registerForUser();
+    } else if (prev.status == SessionStatus.authenticated &&
+        value.status == SessionStatus.unauthenticated) {
+      // ignore: discarded_futures
+      _ref.read(pushServiceProvider).unregister();
+    }
   }
 
   @override

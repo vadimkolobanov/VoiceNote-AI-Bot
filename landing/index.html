@@ -1,0 +1,1174 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Методекс Секретарь — Говори мне всё.</title>
+<link rel="stylesheet" href="tokens.css" />
+<style>
+  /* ---------- Page-local layer ---------- */
+  html, body { background: var(--bg-base); }
+  body { margin: 0; color: var(--fg); font-family: var(--font-body); }
+
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  section { position: relative; }
+
+  /* ---------- Header ---------- */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(9,9,11,0.72);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    height: 64px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    display: grid; place-items: center;
+    background: rgba(0,229,255,0.08);
+    border: 1px solid rgba(0,229,255,0.25);
+    color: var(--accent-ai);
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 15px;
+  }
+  .brand-word {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    font-size: 13px;
+  }
+  .brand-sep {
+    color: var(--fg-faint);
+    font-weight: 400;
+    letter-spacing: 0;
+    margin: 0 2px;
+  }
+  .brand-product {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    font-size: 13px;
+    color: var(--fg-muted);
+  }
+  .nav-links {
+    display: flex; align-items: center; gap: 28px;
+  }
+  .nav-links a {
+    font-size: 13px; color: var(--fg-muted);
+    transition: color var(--dur-fast) var(--ease-standard);
+  }
+  .nav-links a:hover { color: var(--fg); }
+  .nav-cta { display: flex; align-items: center; gap: 10px; }
+
+  @media (max-width: 760px) {
+    .nav-links { display: none; }
+  }
+
+  /* ---------- Buttons (extend tokens) ---------- */
+  .btn-pill { display: inline-flex; }
+  .btn-icon { width: 16px; height: 16px; }
+  .btn-cyan {
+    background: var(--accent-ai);
+    color: #061015;
+    border: 1px solid var(--accent-ai);
+    box-shadow: 0 0 0 1px rgba(0,229,255,0.25), 0 0 32px -6px rgba(0,229,255,0.55);
+  }
+  .btn-cyan:hover { background: #4dedff; border-color: #4dedff; }
+  .btn-cyan:active { transform: scale(0.98); }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 96px 0 120px; }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 64px;
+    align-items: center;
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent-ai);
+  }
+  .eyebrow .dot {
+    width: 6px; height: 6px; background: var(--accent-ai);
+    box-shadow: 0 0 12px var(--accent-ai);
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(40px, 6vw, 68px);
+    line-height: 1.04;
+    letter-spacing: -0.022em;
+    margin: 24px 0 0;
+    text-wrap: balance;
+  }
+  .hero h1 .accent {
+    color: var(--accent-ai);
+  }
+  .hero p.lead {
+    margin: 24px 0 0;
+    color: var(--fg-muted);
+    font-size: 18px;
+    line-height: 1.55;
+    max-width: 520px;
+    text-wrap: pretty;
+  }
+  .hero-ctas {
+    margin-top: 36px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .hero-meta {
+    margin-top: 28px;
+    display: flex; gap: 24px; flex-wrap: wrap;
+    color: var(--fg-faint);
+    font-size: 13px;
+  }
+  .hero-meta span { display: inline-flex; align-items: center; gap: 8px; }
+  .hero-meta svg { color: var(--accent-ai); }
+
+  /* ---------- Phone mockup ---------- */
+  .phone-wrap {
+    position: relative;
+    display: flex; justify-content: center;
+  }
+  .phone-glow {
+    position: absolute;
+    inset: -10% -8%;
+    background:
+      radial-gradient(60% 50% at 60% 35%, rgba(0,229,255,0.22), transparent 60%),
+      radial-gradient(50% 50% at 30% 70%, rgba(124,58,237,0.18), transparent 65%);
+    filter: blur(12px);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .phone {
+    position: relative; z-index: 1;
+    width: 320px; height: 660px;
+    border-radius: 44px;
+    background: #0a0a0d;
+    border: 1px solid var(--line-strong);
+    padding: 10px;
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,0.04),
+      0 0 0 1px rgba(0,229,255,0.08),
+      0 0 80px -20px rgba(0,229,255,0.4);
+  }
+  .phone-screen {
+    width: 100%; height: 100%;
+    border-radius: 36px;
+    background: #0b0b0e;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--line);
+    display: flex; flex-direction: column;
+  }
+  .notch {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 110px; height: 28px; border-radius: 16px;
+    background: #000; z-index: 5;
+  }
+  .status-bar {
+    padding: 14px 22px 0;
+    display: flex; justify-content: space-between;
+    font-family: var(--font-body); font-weight: 600; font-size: 13px;
+    color: var(--fg);
+  }
+  .status-icons { display: inline-flex; gap: 6px; align-items: center; color: var(--fg-muted); }
+  .screen-body {
+    padding: 36px 18px 18px;
+    overflow: hidden;
+    flex: 1;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .screen-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 4px 4px;
+  }
+  .screen-title {
+    font-family: var(--font-display);
+    font-weight: 600; font-size: 22px; letter-spacing: -0.01em;
+  }
+  .screen-date {
+    font-size: 11px; color: var(--fg-faint);
+    text-transform: uppercase; letter-spacing: 0.1em;
+  }
+
+  .ai-card {
+    background: linear-gradient(180deg, rgba(0,229,255,0.10), rgba(124,58,237,0.06));
+    border: 1px solid rgba(0,229,255,0.22);
+    border-radius: 18px;
+    padding: 14px;
+    display: flex; gap: 12px; align-items: flex-start;
+    position: relative;
+    overflow: hidden;
+  }
+  .ai-card::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(80% 60% at 0% 0%, rgba(0,229,255,0.18), transparent 60%);
+    pointer-events: none;
+  }
+  .ai-avatar {
+    width: 32px; height: 32px; border-radius: 10px;
+    background: rgba(0,229,255,0.16);
+    border: 1px solid rgba(0,229,255,0.4);
+    color: var(--accent-ai);
+    display: grid; place-items: center;
+    font-family: var(--font-display); font-weight: 700; font-size: 14px;
+    flex-shrink: 0;
+  }
+  .ai-text { font-size: 13px; line-height: 1.45; }
+  .ai-text b { color: var(--fg); font-weight: 600; }
+  .ai-text .muted { color: var(--fg-muted); }
+
+  .moments-label {
+    font-family: var(--font-body); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--fg-faint);
+    padding: 10px 4px 2px;
+  }
+  .moment {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+  .moment-icon {
+    width: 32px; height: 32px; border-radius: 10px;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .moment-icon.cyan   { background: rgba(0,229,255,0.10);  color: var(--accent-ai); border: 1px solid rgba(0,229,255,0.22); }
+  .moment-icon.green  { background: rgba(52,211,153,0.10); color: var(--accent-tools); border: 1px solid rgba(52,211,153,0.22); }
+  .moment-icon.purple { background: rgba(124,58,237,0.16); color: #b794f6; border: 1px solid rgba(124,58,237,0.3); }
+  .moment-icon.amber  { background: rgba(251,191,36,0.10); color: #fbbf24; border: 1px solid rgba(251,191,36,0.22); }
+  .moment-text { flex: 1; min-width: 0; }
+  .moment-title { font-size: 13px; font-weight: 500; color: var(--fg); }
+  .moment-meta { font-size: 11px; color: var(--fg-faint); margin-top: 2px; }
+
+  .mic-fab {
+    position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%);
+    width: 60px; height: 60px; border-radius: 50%;
+    background: var(--accent-ai); color: #051015;
+    display: grid; place-items: center;
+    box-shadow: 0 0 0 6px rgba(0,229,255,0.10), 0 0 32px -2px rgba(0,229,255,0.6);
+    z-index: 5;
+  }
+
+  @media (max-width: 960px) {
+    .hero { padding: 64px 0 80px; }
+    .hero-grid { grid-template-columns: 1fr; gap: 48px; }
+    .phone-wrap { order: 2; }
+  }
+
+  /* ---------- Section primitives ---------- */
+  .section-pad   { padding: 112px 0; }
+  .section-pad-lg{ padding: 140px 0; }
+  .section-alt   { background: var(--bg-section); }
+  .section-head  { max-width: 720px; margin-bottom: 56px; }
+  .section-head h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: clamp(32px, 4vw, 44px);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  .section-head p {
+    color: var(--fg-muted);
+    font-size: 17px;
+    line-height: 1.55;
+    margin: 16px 0 0;
+    max-width: 600px;
+    text-wrap: pretty;
+  }
+
+  /* ---------- "Что это" tiles ---------- */
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .tile {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 32px 28px;
+    transition: border-color var(--dur-med) var(--ease-standard), background var(--dur-med) var(--ease-standard);
+  }
+  .tile:hover { border-color: var(--line-strong); background: rgba(255,255,255,0.04); }
+  .tile-icon {
+    width: 48px; height: 48px; border-radius: 14px;
+    display: grid; place-items: center; margin-bottom: 24px;
+  }
+  .tile-icon.cyan   { background: rgba(0,229,255,0.08);  color: var(--accent-ai); border: 1px solid rgba(0,229,255,0.22); }
+  .tile-icon.purple { background: rgba(124,58,237,0.12); color: #b794f6; border: 1px solid rgba(124,58,237,0.28); }
+  .tile-icon.green  { background: rgba(52,211,153,0.08); color: var(--accent-tools); border: 1px solid rgba(52,211,153,0.22); }
+  .tile h3 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 22px; line-height: 1.25; letter-spacing: -0.01em;
+    margin: 0 0 12px;
+  }
+  .tile p { color: var(--fg-muted); font-size: 15px; line-height: 1.55; margin: 0; }
+
+  @media (max-width: 880px) {
+    .tiles { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- Steps ---------- */
+  .steps {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr;
+    gap: 24px;
+    align-items: stretch;
+  }
+  .step { display: flex; flex-direction: column; gap: 16px; padding-top: 4px; }
+  .step-num {
+    font-family: var(--font-body); font-weight: 600; font-size: 11px;
+    color: var(--accent-ai);
+    text-transform: uppercase; letter-spacing: 0.16em;
+  }
+  .step-icon {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    display: grid; place-items: center;
+    color: var(--fg);
+  }
+  .step h4 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 18px; margin: 0; letter-spacing: -0.005em;
+  }
+  .step p { color: var(--fg-muted); font-size: 14px; line-height: 1.5; margin: 0; }
+  .step-arrow {
+    align-self: center;
+    color: var(--fg-ghost);
+    margin-top: 32px;
+  }
+  @media (max-width: 960px) {
+    .steps { grid-template-columns: 1fr; }
+    .step-arrow { display: none; }
+  }
+
+  /* ---------- Memory grows ---------- */
+  .memory-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  .memory-text h2 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: clamp(32px, 4vw, 44px);
+    line-height: 1.1; letter-spacing: -0.02em;
+    margin: 16px 0 0;
+    text-wrap: balance;
+  }
+  .memory-text p {
+    color: var(--fg-muted); font-size: 17px; line-height: 1.55;
+    margin: 20px 0 0; text-wrap: pretty;
+  }
+  .memory-cloud {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    border-radius: 24px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--line);
+    overflow: hidden;
+    padding: 24px;
+  }
+  .memory-cloud .cloud-glow {
+    position: absolute; inset: -10%;
+    background:
+      radial-gradient(40% 40% at 40% 50%, rgba(0,229,255,0.10), transparent 70%),
+      radial-gradient(40% 40% at 70% 60%, rgba(124,58,237,0.10), transparent 70%);
+    pointer-events: none;
+  }
+  .memory-svg {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .fact {
+    position: absolute;
+    background: rgba(20,20,24,0.85);
+    backdrop-filter: blur(2px);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.3;
+    white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .fact b { color: var(--fg); font-weight: 600; }
+  .fact .tag { color: var(--fg-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .fact .pin { width: 6px; height: 6px; border-radius: 50%; }
+  .fact.cyan   .pin { background: var(--accent-ai); box-shadow: 0 0 8px var(--accent-ai); }
+  .fact.purple .pin { background: #b794f6; box-shadow: 0 0 8px rgba(183,148,246,0.7); }
+  .fact.green  .pin { background: var(--accent-tools); box-shadow: 0 0 8px var(--accent-tools); }
+  .fact.amber  .pin { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.7); }
+  .fact.center {
+    background: rgba(0,229,255,0.08);
+    border-color: rgba(0,229,255,0.3);
+  }
+  .fact.center .pin { background: var(--accent-ai); }
+
+  @media (max-width: 960px) {
+    .memory-grid { grid-template-columns: 1fr; gap: 40px; }
+  }
+
+  /* ---------- Ask me (chat) ---------- */
+  .ask-wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    display: flex; flex-direction: column; gap: 16px;
+    padding: 16px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+  }
+  .bubble { display: flex; gap: 12px; max-width: 85%; }
+  .bubble.user { align-self: flex-end; flex-direction: row-reverse; }
+  .bubble-avatar {
+    width: 32px; height: 32px; border-radius: 10px;
+    flex-shrink: 0;
+    display: grid; place-items: center;
+    font-family: var(--font-display); font-weight: 600; font-size: 13px;
+  }
+  .bubble.user .bubble-avatar {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--line);
+    color: var(--fg);
+  }
+  .bubble.ai .bubble-avatar {
+    background: rgba(0,229,255,0.12);
+    border: 1px solid rgba(0,229,255,0.3);
+    color: var(--accent-ai);
+  }
+  .bubble-body {
+    padding: 14px 18px;
+    border-radius: 18px;
+    font-size: 15px; line-height: 1.5;
+  }
+  .bubble.user .bubble-body {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--line);
+    border-top-right-radius: 6px;
+  }
+  .bubble.ai .bubble-body {
+    background: rgba(0,229,255,0.06);
+    border: 1px solid rgba(0,229,255,0.22);
+    border-top-left-radius: 6px;
+  }
+  .bubble.ai .bubble-body b { color: var(--fg); font-weight: 600; }
+  .bubble.ai .bubble-body .src {
+    display: block;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--fg-faint);
+  }
+  .ask-caption {
+    text-align: center;
+    color: var(--fg-faint);
+    font-size: 13px;
+    margin-top: 24px;
+  }
+
+  /* ---------- Numbers ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .stat {
+    padding: 36px 32px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+  }
+  .stat-value {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: clamp(40px, 5vw, 56px); line-height: 1; letter-spacing: -0.025em;
+    color: var(--fg);
+  }
+  .stat-value .unit { color: var(--accent-ai); }
+  .stat-label {
+    margin-top: 16px;
+    color: var(--fg-muted); font-size: 14px; line-height: 1.5;
+  }
+  @media (max-width: 760px) { .stats { grid-template-columns: 1fr; } }
+
+  /* ---------- Pricing ---------- */
+  .pricing {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    max-width: 920px; margin: 0 auto;
+  }
+  .plan {
+    padding: 36px 32px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+  .plan-pro {
+    border-color: rgba(0,229,255,0.35);
+    box-shadow: 0 0 0 1px rgba(0,229,255,0.10), 0 0 60px -20px rgba(0,229,255,0.45);
+  }
+  .plan-pro::before {
+    content: ""; position: absolute; inset: -1px; border-radius: 20px;
+    background: linear-gradient(180deg, rgba(0,229,255,0.4), rgba(0,229,255,0) 40%);
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    padding: 1px; pointer-events: none;
+  }
+  .plan-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .plan-name {
+    font-family: var(--font-display); font-weight: 600; font-size: 20px;
+  }
+  .plan-pill {
+    font-size: 11px; font-weight: 500;
+    padding: 4px 10px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .plan-pill.free { color: var(--fg-faint); background: rgba(255,255,255,0.04); border: 1px solid var(--line); }
+  .plan-pill.pro  { color: var(--accent-ai); background: rgba(0,229,255,0.10); border: 1px solid rgba(0,229,255,0.3); }
+  .plan-price { font-family: var(--font-display); font-weight: 600; font-size: 40px; line-height: 1; letter-spacing: -0.02em; }
+  .plan-price small { font-size: 14px; color: var(--fg-faint); font-weight: 400; margin-left: 6px; letter-spacing: 0; }
+  .plan-tagline { color: var(--fg-muted); font-size: 14px; margin-top: 8px; min-height: 40px; }
+  .plan-features {
+    list-style: none; padding: 0; margin: 28px 0 32px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .plan-features li {
+    display: flex; gap: 10px; font-size: 14px; line-height: 1.5; color: var(--fg-muted);
+  }
+  .plan-features li svg { flex-shrink: 0; margin-top: 3px; }
+  .plan-features li.hl { color: var(--fg); }
+  .plan-features li.hl svg { color: var(--accent-ai); }
+  .plan .btn { margin-top: auto; }
+
+  @media (max-width: 760px) { .pricing { grid-template-columns: 1fr; } }
+
+  /* ---------- FAQ ---------- */
+  .faq { max-width: 820px; margin: 0 auto; }
+  .faq details {
+    border-bottom: 1px solid var(--line);
+    padding: 24px 0;
+  }
+  .faq details:first-of-type { border-top: 1px solid var(--line); }
+  .faq summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 16px;
+    font-family: var(--font-display); font-weight: 500;
+    font-size: 18px; line-height: 1.4;
+    color: var(--fg);
+    letter-spacing: -0.005em;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary .chev {
+    width: 20px; height: 20px; flex-shrink: 0;
+    color: var(--fg-faint);
+    transition: transform var(--dur-med) var(--ease-standard), color var(--dur-med) var(--ease-standard);
+  }
+  .faq details[open] summary .chev { transform: rotate(180deg); color: var(--accent-ai); }
+  .faq details > div {
+    color: var(--fg-muted); font-size: 15px; line-height: 1.6;
+    margin-top: 14px; max-width: 680px;
+  }
+
+  /* ---------- Final CTA ---------- */
+  .final-cta { text-align: center; padding: 160px 0; position: relative; overflow: hidden; }
+  .final-cta::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(50% 60% at 50% 50%, rgba(0,229,255,0.08), transparent 70%);
+    pointer-events: none;
+  }
+  .final-cta h2 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: clamp(40px, 6vw, 72px);
+    line-height: 1.05; letter-spacing: -0.025em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .final-cta p { color: var(--fg-muted); font-size: 17px; margin: 20px auto 0; max-width: 480px; }
+  .final-cta .ctas { margin-top: 40px; display: flex; gap: 16px; justify-content: center; align-items: center; flex-wrap: wrap; }
+  .soon-link {
+    color: var(--fg-faint); font-size: 13px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .soon-link::before {
+    content: ""; width: 4px; height: 4px; border-radius: 50%;
+    background: var(--fg-ghost);
+  }
+
+  /* ---------- Footer ---------- */
+  .footer {
+    border-top: 1px solid var(--line);
+    padding: 48px 0 56px;
+  }
+  .footer-grid {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px;
+  }
+  .footer-links {
+    display: flex; gap: 28px; flex-wrap: wrap;
+    color: var(--fg-faint); font-size: 13px;
+  }
+  .footer-links a { transition: color var(--dur-fast); }
+  .footer-links a:hover { color: var(--fg); }
+  .footer-copy { color: var(--fg-faint); font-size: 12px; }
+
+  /* ---------- Reveal ---------- */
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s var(--ease-out-expo), transform .7s var(--ease-out-expo); }
+  .reveal.is-in { opacity: 1; transform: none; }
+
+  /* ---------- Selection / focus ---------- */
+  :focus-visible { outline: 2px solid var(--accent-ai); outline-offset: 3px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<!-- Lucide icon sprite (referenced via <use>) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- mic -->
+    <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="13" rx="3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/><path d="M8 22h8"/>
+    </symbol>
+    <!-- brain -->
+    <symbol id="i-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+      <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+      <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+    </symbol>
+    <!-- bell -->
+    <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+    </symbol>
+    <!-- sparkles -->
+    <symbol id="i-sparkle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m12 3-1.9 5.6L4.5 10.5 10.1 12.4 12 18l1.9-5.6L19.5 10.5 13.9 8.6Z"/>
+      <path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/>
+    </symbol>
+    <!-- users -->
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </symbol>
+    <!-- map-pin -->
+    <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 10c0 7-8 12-8 12s-8-5-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>
+    </symbol>
+    <!-- heart -->
+    <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 14c1.5-1.4 3-3.4 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.7 0-3 .8-4.5 2.5C10.5 3.8 9.2 3 7.5 3A5.5 5.5 0 0 0 2 8.5c0 2.1 1.5 4.1 3 5.5l7 7Z"/>
+    </symbol>
+    <!-- run -->
+    <symbol id="i-run" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="13" cy="4" r="2"/>
+      <path d="m4 22 4-9 4 3 3-3 5 4"/>
+      <path d="m9 13-2-2-3 1"/>
+      <path d="m13 17 2 2"/>
+    </symbol>
+    <!-- coffee -->
+    <symbol id="i-coffee" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/>
+      <path d="M6 2v3"/><path d="M10 2v3"/><path d="M14 2v3"/>
+    </symbol>
+    <!-- gift -->
+    <symbol id="i-gift" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/>
+      <path d="M7.5 8a2.5 2.5 0 0 1 0-5C9 3 11 4 12 8 13 4 15 3 16.5 3a2.5 2.5 0 0 1 0 5"/>
+    </symbol>
+    <!-- arrow-right -->
+    <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+    </symbol>
+    <!-- arrow-down (chevron) -->
+    <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m6 9 6 6 6-6"/>
+    </symbol>
+    <!-- check -->
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m5 12 5 5 9-11"/>
+    </symbol>
+    <!-- download / android -->
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+    </symbol>
+    <!-- shield-lock -->
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12h6v4H9z"/><path d="M10 12V10a2 2 0 0 1 4 0v2"/>
+    </symbol>
+    <!-- wifi-off -->
+    <symbol id="i-wifi-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 2 22 22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65"/>
+      <path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/><path d="M16.85 11.25a10 10 0 0 1 2.22 1.68"/>
+      <path d="M5 13a10 10 0 0 1 5.24-2.76"/><circle cx="12" cy="20" r=".5"/>
+    </symbol>
+    <!-- file -->
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h4"/>
+    </symbol>
+    <!-- waveform -->
+    <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12h2"/><path d="M6 8v8"/><path d="M10 4v16"/><path d="M14 8v8"/><path d="M18 6v12"/><path d="M22 12h-2"/>
+    </symbol>
+    <!-- layers -->
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/>
+    </symbol>
+    <!-- battery / signal mini -->
+    <symbol id="i-bars" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="14" width="3" height="6"/><rect x="7" y="10" width="3" height="10"/><rect x="12" y="6" width="3" height="14"/><rect x="17" y="2" width="3" height="18"/></symbol>
+  </defs>
+</svg>
+
+<!-- ====================== HEADER ====================== -->
+<header class="nav">
+  <div class="container nav-inner">
+    <div class="brand">
+      <span class="brand-mark">М</span>
+      <span class="brand-word">МЕТОДЕКС <span class="brand-sep">/</span> <span class="brand-product">Секретарь</span></span>
+    </div>
+    <nav class="nav-links">
+      <a href="#what">Что это</a>
+      <a href="#how">Как работает</a>
+      <a href="#memory">Память</a>
+      <a href="#pricing">Тарифы</a>
+      <a href="#faq">Вопросы</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="#download" class="btn btn-secondary btn-sm">
+        <svg class="btn-icon" width="14" height="14"><use href="#i-download"/></svg>
+        Скачать
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ====================== HERO ====================== -->
+<section class="hero">
+  <div class="container hero-grid">
+    <div class="hero-text">
+      <span class="eyebrow"><span class="dot"></span>Голосовой AI · второй мозг</span>
+      <h1>Говори мне всё.<br/>Я <span class="accent">запомню</span>, напомню<br/>и со временем стану тобой.</h1>
+      <p class="lead">Зажми микрофон, расскажи как другу — момент, мысль, обещание. Я разложу по полочкам, свяжу с прошлым и подскажу, когда нужно.</p>
+      <div class="hero-ctas">
+        <a href="#download" class="btn btn-cyan btn-lg btn-pill">
+          <svg class="btn-icon" width="16" height="16"><use href="#i-download"/></svg>
+          Скачать для Android
+        </a>
+        <a href="#what" class="btn btn-secondary btn-lg btn-pill">
+          Узнать больше
+          <svg class="btn-icon" width="16" height="16"><use href="#i-arrow-right"/></svg>
+        </a>
+      </div>
+      <div class="hero-meta">
+        <span><svg width="14" height="14"><use href="#i-shield"/></svg>Без трекеров</span>
+        <span><svg width="14" height="14"><use href="#i-wifi-off"/></svg>Голос — на устройстве</span>
+        <span><svg width="14" height="14"><use href="#i-sparkle"/></svg>Без рекламы</span>
+      </div>
+    </div>
+
+    <!-- Phone mockup -->
+    <div class="phone-wrap">
+      <div class="phone-glow"></div>
+      <div class="phone">
+        <div class="phone-screen">
+          <span class="notch"></span>
+          <div class="status-bar">
+            <span>9:41</span>
+            <span class="status-icons">
+              <svg width="14" height="10"><use href="#i-bars"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="18" height="10" rx="2"/><rect x="4" y="9" width="14" height="6" rx="1" fill="currentColor"/><path d="M22 11v2"/></svg>
+            </span>
+          </div>
+          <div class="screen-body">
+            <div class="screen-head">
+              <div class="screen-title">Сегодня</div>
+              <div class="screen-date">Вт · 12 ноя</div>
+            </div>
+
+            <div class="ai-card">
+              <div class="ai-avatar">М</div>
+              <div class="ai-text">
+                <b>Доброе утро.</b> <span class="muted">Я помню три вещи на сегодня. И ещё — у Дианы завтра защита, ты обещал цветы.</span>
+              </div>
+            </div>
+
+            <div class="moments-label">Моменты</div>
+
+            <div class="moment">
+              <div class="moment-icon cyan"><svg width="18" height="18"><use href="#i-bell"/></svg></div>
+              <div class="moment-text">
+                <div class="moment-title">Позвонить маме про дачу</div>
+                <div class="moment-meta">Сегодня · до 19:00</div>
+              </div>
+            </div>
+
+            <div class="moment">
+              <div class="moment-icon purple"><svg width="18" height="18"><use href="#i-heart"/></svg></div>
+              <div class="moment-text">
+                <div class="moment-title">Цветы Диане — защита</div>
+                <div class="moment-meta">Завтра · автозаметка</div>
+              </div>
+            </div>
+
+            <div class="moment">
+              <div class="moment-icon green"><svg width="18" height="18"><use href="#i-run"/></svg></div>
+              <div class="moment-text">
+                <div class="moment-title">Пробежка в 7:00</div>
+                <div class="moment-meta">Привычка · 14 дней подряд</div>
+              </div>
+            </div>
+
+            <div class="moment">
+              <div class="moment-icon amber"><svg width="18" height="18"><use href="#i-gift"/></svg></div>
+              <div class="moment-text">
+                <div class="moment-title">Мише 5 лет — 28 ноября</div>
+                <div class="moment-meta">Через 16 дней</div>
+              </div>
+            </div>
+          </div>
+          <div class="mic-fab">
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-mic"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== WHAT IS IT ====================== -->
+<section id="what" class="section-pad section-alt">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">Что это</span>
+      <h2>Не приложение для заметок. Память, которая слушает.</h2>
+    </div>
+    <div class="tiles">
+      <div class="tile reveal">
+        <div class="tile-icon cyan"><svg width="22" height="22"><use href="#i-wave"/></svg></div>
+        <h3>Голос → момент за 1 секунду</h3>
+        <p>Зажал кнопку, сказал — у тебя готовая заметка с датой, тегами и связями. Без печати, без полей.</p>
+      </div>
+      <div class="tile reveal">
+        <div class="tile-icon purple"><svg width="22" height="22"><use href="#i-users"/></svg></div>
+        <h3>Помню всех твоих близких</h3>
+        <p>Имена, дни рождения, что любят, на что обижались. Когда ты называешь человека — я уже знаю, о ком речь.</p>
+      </div>
+      <div class="tile reveal">
+        <div class="tile-icon green"><svg width="22" height="22"><use href="#i-bell"/></svg></div>
+        <h3>Подсказываю, когда ты забыл</h3>
+        <p>«Ты обещал перезвонить про дачу». «Завтра у Миши утренник». Я говорю это до того, как ты вспомнишь сам.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== HOW ====================== -->
+<section id="how" class="section-pad">
+  <div class="container">
+    <div class="section-head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+      <span class="eyebrow">Как работает</span>
+      <h2>Четыре шага. Дальше я сам.</h2>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <span class="step-num">Шаг 01</span>
+        <div class="step-icon" style="color:var(--accent-ai)"><svg width="20" height="20"><use href="#i-mic"/></svg></div>
+        <h4>Зажми микрофон</h4>
+        <p>Одна кнопка на главном экране. Можно с заблокированного телефона.</p>
+      </div>
+      <div class="step-arrow"><svg width="24" height="24"><use href="#i-arrow-right"/></svg></div>
+      <div class="step reveal">
+        <span class="step-num">Шаг 02</span>
+        <div class="step-icon"><svg width="20" height="20"><use href="#i-wave"/></svg></div>
+        <h4>Расскажи</h4>
+        <p>Как другу. «Был у Лены, она ищет работу — помочь с резюме».</p>
+      </div>
+      <div class="step-arrow"><svg width="24" height="24"><use href="#i-arrow-right"/></svg></div>
+      <div class="step reveal">
+        <span class="step-num">Шаг 03</span>
+        <div class="step-icon"><svg width="20" height="20"><use href="#i-layers"/></svg></div>
+        <h4>Я разложу по полочкам</h4>
+        <p>Извлеку факты, привяжу к Лене, поставлю задачу «помочь с резюме».</p>
+      </div>
+      <div class="step-arrow"><svg width="24" height="24"><use href="#i-arrow-right"/></svg></div>
+      <div class="step reveal">
+        <span class="step-num">Шаг 04</span>
+        <div class="step-icon"><svg width="20" height="20"><use href="#i-bell"/></svg></div>
+        <h4>Напомню вовремя</h4>
+        <p>Через день, через неделю — когда контекст подходит, не раньше.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== MEMORY GROWS ====================== -->
+<section id="memory" class="section-pad section-alt">
+  <div class="container memory-grid">
+    <div class="memory-text reveal">
+      <span class="eyebrow">Память растёт сама</span>
+      <h2>Не только заметки. Расскажи о себе — я свяжу всё в твою память.</h2>
+      <p>Включи режим «Расскажи о себе». Говори про близких, привычки, места, вкусы. Я не складываю это в плоский список — я строю карту: кто кому кем приходится, что ты любишь, чего избегаешь.</p>
+      <p>Через неделю я уже знаю тебя достаточно, чтобы быть полезным без объяснений.</p>
+    </div>
+
+    <div class="memory-cloud reveal" aria-hidden="true">
+      <div class="cloud-glow"></div>
+      <svg class="memory-svg" viewBox="0 0 400 400" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="ln" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="rgba(0,229,255,0.5)"/>
+            <stop offset="100%" stop-color="rgba(0,229,255,0)"/>
+          </linearGradient>
+        </defs>
+        <!-- center node -->
+        <circle cx="200" cy="200" r="36" fill="rgba(0,229,255,0.06)" stroke="rgba(0,229,255,0.4)" stroke-width="1"/>
+        <circle cx="200" cy="200" r="60" fill="none" stroke="rgba(0,229,255,0.15)" stroke-width="1" stroke-dasharray="2 4"/>
+        <!-- connectors -->
+        <line x1="200" y1="200" x2="92"  y2="100" stroke="url(#ln)" stroke-width="1"/>
+        <line x1="200" y1="200" x2="320" y2="120" stroke="url(#ln)" stroke-width="1"/>
+        <line x1="200" y1="200" x2="80"  y2="240" stroke="url(#ln)" stroke-width="1"/>
+        <line x1="200" y1="200" x2="316" y2="252" stroke="url(#ln)" stroke-width="1"/>
+        <line x1="200" y1="200" x2="160" y2="332" stroke="url(#ln)" stroke-width="1"/>
+        <line x1="200" y1="200" x2="300" y2="340" stroke="url(#ln)" stroke-width="1"/>
+        <!-- secondary lines -->
+        <line x1="92"  y1="100" x2="320" y2="120" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="80"  y1="240" x2="160" y2="332" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+      </svg>
+
+      <!-- center fact -->
+      <div class="fact center" style="left:50%; top:50%; transform:translate(-50%,-50%);">
+        <span class="pin"></span><b>Ты</b>
+      </div>
+
+      <!-- orbit facts -->
+      <div class="fact cyan"   style="left:8%;  top:18%;">
+        <span class="pin"></span><b>Диана</b><span class="tag">жена</span>
+      </div>
+      <div class="fact purple" style="right:5%;  top:22%;">
+        <span class="pin"></span><b>Миша</b><span class="tag">сын · 4&nbsp;года</span>
+      </div>
+      <div class="fact amber"  style="left:4%;   top:56%;">
+        <span class="pin"></span>не ем мясо
+      </div>
+      <div class="fact green"  style="right:4%;  top:60%;">
+        <span class="pin"></span>бегаю в 7
+      </div>
+      <div class="fact cyan"   style="left:32%;  bottom:6%;">
+        <span class="pin"></span><b>Кофе</b><span class="tag">только латте</span>
+      </div>
+      <div class="fact purple" style="right:8%; bottom:8%;">
+        <span class="pin"></span><b>Дача</b><span class="tag">мама</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== ASK ME ====================== -->
+<section id="ask" class="section-pad">
+  <div class="container">
+    <div class="section-head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+      <span class="eyebrow">Спроси меня</span>
+      <h2>«Когда я последний раз говорил про маму?»</h2>
+      <p>Я отвечаю не общими словами. Я нахожу момент, дату и обещание, которое ты дал.</p>
+    </div>
+
+    <div class="ask-wrap reveal">
+      <div class="bubble user">
+        <div class="bubble-avatar">Ты</div>
+        <div class="bubble-body">Когда я последний раз говорил про маму?</div>
+      </div>
+      <div class="bubble ai">
+        <div class="bubble-avatar">М</div>
+        <div class="bubble-body">
+          <b>11 апреля, четверг.</b> Ты обещал перезвонить ей про дачу — про забор и кран на кухне. Звонка с тех пор не было.
+          <span class="src">Источник: голосовой момент, 11.04 · 19:42</span>
+        </div>
+      </div>
+      <div class="bubble user">
+        <div class="bubble-avatar">Ты</div>
+        <div class="bubble-body">Напомни мне сегодня в 18:00.</div>
+      </div>
+      <div class="bubble ai">
+        <div class="bubble-avatar">М</div>
+        <div class="bubble-body">
+          Готово. <b>Сегодня в 18:00</b> — «позвонить маме, дача: забор и кран». Если не получится — перенесу на завтра утром, ты обычно свободен до 9.
+        </div>
+      </div>
+    </div>
+    <p class="ask-caption reveal">Помню всё, что ты мне рассказал.</p>
+  </div>
+</section>
+
+<!-- ====================== STATS ====================== -->
+<section class="section-pad section-alt">
+  <div class="container">
+    <div class="stats">
+      <div class="stat reveal">
+        <div class="stat-value">10<span class="unit"> сек</span></div>
+        <div class="stat-label">на запись момента — от тапа до сохранённой связанной заметки.</div>
+      </div>
+      <div class="stat reveal">
+        <div class="stat-value">384<span class="unit">‑мерный</span></div>
+        <div class="stat-label">вектор каждой мысли — поиск идёт по смыслу, а не по словам.</div>
+      </div>
+      <div class="stat reveal">
+        <div class="stat-value">0<span class="unit"> рекл.</span></div>
+        <div class="stat-label">рекламы и трекеров. Никогда. Это не бизнес-модель.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== PRICING ====================== -->
+<section id="pricing" class="section-pad">
+  <div class="container">
+    <div class="section-head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+      <span class="eyebrow">Тарифы</span>
+      <h2>Бесплатно — навсегда. Pro — когда захочешь больше.</h2>
+    </div>
+
+    <div class="pricing">
+      <div class="plan reveal">
+        <div class="plan-head">
+          <div class="plan-name">Free</div>
+          <span class="plan-pill free">Базовое</span>
+        </div>
+        <div class="plan-price">0<small>₽ навсегда</small></div>
+        <div class="plan-tagline">Голос, моменты, привычки и напоминания. Хватит, чтобы начать.</div>
+        <ul class="plan-features">
+          <li><svg width="16" height="16"><use href="#i-check"/></svg>Голосовые моменты без лимита</li>
+          <li><svg width="16" height="16"><use href="#i-check"/></svg>Привычки и напоминания</li>
+          <li><svg width="16" height="16"><use href="#i-check"/></svg>Поиск по своим записям</li>
+          <li><svg width="16" height="16"><use href="#i-check"/></svg>История 3 месяца</li>
+        </ul>
+        <a href="#download" class="btn btn-secondary btn-pill">Скачать бесплатно</a>
+      </div>
+
+      <div class="plan plan-pro reveal">
+        <div class="plan-head">
+          <div class="plan-name">Pro</div>
+          <span class="plan-pill pro">AI-агент</span>
+        </div>
+        <div class="plan-price">390<small>₽/мес</small></div>
+        <div class="plan-tagline">Всё из Free плюс агент, который думает за тебя.</div>
+        <ul class="plan-features">
+          <li class="hl"><svg width="16" height="16"><use href="#i-check"/></svg>Спроси меня — AI-агент по твоей памяти</li>
+          <li class="hl"><svg width="16" height="16"><use href="#i-check"/></svg>Автофакты: я сам нахожу важное</li>
+          <li class="hl"><svg width="16" height="16"><use href="#i-check"/></svg>История без лимитов</li>
+          <li><svg width="16" height="16"><use href="#i-check"/></svg>Связи между людьми и событиями</li>
+          <li><svg width="16" height="16"><use href="#i-check"/></svg>Экспорт в Markdown</li>
+        </ul>
+        <a href="#download" class="btn btn-cyan btn-pill">Попробовать Pro · 14 дней бесплатно</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== FAQ ====================== -->
+<section id="faq" class="section-pad section-alt">
+  <div class="container">
+    <div class="section-head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+      <span class="eyebrow">Вопросы</span>
+      <h2>Коротко и без воды.</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>Где хранятся мои данные? <svg class="chev"><use href="#i-chev"/></svg></summary>
+        <div>На сервере в России. Подключение по HTTPS, доступ — только по твоему токену. Не отдаём третьим сервисам, не используем для обучения моделей. Распознавание голоса работает прямо на устройстве — голос не покидает телефон, мы получаем уже текст.</div>
+      </details>
+      <details>
+        <summary>Что если у меня нет интернета? <svg class="chev"><use href="#i-chev"/></svg></summary>
+        <div>Чтобы сохранить момент, нужен интернет — он уходит на сервер для разбора и связей. Голос распознаётся прямо на устройстве, поэтому говорить можно даже в плохой связи: текст подождёт момента, когда сеть появится.</div>
+      </details>
+      <details>
+        <summary>Кто-то ещё видит мои моменты? <svg class="chev"><use href="#i-chev"/></svg></summary>
+        <div>Никто. Не показываем рекламодателям, не передаём в обучение моделей, не делимся с третьими сервисами. Это не оговорка — это бизнес-модель.</div>
+      </details>
+      <details>
+        <summary>Как удалить всё? <svg class="chev"><use href="#i-chev"/></svg></summary>
+        <div>Настройки → Удалить мою память. Подтверждение в один тап — и всё уходит с сервера: моменты, привычки, факты, токены устройств. Без писем «вы уверены» и retention-окошек.</div>
+      </details>
+      <details>
+        <summary>Это правда понимает русский? <svg class="chev"><use href="#i-chev"/></svg></summary>
+        <div>Да. Распознавание речи и связи строятся на русскоязычной модели. Ругательства, имена, города, разговорные конструкции — всё на месте.</div>
+      </details>
+      <details>
+        <summary>Будет ли версия для iPhone? <svg class="chev"><use href="#i-chev"/></svg></summary>
+        <div>Будет. Сейчас Android — там можно собирать память без ограничений системы. iOS-версия в работе, без точной даты.</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== FINAL CTA ====================== -->
+<section id="download" class="final-cta">
+  <div class="container">
+    <h2>Начни помнить за&nbsp;себя.</h2>
+    <p>Бесплатно. Email и пароль — и сразу в дело.</p>
+    <div class="ctas">
+      <a href="#" class="btn btn-cyan btn-lg btn-pill">
+        <svg class="btn-icon" width="16" height="16"><use href="#i-download"/></svg>
+        Скачать в RuStore
+      </a>
+      <a href="#" class="soon-link">APK напрямую · скоро в Google Play</a>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== FOOTER ====================== -->
+<footer class="footer">
+  <div class="container footer-grid">
+    <div class="brand">
+      <span class="brand-mark">М</span>
+      <span class="brand-word">МЕТОДЕКС <span class="brand-sep">/</span> <span class="brand-product">Секретарь</span></span>
+    </div>
+    <div class="footer-links">
+      <a href="#">Политика конфиденциальности</a>
+      <a href="#">Пользовательское соглашение</a>
+      <a href="mailto:hi@metodex.ru">hi@metodex.ru</a>
+    </div>
+    <div class="footer-copy">© 2026 Методекс</div>
+  </div>
+</footer>
+
+<script>
+  // Reveal on scroll
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+</script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
@@ -8,6 +9,7 @@ import 'package:voicenote_ai/features/moments/application/moments_providers.dart
 import 'package:voicenote_ai/features/moments/data/models/moment.dart';
 import 'package:voicenote_ai/features/moments/data/repositories/moments_repository.dart';
 import 'package:voicenote_ai/features/moments/presentation/widgets/moment_card.dart';
+import 'package:voicenote_ai/features/profile/data/profile_repository.dart';
 
 /// S6 — Сегодня (PRODUCT_PLAN.md §2.3).
 class TodayScreen extends ConsumerWidget {
@@ -113,12 +115,17 @@ class _MomentRow extends ConsumerWidget {
       onTap: () => context.push('/moment/${moment.id}'),
       onComplete: () async {
         try {
-          await ref.read(momentsRepositoryProvider).complete(moment.id);
+          final repo = ref.read(momentsRepositoryProvider);
+          if (moment.completedToday) {
+            await repo.uncomplete(moment.id);
+          } else {
+            await repo.complete(moment.id);
+          }
           ref.invalidate(todayProvider);
         } catch (e) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Не удалось закрыть: $e')),
+              SnackBar(content: Text('Не удалось обновить: $e')),
             );
           }
         }
@@ -127,28 +134,119 @@ class _MomentRow extends ConsumerWidget {
   }
 }
 
-class _Greeting extends StatelessWidget {
+class _Greeting extends ConsumerWidget {
   const _Greeting({this.name});
   final String? name;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final t = Theme.of(context);
     final h = DateTime.now().hour;
     final salute = h < 5
-        ? 'Ночь.'
+        ? 'Ночь'
         : h < 12
-            ? 'Доброе.'
+            ? 'Доброе утро'
             : h < 18
-                ? 'Привет.'
-                : 'Вечер.';
-    final text = (name == null || name!.trim().isEmpty)
-        ? salute
-        : '$salute ${name!.trim().split(' ').first}.';
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Text(text, style: t.textTheme.headlineSmall),
+                ? 'Добрый день'
+                : 'Добрый вечер';
+    final firstName = (name?.trim().isNotEmpty ?? false)
+        ? name!.trim().split(' ').first
+        : null;
+    final stats = ref.watch(profileStatsProvider);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(MX.rLg),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            MX.accentAi.withAlpha(26),
+            MX.accentPurple.withAlpha(20),
+            Colors.transparent,
+          ],
+        ),
+        border: Border.all(color: MX.accentAi.withAlpha(40)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: MX.accentAi.withAlpha(28),
+                  borderRadius: BorderRadius.circular(MX.rFull),
+                  border: Border.all(color: MX.accentAi.withAlpha(60)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(LucideIcons.sparkles,
+                        size: 12, color: MX.accentAi),
+                    const SizedBox(width: 4),
+                    Text(
+                      'AI',
+                      style: t.textTheme.labelSmall?.copyWith(
+                        color: MX.accentAi,
+                        fontSize: 10,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _todayLabel(),
+                style: t.textTheme.bodySmall?.copyWith(color: MX.fgMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            firstName == null ? '$salute.' : '$salute, $firstName.',
+            style: t.textTheme.headlineMedium?.copyWith(
+              color: MX.fg,
+              letterSpacing: -0.4,
+            ),
+          ),
+          const SizedBox(height: 6),
+          stats.when(
+            loading: () => Text('Я готов помнить за тебя.',
+                style: t.textTheme.bodyMedium?.copyWith(color: MX.fgMuted)),
+            error: (_, __) => Text('Я готов помнить за тебя.',
+                style: t.textTheme.bodyMedium?.copyWith(color: MX.fgMuted)),
+            data: (s) => Text(
+              _statsLine(s),
+              style: t.textTheme.bodyMedium?.copyWith(color: MX.fgMuted),
+            ),
+          ),
+        ],
+      ),
     );
+  }
+
+  static String _todayLabel() {
+    const months = [
+      'янв', 'фев', 'мар', 'апр', 'май', 'июн',
+      'июл', 'авг', 'сен', 'окт', 'ноя', 'дек',
+    ];
+    final n = DateTime.now();
+    return '${n.day} ${months[n.month - 1]}';
+  }
+
+  static String _statsLine(ProfileStats s) {
+    if (s.activeCount == 0 && s.doneToday == 0) {
+      return 'Тихо. Расскажи мне, что не хочешь забыть.';
+    }
+    final parts = <String>[];
+    if (s.activeCount > 0) parts.add('${s.activeCount} в работе');
+    if (s.doneToday > 0) parts.add('${s.doneToday} выполнено');
+    if (s.overdueCount > 0) parts.add('${s.overdueCount} просрочено');
+    return parts.join(' · ');
   }
 }
 

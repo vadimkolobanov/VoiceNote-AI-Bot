@@ -108,21 +108,23 @@ class _FactCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(fact.key,
+                    Text(fact.humanLabel,
                         style: Theme.of(context)
                             .textTheme
                             .bodyLarge
                             ?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text(
-                      fact.valueBrief,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: MX.fgMuted),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    if (fact.humanSubtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        fact.humanSubtitle,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: MX.fgMuted),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -161,7 +163,7 @@ class _FactCard extends ConsumerWidget {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Забыть это?'),
-        content: Text('Я перестану помнить «${f.key}». Откатить нельзя.'),
+        content: Text('Я перестану помнить «${f.humanLabel}». Откатить нельзя.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Нет')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Удалить')),
