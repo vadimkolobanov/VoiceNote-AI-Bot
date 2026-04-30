@@ -21,6 +21,7 @@ venv/
 firebase-service-account.json
 deploy/_*.tmp
 deploy/secrets/
+mobile/android/key.properties
 voicenoteai-*-firebase-adminsdk-*.json
 *-firebase-adminsdk-*.json
 

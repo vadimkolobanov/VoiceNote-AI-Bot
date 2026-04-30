@@ -71,6 +71,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_native_splash: ^2.4.0
 
   # Codegen (kept as optional dev stack; enable when you start using freezed/riverpod codegen)
   # build_runner: ^2.4.11
@@ -88,3 +89,13 @@ flutter:
   assets:
     - assets/.env
     - assets/brand/
+
+flutter_native_splash:
+  color: "#09090B"
+  image: assets/brand/icon-master.png
+  android_12:
+    color: "#09090B"
+    image: assets/brand/icon-master.png
+  android: true
+  ios: false
+  web: false
