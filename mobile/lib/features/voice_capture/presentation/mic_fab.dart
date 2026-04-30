@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:voicenote_ai/app.dart';
 import 'package:voicenote_ai/core/errors/api_exception.dart';
@@ -15,15 +12,11 @@ import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/features/moments/application/moments_providers.dart';
 import 'package:voicenote_ai/features/moments/data/models/moment.dart';
 import 'package:voicenote_ai/features/moments/data/repositories/moments_repository.dart';
+import 'package:voicenote_ai/features/voice_capture/data/voice_recorder.dart';
 
-/// Inline-микрофон в shell. Без отдельной страницы:
-/// - тап (voice idle) → начинает слушать прямо тут, орб дышит, облачко с
-///   транскриптом всплывает над FAB
-/// - тап (listening) → сохранить
-/// - 2.5 сек тишины → сохранить
-/// - свайп вверх (drag) → отмена
-/// - свайп влево/вправо → переключение режим voice ↔ text (буква "T")
-/// - тап (text idle) → облачко с textfield для ручного ввода
+/// Inline-микрофон. Записывает голос локально (без on-device STT, без пиков
+/// системы), на стопе аплоадит на бэк → Yandex SpeechKit → текст → создание
+/// момента → undo-toast.
 class MicFab extends ConsumerStatefulWidget {
   const MicFab({super.key});
 
@@ -31,18 +24,14 @@ class MicFab extends ConsumerStatefulWidget {
   ConsumerState<MicFab> createState() => _MicFabState();
 }
 
-enum _Mode { voiceIdle, voiceListening, voiceSaving, textIdle, textComposing }
+enum _Mode { voiceIdle, voiceRecording, voiceTranscribing, voiceSaving, textIdle, textComposing }
 
 class _MicFabState extends ConsumerState<MicFab>
     with TickerProviderStateMixin {
-  // Speech
-  final _stt = stt.SpeechToText();
-  bool _sttInited = false;
-
   // State
   _Mode _mode = _Mode.voiceIdle;
   String _liveText = '';
-  bool _isVoiceMode = true; // флаг переключения voice/text по свайпу
+  bool _isVoiceMode = true;
   final _textCtl = TextEditingController();
   final _fabKey = GlobalKey();
 
@@ -63,58 +52,38 @@ class _MicFabState extends ConsumerState<MicFab>
 
   // Amplitude
   double _amp = 0.0;
-  double _ampTarget = 0.0;
-  Timer? _ampTicker;
+  StreamSubscription<double>? _ampSub;
 
-  // Auto-stop
+  // Auto-stop on silence
   Timer? _silenceTimer;
-  static const _silenceMs = 2500;
+  static const _silenceMs = 1800;
+  static const _silenceAmpThreshold = 0.12;
 
   // Bubble overlay
   OverlayEntry? _bubbleEntry;
 
-  // Drag tracking (для определения свайпа влево/вправо/вверх)
+  // Drag tracking
   Offset _dragStart = Offset.zero;
   bool _dragHandled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _startAmpTicker();
-  }
 
   @override
   void dispose() {
     _breath.dispose();
     _morph.dispose();
     _modeMorph.dispose();
-    _ampTicker?.cancel();
+    _ampSub?.cancel();
     _silenceTimer?.cancel();
     _textCtl.dispose();
-    _stt.cancel();
     _hideBubble();
     super.dispose();
   }
 
-  // -- amplitude smoother -----------------------------------------------
+  // -- mode toggle ------------------------------------------------------
 
-  void _startAmpTicker() {
-    _ampTicker = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      final next = _amp + (_ampTarget - _amp) * 0.18;
-      final eq = (next - _amp).abs() < 0.001 && _ampTarget == 0;
-      if (!eq) {
-        if (mounted) setState(() => _amp = next);
-      }
-      _ampTarget = math.max(0.0, _ampTarget - 0.015);
-    });
-  }
-
-  // -- mode toggle (swipe) ----------------------------------------------
-
-  void _toggleMode() {
+  Future<void> _toggleMode() async {
     HapticFeedback.selectionClick();
-    if (_mode == _Mode.voiceListening || _mode == _Mode.textComposing) {
-      _cancel();
+    if (_mode == _Mode.voiceRecording || _mode == _Mode.textComposing) {
+      await _cancel();
     }
     setState(() {
       _isVoiceMode = !_isVoiceMode;
@@ -129,130 +98,116 @@ class _MicFabState extends ConsumerState<MicFab>
 
   // -- gestures ---------------------------------------------------------
 
-  void _onTap() {
+  Future<void> _onTap() async {
     HapticFeedback.lightImpact();
     switch (_mode) {
       case _Mode.voiceIdle:
-        _startListening();
+        await _startRecording();
         break;
-      case _Mode.voiceListening:
-        _commit();
+      case _Mode.voiceRecording:
+        await _stopAndCommit();
         break;
       case _Mode.textIdle:
         _openCompose();
         break;
       case _Mode.textComposing:
-        _commit();
+        await _commit();
         break;
+      case _Mode.voiceTranscribing:
       case _Mode.voiceSaving:
+        // в процессе — ничего не делаем
         break;
     }
   }
 
-  // -- voice listening --------------------------------------------------
+  // -- voice recording --------------------------------------------------
 
-  Future<void> _ensureStt() async {
-    if (_sttInited) return;
-    final mic = await Permission.microphone.status;
-    if (!mic.isGranted) {
-      final r = await Permission.microphone.request();
-      if (!r.isGranted) {
-        rootMessengerKey.currentState?.showSnackBar(
-          const SnackBar(content: Text('Нужен доступ к микрофону')),
-        );
-        return;
-      }
+  Future<void> _startRecording() async {
+    final recorder = ref.read(voiceRecorderProvider);
+    final ok = await recorder.start();
+    if (!ok) {
+      _showInlineToast('Нужен доступ к микрофону', error: true);
+      return;
     }
-    final ok = await _stt.initialize(
-      onStatus: (s) {
-        if (!mounted) return;
-        // Android SpeechRecognizer выключается через ~5-10с — сами рестартим
-        // пока юзер активно слушает (а не нажал save/cancel).
-        if ((s == 'done' || s == 'notListening') &&
-            _mode == _Mode.voiceListening) {
-          _restartListening();
-        }
-      },
-      onError: (e) {
-        if (!mounted) return;
-        if (_mode == _Mode.voiceListening) {
-          _restartListening();
-        }
-      },
-    );
-    _sttInited = ok;
-  }
+    if (!mounted) return;
 
-  Future<void> _restartListening() async {
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    if (!mounted || _mode != _Mode.voiceListening) return;
-    try {
-      await _stt.listen(
-        onResult: (r) {
-          if (!mounted) return;
-          setState(() => _liveText = r.recognizedWords);
-          _bumpSpeech();
-          _bubbleEntry?.markNeedsBuild();
-        },
-        onSoundLevelChange: (level) {
-          if (!mounted) return;
-          final norm = (level + 2) / 12;
-          _ampTarget = norm.clamp(0.0, 1.0);
-          if (level > 0.3) _bumpSpeech();
-        },
-        listenOptions: stt.SpeechListenOptions(
-          partialResults: true,
-          cancelOnError: false,
-          listenMode: stt.ListenMode.dictation,
-        ),
-        pauseFor: const Duration(seconds: 60),
-        listenFor: const Duration(minutes: 2),
-        localeId: 'ru_RU',
-      );
-    } catch (_) {/* ignore */}
-  }
-
-  Future<void> _startListening() async {
-    await _ensureStt();
-    if (!_sttInited || !mounted) return;
     setState(() {
-      _mode = _Mode.voiceListening;
+      _mode = _Mode.voiceRecording;
       _liveText = '';
     });
     _showBubble();
-    await _stt.listen(
-      onResult: (r) {
-        if (!mounted) return;
-        setState(() => _liveText = r.recognizedWords);
-        _bumpSpeech();
-        _bubbleEntry?.markNeedsBuild();
-      },
-      onSoundLevelChange: (level) {
-        if (!mounted) return;
-        final norm = (level + 2) / 12;
-        _ampTarget = norm.clamp(0.0, 1.0);
-        if (level > 0.3) _bumpSpeech();
-      },
-      listenOptions: stt.SpeechListenOptions(
-        partialResults: true,
-        cancelOnError: true,
-        listenMode: stt.ListenMode.dictation,
-      ),
-      pauseFor: const Duration(seconds: 60),
-      listenFor: const Duration(minutes: 2),
-      localeId: 'ru_RU',
-    );
-  }
 
-  void _bumpSpeech() {
-    _silenceTimer?.cancel();
-    _silenceTimer = Timer(const Duration(milliseconds: _silenceMs), _onSilence);
+    _ampSub?.cancel();
+    _ampSub = recorder.amplitudeStream.listen((a) {
+      if (!mounted) return;
+      setState(() => _amp = a);
+      if (a >= _silenceAmpThreshold) {
+        _silenceTimer?.cancel();
+        _silenceTimer = Timer(
+          const Duration(milliseconds: _silenceMs),
+          _onSilence,
+        );
+      }
+    });
   }
 
   void _onSilence() {
-    if (_mode != _Mode.voiceListening) return;
-    if (_liveText.trim().length < 2) return;
-    _commit();
+    if (_mode != _Mode.voiceRecording) return;
+    // Авто-стоп на тишине, только если запись длилась хоть пару секунд
+    _stopAndCommit();
+  }
+
+  Future<void> _stopAndCommit() async {
+    if (_mode != _Mode.voiceRecording) return;
+    HapticFeedback.mediumImpact();
+    _silenceTimer?.cancel();
+    _ampSub?.cancel();
+    _ampSub = null;
+
+    final recorder = ref.read(voiceRecorderProvider);
+    final path = await recorder.stop();
+    if (!mounted) return;
+
+    if (path == null) {
+      _resetIdle();
+      return;
+    }
+
+    setState(() {
+      _mode = _Mode.voiceTranscribing;
+      _amp = 0;
+    });
+    _bubbleEntry?.markNeedsBuild();
+
+    String text = '';
+    try {
+      final result = await recorder.recognize(path);
+      text = result.text.trim();
+    } on ApiException catch (e) {
+      _showInlineToast(e.message, error: true);
+      _hideBubble();
+      _resetIdle();
+      return;
+    } catch (e) {
+      _showInlineToast('Не удалось распознать', error: true);
+      _hideBubble();
+      _resetIdle();
+      return;
+    }
+
+    if (text.isEmpty) {
+      _showInlineToast('Не услышал. Попробуй ближе к микрофону.');
+      _hideBubble();
+      _resetIdle();
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _liveText = text;
+    });
+    _bubbleEntry?.markNeedsBuild();
+    await _commitText(text, isVoice: true);
   }
 
   // -- text compose -----------------------------------------------------
@@ -265,27 +220,16 @@ class _MicFabState extends ConsumerState<MicFab>
     _showBubble();
   }
 
-  // -- commit / cancel --------------------------------------------------
-
   Future<void> _commit() async {
-    if (_mode == _Mode.voiceSaving) return;
-    HapticFeedback.mediumImpact();
-    _silenceTimer?.cancel();
-
-    final isVoice = _mode == _Mode.voiceListening;
-    final text = isVoice ? _liveText.trim() : _textCtl.text.trim();
-
-    if (isVoice) {
-      try {
-        await _stt.stop();
-      } catch (_) {}
-    }
-
+    final text = _textCtl.text.trim();
     if (text.isEmpty) {
-      _cancel();
+      await _cancel();
       return;
     }
+    await _commitText(text, isVoice: false);
+  }
 
+  Future<void> _commitText(String text, {required bool isVoice}) async {
     setState(() => _mode = _Mode.voiceSaving);
     _bubbleEntry?.markNeedsBuild();
     _morph.forward(from: 0);
@@ -293,16 +237,15 @@ class _MicFabState extends ConsumerState<MicFab>
     Moment? saved;
     try {
       final create = ref.read(createMomentProvider);
-      saved = await create(
-        rawText: text,
-        source: isVoice ? 'voice' : 'text',
-      );
+      saved = await create(rawText: text, source: isVoice ? 'voice' : 'text');
     } on ApiException catch (e) {
       _showInlineToast(e.message, error: true);
+      _hideBubble();
       _resetIdle();
       return;
     } catch (e) {
       _showInlineToast('$e', error: true);
+      _hideBubble();
       _resetIdle();
       return;
     }
@@ -315,10 +258,12 @@ class _MicFabState extends ConsumerState<MicFab>
     _resetIdle();
   }
 
-  void _cancel() {
+  Future<void> _cancel() async {
     _silenceTimer?.cancel();
+    _ampSub?.cancel();
+    _ampSub = null;
     try {
-      _stt.cancel();
+      await ref.read(voiceRecorderProvider).cancel();
     } catch (_) {}
     _hideBubble();
     _resetIdle();
@@ -330,6 +275,7 @@ class _MicFabState extends ConsumerState<MicFab>
     setState(() {
       _liveText = '';
       _textCtl.clear();
+      _amp = 0;
       _mode = _isVoiceMode ? _Mode.voiceIdle : _Mode.textIdle;
     });
   }
@@ -352,6 +298,28 @@ class _MicFabState extends ConsumerState<MicFab>
   }
 
   Widget _buildBubbleContent(BuildContext ctx) {
+    if (_mode == _Mode.voiceTranscribing) {
+      return _BubbleCard(
+        onClose: _cancel,
+        child: Row(
+          children: const [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: MX.accentAi,
+              ),
+            ),
+            SizedBox(width: 12),
+            Text(
+              'Распознаю…',
+              style: TextStyle(color: MX.fg, fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
     if (_mode == _Mode.voiceSaving) {
       return _BubbleCard(
         text: _liveText.isEmpty ? _textCtl.text : _liveText,
@@ -383,14 +351,11 @@ class _MicFabState extends ConsumerState<MicFab>
             : 'Тап T — сохранить',
       );
     }
-    // listening
+    // voiceRecording
     return _BubbleCard(
       onClose: _cancel,
-      text: _liveText.isEmpty ? null : _liveText,
       placeholder: 'Слушаю…',
-      footerHint: _liveText.isEmpty
-          ? 'Свайп ↕ — текстом'
-          : 'Тишина 2.5с → сохраню. Тап мик — сейчас.',
+      footerHint: 'Молчишь 1.8с → сохраню. Тап мик — сейчас.',
     );
   }
 
@@ -473,8 +438,6 @@ class _MicFabState extends ConsumerState<MicFab>
         if (_dragHandled) return;
         final dx = d.globalPosition.dx - _dragStart.dx;
         final dy = d.globalPosition.dy - _dragStart.dy;
-        // Вертикальный свайп (вверх или вниз) = переключение режима.
-        // Если что-то записывалось/набиралось — _toggleMode сам отменит.
         if (dy.abs() > 40 && dy.abs() > dx.abs() * 1.5) {
           _dragHandled = true;
           _toggleMode();
@@ -488,11 +451,10 @@ class _MicFabState extends ConsumerState<MicFab>
             animation: Listenable.merge([_breath, _morph, _modeMorph]),
             builder: (_, __) {
               final breathScale = 1 + (_breath.value - 0.5) * 0.04;
-              final ampScale = (_mode == _Mode.voiceListening)
-                  ? _amp * 0.32
+              final ampScale = (_mode == _Mode.voiceRecording)
+                  ? _amp * 0.36
                   : 0.0;
               final scale = breathScale + ampScale;
-              // Voice палитра: cyan → purple на сохранении.
               final voiceCore =
                   Color.lerp(MX.accentAi, MX.accentPurple, _morph.value)!;
               final voiceHalo = Color.lerp(
@@ -500,7 +462,6 @@ class _MicFabState extends ConsumerState<MicFab>
                 const Color(0xFF7C3AED),
                 _morph.value,
               )!;
-              // Text палитра: тёплый зелёный → янтарь на сохранении.
               final textCore = Color.lerp(
                 const Color(0xFF34D399),
                 const Color(0xFFFBBF24),
@@ -517,7 +478,8 @@ class _MicFabState extends ConsumerState<MicFab>
                 scale: scale,
                 core: core,
                 halo: halo,
-                listening: _mode == _Mode.voiceListening,
+                active: _mode == _Mode.voiceRecording,
+                processing: _mode == _Mode.voiceTranscribing,
                 saving: _mode == _Mode.voiceSaving,
                 modeMorph: _modeMorph.value,
               );
@@ -536,7 +498,8 @@ class _OrbBody extends StatelessWidget {
     required this.scale,
     required this.core,
     required this.halo,
-    required this.listening,
+    required this.active,
+    required this.processing,
     required this.saving,
     required this.modeMorph,
   });
@@ -544,21 +507,19 @@ class _OrbBody extends StatelessWidget {
   final double scale;
   final Color core;
   final Color halo;
-  final bool listening;
+  final bool active;
+  final bool processing;
   final bool saving;
-  final double modeMorph; // 0 = voice, 1 = text
+  final double modeMorph;
 
   @override
   Widget build(BuildContext context) {
-    final glowAlpha = saving
-        ? 220
-        : (listening ? 200 : 170);
+    final glowAlpha = saving ? 220 : (active ? 200 : 170);
 
     return Stack(
       alignment: Alignment.center,
       children: [
-        // glow halo (visible only listening/saving)
-        if (listening || saving)
+        if (active || saving || processing)
           Transform.scale(
             scale: scale * 1.6,
             child: ImageFiltered(
@@ -598,16 +559,24 @@ class _OrbBody extends StatelessWidget {
               ],
             ),
             child: Center(
-              child: Opacity(
-                opacity: 1 - modeMorph,
-                child: const Icon(LucideIcons.mic,
-                    color: Colors.white, size: 28),
-              ),
+              child: processing
+                  ? const SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Opacity(
+                      opacity: 1 - modeMorph,
+                      child: const Icon(LucideIcons.mic,
+                          color: Colors.white, size: 28),
+                    ),
             ),
           ),
         ),
-        // 'T' символ для text-mode
-        if (modeMorph > 0.05)
+        if (modeMorph > 0.05 && !processing)
           Opacity(
             opacity: modeMorph,
             child: const Text(
@@ -733,7 +702,6 @@ class _BubbleCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Заголовок-строка: статус + close (если onClose)
             if (showCheck || onClose != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

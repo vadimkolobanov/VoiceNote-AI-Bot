@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
@@ -8,21 +7,18 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/network/dio_client.dart';
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/features/voice_capture/data/voice_recorder.dart';
 
 /// Режим «Расскажи о себе» — длинная исповедь приложению. Извлекаются только
-/// факты (без создания моментов). Эстетика — большая «аудио-капсула»:
-/// фиолетовый/cyan орб дышит и реагирует на голос, транскрипт растёт сверху.
+/// факты (без создания моментов).
 ///
-/// Отличия от мгновенного захвата (MicFab):
-/// - тап-toggle, **без** автостопа по тишине (можно делать паузы)
-/// - явная кнопка «Запомни» (длинная сессия требует уверенного коммита)
-/// - крупная зона транскрипта, прокрутка
+/// Голос записывается локально через `record` (без on-device STT, без
+/// системных пиков), один раз на стопе аплоадится в `/voice/recognize`.
+/// Текст можно дополнять и редактировать, потом «Запомни» → `/learning/tell`.
 class LearningScreen extends ConsumerStatefulWidget {
   const LearningScreen({super.key});
 
@@ -30,13 +26,10 @@ class LearningScreen extends ConsumerStatefulWidget {
   ConsumerState<LearningScreen> createState() => _LearningScreenState();
 }
 
+enum _Phase { idle, recording, transcribing, saving }
+
 class _LearningScreenState extends ConsumerState<LearningScreen>
     with TickerProviderStateMixin {
-  // STT
-  final _stt = stt.SpeechToText();
-  bool _sttReady = false;
-
-  // Animation
   late final AnimationController _breath = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 2400),
@@ -46,161 +39,81 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
     duration: const Duration(milliseconds: 700),
   );
 
-  // State
-  bool _listening = false;
-  bool _saving = false;
+  _Phase _phase = _Phase.idle;
   bool _textMode = false;
-  String _liveText = '';
   final _textCtl = TextEditingController();
   final _scrollCtl = ScrollController();
 
-  // Amplitude
   double _amp = 0.0;
-  double _ampTarget = 0.0;
-  Timer? _ampTicker;
+  StreamSubscription<double>? _ampSub;
 
   @override
   void initState() {
     super.initState();
     HapticFeedback.lightImpact();
-    _startAmpTicker();
-    _initStt();
   }
 
   @override
   void dispose() {
     _breath.dispose();
     _morph.dispose();
-    _ampTicker?.cancel();
+    _ampSub?.cancel();
     _textCtl.dispose();
     _scrollCtl.dispose();
-    _stt.cancel();
     super.dispose();
   }
 
-  void _startAmpTicker() {
-    _ampTicker = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      final next = _amp + (_ampTarget - _amp) * 0.18;
-      if ((next - _amp).abs() > 0.001 || _ampTarget != 0) {
-        if (mounted) setState(() => _amp = next);
-      }
-      _ampTarget = math.max(0.0, _ampTarget - 0.012);
-    });
-  }
-
-  Future<void> _initStt() async {
-    try {
-      final ok = await _stt.initialize(
-        onStatus: (s) {
-          if (!mounted) return;
-          // Android SpeechRecognizer внутренне выключается через ~5-10 сек
-          // даже если мы хотим долго слушать. Перезапускаем пока юзер сам
-          // не остановил.
-          if ((s == 'done' || s == 'notListening') && _listening && !_saving) {
-            _restartListening();
-          }
-        },
-        onError: (e) {
-          if (!mounted) return;
-          // error_no_match / speech_timeout — нормально, перезапустим.
-          if (_listening && !_saving) {
-            _restartListening();
-          }
-        },
-      );
-      if (mounted) setState(() => _sttReady = ok);
-    } catch (_) {/* ignore */}
-  }
-
-  Future<void> _restartListening() async {
-    // защита от штормового цикла: ждём 250мс перед перезапуском
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    if (!mounted || !_listening || _saving) return;
-    // переносим то что уже распознано в commit-text, чтобы не потерять
-    final cap = _liveText.trim();
-    if (cap.isNotEmpty) {
-      final cur = _textCtl.text.trim();
-      _textCtl.text = cur.isEmpty ? cap : '$cur $cap';
-      _liveText = '';
-    }
-    try {
-      await _stt.listen(
-        onResult: (r) {
-          if (!mounted) return;
-          setState(() => _liveText = r.recognizedWords);
-          _scrollToBottom();
-        },
-        onSoundLevelChange: (level) {
-          if (!mounted) return;
-          final norm = (level + 2) / 12;
-          _ampTarget = norm.clamp(0.0, 1.0);
-        },
-        listenOptions: stt.SpeechListenOptions(
-          partialResults: true,
-          cancelOnError: false,
-          listenMode: stt.ListenMode.dictation,
-        ),
-        pauseFor: const Duration(seconds: 30),
-        listenFor: const Duration(minutes: 5),
-        localeId: 'ru_RU',
-      );
-    } catch (_) {/* ignore */}
-  }
-
   Future<void> _toggleListening() async {
-    if (_saving) return;
+    if (_phase == _Phase.transcribing || _phase == _Phase.saving) return;
     HapticFeedback.lightImpact();
-    if (_listening) {
-      await _stop();
+    if (_phase == _Phase.recording) {
+      await _stopRecording();
       return;
     }
-    if (!_sttReady) {
-      final mic = await Permission.microphone.request();
-      if (!mic.isGranted) return;
-      await _initStt();
-      if (!_sttReady) return;
+    final recorder = ref.read(voiceRecorderProvider);
+    final ok = await recorder.start();
+    if (!ok) {
+      _toast('Нужен доступ к микрофону.');
+      return;
     }
-    setState(() {
-      _listening = true;
-      _liveText = '';
+    if (!mounted) return;
+    setState(() => _phase = _Phase.recording);
+    _ampSub = recorder.amplitudeStream.listen((a) {
+      if (!mounted) return;
+      setState(() => _amp = a);
     });
-    await _stt.listen(
-      onResult: (r) {
-        if (!mounted) return;
-        setState(() => _liveText = r.recognizedWords);
-        _scrollToBottom();
-      },
-      onSoundLevelChange: (level) {
-        if (!mounted) return;
-        final norm = (level + 2) / 12;
-        _ampTarget = norm.clamp(0.0, 1.0);
-      },
-      listenOptions: stt.SpeechListenOptions(
-        partialResults: true,
-        cancelOnError: true,
-        listenMode: stt.ListenMode.dictation,
-      ),
-      // Большие значения чтобы юзер мог делать паузы и думать.
-      pauseFor: const Duration(seconds: 30),
-      listenFor: const Duration(minutes: 5),
-      localeId: 'ru_RU',
-    );
   }
 
-  Future<void> _stop() async {
-    final captured = _liveText.trim();
-    try {
-      await _stt.stop();
-    } catch (_) {}
+  Future<void> _stopRecording() async {
+    _ampSub?.cancel();
+    _ampSub = null;
+    final recorder = ref.read(voiceRecorderProvider);
+    final path = await recorder.stop();
     if (!mounted) return;
     setState(() {
-      _listening = false;
-      if (captured.isNotEmpty) {
-        final cur = _textCtl.text.trim();
-        _textCtl.text = cur.isEmpty ? captured : '$cur $captured';
-      }
-      _liveText = '';
+      _phase = _Phase.transcribing;
+      _amp = 0;
     });
+    if (path == null) {
+      setState(() => _phase = _Phase.idle);
+      return;
+    }
+    try {
+      final result = await recorder.recognize(path);
+      if (!mounted) return;
+      final txt = result.text.trim();
+      if (txt.isNotEmpty) {
+        final cur = _textCtl.text.trim();
+        _textCtl.text = cur.isEmpty ? txt : '$cur $txt';
+      }
+      _scrollToBottom();
+    } on ApiException catch (e) {
+      _toast(e.message);
+    } catch (_) {
+      _toast('Не удалось распознать. Попробуй ещё раз.');
+    } finally {
+      if (mounted) setState(() => _phase = _Phase.idle);
+    }
   }
 
   void _scrollToBottom() {
@@ -217,14 +130,14 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
   }
 
   Future<void> _submit() async {
-    if (_listening) await _stop();
+    if (_phase == _Phase.recording) await _stopRecording();
     final text = _textCtl.text.trim();
     if (text.length < 8) {
       _toast('Расскажи побольше — хотя бы пару фраз.');
       return;
     }
     HapticFeedback.mediumImpact();
-    setState(() => _saving = true);
+    setState(() => _phase = _Phase.saving);
     _morph.forward(from: 0);
     try {
       final dio = ref.read(dioProvider);
@@ -244,7 +157,7 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
       _toast('$e');
     } finally {
       if (mounted) {
-        setState(() => _saving = false);
+        setState(() => _phase = _Phase.idle);
         _morph.reset();
       }
     }
@@ -328,8 +241,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
     }
   }
 
-  // -- build ------------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context);
@@ -337,7 +248,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
       backgroundColor: const Color(0xFF050507),
       body: Stack(
         children: [
-          // Background radial glow
           Positioned.fill(
             child: AnimatedBuilder(
               animation: _morph,
@@ -363,7 +273,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
           SafeArea(
             child: Column(
               children: [
-                // Top bar: close + title
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
                   child: Row(
@@ -401,7 +310,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                         ),
                       ),
                       const Spacer(),
-                      // toggle voice/text
                       IconButton(
                         icon: Icon(
                           _textMode ? LucideIcons.mic : LucideIcons.type,
@@ -409,7 +317,9 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                           size: 22,
                         ),
                         onPressed: () async {
-                          if (_listening) await _stop();
+                          if (_phase == _Phase.recording) {
+                            await _stopRecording();
+                          }
                           setState(() => _textMode = !_textMode);
                         },
                       ),
@@ -417,7 +327,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                   ),
                 ),
 
-                // Hint
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
                   child: Text(
@@ -430,7 +339,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                   ),
                 ),
 
-                // Transcript / textfield (большая зона)
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
@@ -440,7 +348,7 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                             autofocus: true,
                             maxLines: null,
                             expands: true,
-                            enabled: !_saving,
+                            enabled: _phase != _Phase.saving,
                             textCapitalization: TextCapitalization.sentences,
                             textAlignVertical: TextAlignVertical.top,
                             style: t.textTheme.bodyLarge?.copyWith(
@@ -450,7 +358,7 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                             ),
                             decoration: InputDecoration(
                               hintText:
-                                  'Меня зовут Вадим. Жена Диана работает в Сбере. У нас сын Миша — 4 года. Я не ем мясо, бегаю по утрам в 7. По выходным мы ездим к маме в Истру…',
+                                  'Меня зовут Вадим. Жена Диана работает в Сбере. У нас сын Миша — 4 года…',
                               hintStyle: t.textTheme.bodyLarge?.copyWith(
                                 color: MX.fgFaint,
                                 fontSize: 16,
@@ -466,20 +374,19 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                             controller: _scrollCtl,
                             child: _Transcript(
                               committed: _textCtl.text,
-                              live: _liveText,
-                              listening: _listening,
+                              phase: _phase,
                             ),
                           ),
                   ),
                 ),
 
-                // Orb виден только в голосовом режиме.
                 if (!_textMode) ...[
                   AnimatedBuilder(
                     animation: Listenable.merge([_breath, _morph]),
                     builder: (_, __) {
                       final breathScale = 1 + (_breath.value - 0.5) * 0.04;
-                      final ampScale = _listening ? _amp * 0.32 : 0.0;
+                      final ampScale =
+                          (_phase == _Phase.recording) ? _amp * 0.36 : 0.0;
                       final scale = breathScale + ampScale;
                       final core = Color.lerp(
                         const Color(0xFFA78BFA),
@@ -497,8 +404,7 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                           scale: scale,
                           core: core,
                           halo: halo,
-                          listening: _listening,
-                          saving: _saving,
+                          phase: _phase,
                         ),
                       );
                     },
@@ -512,7 +418,6 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                   const SizedBox(height: 12),
                 ],
 
-                // Submit
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
                   child: SizedBox(
@@ -523,12 +428,12 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                         backgroundColor: const Color(0xFFA78BFA),
                         foregroundColor: Colors.black,
                       ),
-                      onPressed: (_saving ||
-                              (_textCtl.text.trim().length < 8 &&
-                                  _liveText.trim().length < 8))
+                      onPressed: (_phase == _Phase.saving ||
+                              _phase == _Phase.transcribing ||
+                              _textCtl.text.trim().length < 8)
                           ? null
                           : _submit,
-                      icon: _saving
+                      icon: _phase == _Phase.saving
                           ? const SizedBox(
                               width: 16,
                               height: 16,
@@ -537,7 +442,7 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                             )
                           : const Icon(LucideIcons.brain, size: 18),
                       label: Text(
-                        _saving ? 'Запоминаю…' : 'Запомни',
+                        _phase == _Phase.saving ? 'Запоминаю…' : 'Запомни',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -555,36 +460,47 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
   }
 
   String _hint() {
-    if (_saving) return 'Разбираю на факты…';
-    if (_listening) return 'Тап по орбу — пауза';
-    if (_textMode) return 'Печатай. Тап «Запомни» когда готов.';
-    return 'Тап по орбу — начать рассказ';
+    switch (_phase) {
+      case _Phase.idle:
+        return 'Тап по орбу — начать рассказ';
+      case _Phase.recording:
+        return 'Тап по орбу — пауза';
+      case _Phase.transcribing:
+        return 'Распознаю…';
+      case _Phase.saving:
+        return 'Разбираю на факты…';
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
 
 class _Transcript extends StatelessWidget {
-  const _Transcript({
-    required this.committed,
-    required this.live,
-    required this.listening,
-  });
+  const _Transcript({required this.committed, required this.phase});
 
   final String committed;
-  final String live;
-  final bool listening;
+  final _Phase phase;
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context);
     final hasCommitted = committed.trim().isNotEmpty;
-    final hasLive = live.trim().isNotEmpty;
-    if (!hasCommitted && !hasLive) {
+    if (!hasCommitted) {
+      String hint;
+      switch (phase) {
+        case _Phase.recording:
+          hint = 'Слушаю… говори';
+          break;
+        case _Phase.transcribing:
+          hint = 'Распознаю…';
+          break;
+        default:
+          hint = 'Тап по орбу — начни';
+      }
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 24),
         child: Text(
-          listening ? 'Слушаю…' : 'Тап по орбу — начни',
+          hint,
           style: t.textTheme.headlineSmall?.copyWith(
             color: MX.fgFaint,
             fontWeight: FontWeight.w400,
@@ -594,22 +510,12 @@ class _Transcript extends StatelessWidget {
         ),
       );
     }
-    return RichText(
-      text: TextSpan(
-        style: t.textTheme.bodyLarge?.copyWith(
-          color: MX.fg,
-          fontSize: 19,
-          height: 1.5,
-        ),
-        children: [
-          if (hasCommitted) TextSpan(text: committed),
-          if (hasCommitted && hasLive) const TextSpan(text: ' '),
-          if (hasLive)
-            TextSpan(
-              text: live,
-              style: TextStyle(color: MX.fg.withAlpha(180)),
-            ),
-        ],
+    return Text(
+      committed,
+      style: t.textTheme.bodyLarge?.copyWith(
+        color: MX.fg,
+        fontSize: 19,
+        height: 1.5,
       ),
     );
   }
@@ -620,27 +526,29 @@ class _BigOrb extends StatelessWidget {
     required this.scale,
     required this.core,
     required this.halo,
-    required this.listening,
-    required this.saving,
+    required this.phase,
   });
 
   final double scale;
   final Color core;
   final Color halo;
-  final bool listening;
-  final bool saving;
+  final _Phase phase;
 
   @override
   Widget build(BuildContext context) {
     const baseSize = 110.0;
-    final glowAlpha = saving ? 240 : (listening ? 200 : 160);
+    final active = phase == _Phase.recording ||
+        phase == _Phase.saving ||
+        phase == _Phase.transcribing;
+    final glowAlpha =
+        phase == _Phase.saving ? 240 : (active ? 200 : 160);
     return SizedBox(
       width: 240,
       height: 240,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          if (listening || saving)
+          if (active)
             Transform.scale(
               scale: scale * 1.5,
               child: ImageFiltered(
@@ -666,7 +574,7 @@ class _BigOrb extends StatelessWidget {
                   center: const Alignment(-0.2, -0.3),
                   radius: 0.95,
                   colors: [
-                    core.withAlpha(saving ? 240 : 230),
+                    core.withAlpha(active ? 240 : 230),
                     core.withAlpha(180),
                     halo.withAlpha(80),
                   ],
@@ -679,31 +587,45 @@ class _BigOrb extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
-          ),
-          Transform.scale(
-            scale: scale * 0.45,
-            child: Container(
-              width: baseSize * 0.5,
-              height: baseSize * 0.5,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [
-                    Colors.white.withAlpha(220),
-                    core.withAlpha(150),
-                    core.withAlpha(0),
-                  ],
-                ),
+              child: Center(
+                child: phase == _Phase.transcribing
+                    ? const SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: Colors.white,
+                        ),
+                      )
+                    : null,
               ),
             ),
           ),
-          // микрофон-индикатор внутри
-          if (listening || (!saving && true))
+          if (phase != _Phase.transcribing)
+            Transform.scale(
+              scale: scale * 0.45,
+              child: Container(
+                width: baseSize * 0.5,
+                height: baseSize * 0.5,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      Colors.white.withAlpha(220),
+                      core.withAlpha(150),
+                      core.withAlpha(0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (phase == _Phase.idle || phase == _Phase.recording)
             Positioned(
               bottom: 36,
               child: Icon(
-                listening ? LucideIcons.mic : LucideIcons.brain,
+                phase == _Phase.recording
+                    ? LucideIcons.mic
+                    : LucideIcons.brain,
                 color: Colors.white.withAlpha(200),
                 size: 22,
               ),

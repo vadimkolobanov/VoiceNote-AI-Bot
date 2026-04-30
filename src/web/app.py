@@ -28,6 +28,7 @@ from .api.v1.agent import router as v1_agent_router
 from .api.v1.billing import router as v1_billing_router
 from .api.v1.feedback import router as v1_feedback_router
 from .api.v1.learning import router as v1_learning_router
+from .api.v1.voice import router as v1_voice_router
 from .middleware import setup_rate_limiting
 
 import asyncio
@@ -120,6 +121,7 @@ def get_fastapi_app(bot: Bot) -> FastAPI:
     app.include_router(v1_billing_router, prefix="/api/v1")
     app.include_router(v1_feedback_router, prefix="/api/v1")
     app.include_router(v1_learning_router, prefix="/api/v1")
+    app.include_router(v1_voice_router, prefix="/api/v1")
 
     # Legacy (до M2). Старый auth_router пока оставлен на /api/v1/auth/login
     # и /code — они не пересекаются с /email/* из v1_auth_router.

@@ -63,11 +63,14 @@ class _FeedbackScreenState extends ConsumerState<FeedbackScreen> {
     final t = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Помоги стать лучше'),
+        title: Text(_sent ? '' : 'Помоги стать лучше'),
         leading: IconButton(
           icon: const Icon(LucideIcons.x),
           onPressed: () => context.pop(),
         ),
+        backgroundColor: MX.bgBase,
+        elevation: 0,
+        scrolledUnderElevation: 0,
       ),
       body: _sent ? _buildThanks(t) : _buildForm(t),
     );
@@ -173,43 +176,72 @@ class _FeedbackScreenState extends ConsumerState<FeedbackScreen> {
 
   Widget _buildThanks(ThemeData t) {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: MX.brandGradient,
-                boxShadow: MX.fabGlow,
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Большое сердце с glow
+              Container(
+                width: 96,
+                height: 96,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const RadialGradient(
+                    center: Alignment(-0.2, -0.3),
+                    radius: 0.95,
+                    colors: [
+                      Color(0xFFFF6B9D),
+                      Color(0xFFFF2D55),
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFFF2D55).withAlpha(120),
+                      blurRadius: 40,
+                      spreadRadius: 4,
+                    ),
+                  ],
+                ),
+                child: const Icon(LucideIcons.heart,
+                    color: Colors.white, size: 44),
               ),
-              child: const Icon(LucideIcons.heart,
-                  color: Colors.white, size: 36),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Спасибо.',
-              style: t.textTheme.headlineMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Я прочитаю это сегодня вечером.\nНа важные вещи — отвечу.',
-              textAlign: TextAlign.center,
-              style: t.textTheme.bodyMedium?.copyWith(color: MX.fgMuted),
-            ),
-            const SizedBox(height: 32),
-            FilledButton(
-              onPressed: () => context.pop(),
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 4),
-                child: Text('Закрыть'),
+              const SizedBox(height: 28),
+              Text(
+                'Спасибо.',
+                textAlign: TextAlign.center,
+                style: t.textTheme.headlineMedium?.copyWith(
+                  color: MX.fg,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.4,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Text(
+                'Я прочитаю это сегодня вечером.\nНа важные вещи — отвечу.',
+                textAlign: TextAlign.center,
+                style: t.textTheme.bodyMedium?.copyWith(
+                  color: MX.fgMuted,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: 220,
+                height: 48,
+                child: FilledButton(
+                  onPressed: () => context.pop(),
+                  child: const Text(
+                    'Закрыть',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
