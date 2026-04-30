@@ -43,7 +43,17 @@ jobs:
           ./.venv/bin/pip install -q -r requirements.txt
           ./.venv/bin/python -m alembic upgrade head
           sudo /bin/systemctl restart methodex-api
-          sleep 4
-          sudo /bin/systemctl status methodex-api --no-pager | head -15
-          curl -fsS -m 10 http://127.0.0.1:8765/health
+          # Retry health-check 20 раз × 1 сек: даём сервису прогреться.
+          for i in $(seq 1 20); do
+            if curl -fsS -m 3 http://127.0.0.1:8765/health >/dev/null 2>&1; then
+              echo "service is healthy after ${i}s"
+              curl -fsS -m 3 http://127.0.0.1:8765/health
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "service did not become healthy in 20s"
+          sudo /bin/systemctl status methodex-api --no-pager | head -25
+          journalctl -u methodex-api -n 30 --no-pager
+          exit 1
           EOF
