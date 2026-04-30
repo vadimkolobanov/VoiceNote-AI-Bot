@@ -358,7 +358,7 @@ class _LearningScreenState extends ConsumerState<LearningScreen>
                             ),
                             decoration: InputDecoration(
                               hintText:
-                                  'Меня зовут Вадим. Жена Диана работает в Сбере. У нас сын Миша — 4 года…',
+                                  'Расскажи о себе своими словами — как близкому. О людях, работе, привычках, целях…',
                               hintStyle: t.textTheme.bodyLarge?.copyWith(
                                 color: MX.fgFaint,
                                 fontSize: 16,
