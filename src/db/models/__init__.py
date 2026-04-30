@@ -8,6 +8,7 @@ from .user import User  # noqa: F401
 from .agent_message import AgentMessage  # noqa: F401
 from .ai_usage import AiUsage  # noqa: F401
 from .fact import Fact  # noqa: F401
+from .feedback import Feedback  # noqa: F401
 from .habit_completion import HabitCompletion  # noqa: F401
 from .moment import Moment  # noqa: F401
 from .push_token import PushToken  # noqa: F401
@@ -19,6 +20,7 @@ __all__ = [
     "AgentMessage",
     "AiUsage",
     "Fact",
+    "Feedback",
     "HabitCompletion",
     "Moment",
     "PushToken",

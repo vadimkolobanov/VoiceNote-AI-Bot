@@ -15,4 +15,8 @@ abstract final class Env {
       dotenv.maybeGet('YOOKASSA_RETURN_URL') ?? 'voicenote://payment/success';
 
   static bool get isProduction => dotenv.maybeGet('ENV') == 'production';
+
+  static String get environment => dotenv.maybeGet('ENV') ?? 'development';
+
+  static String get sentryDsn => dotenv.maybeGet('SENTRY_DSN') ?? '';
 }

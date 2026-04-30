@@ -7,6 +7,7 @@ import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/login_screen.dart';
 import 'package:voicenote_ai/features/auth/presentation/screens/splash_screen.dart';
 import 'package:voicenote_ai/features/facts/presentation/facts_screen.dart';
+import 'package:voicenote_ai/features/feedback/presentation/feedback_screen.dart';
 import 'package:voicenote_ai/features/learning/presentation/learning_screen.dart';
 import 'package:voicenote_ai/features/moment_details/presentation/moment_details_screen.dart';
 import 'package:voicenote_ai/features/paywall/presentation/paywall_screen.dart';
@@ -14,7 +15,6 @@ import 'package:voicenote_ai/features/profile/presentation/profile_screen.dart';
 import 'package:voicenote_ai/features/rhythm/presentation/rhythm_screen.dart';
 import 'package:voicenote_ai/features/timeline/presentation/timeline_screen.dart';
 import 'package:voicenote_ai/features/today/presentation/today_screen.dart';
-import 'package:voicenote_ai/features/voice_capture/presentation/voice_capture_screen.dart';
 import 'package:voicenote_ai/shared/widgets/app_shell.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
@@ -75,17 +75,6 @@ final routerProvider = Provider<GoRouter>((ref) {
 
       GoRoute(
         parentNavigatorKey: _rootKey,
-        path: AppRoutes.voiceCapture,
-        pageBuilder: (_, __) => CustomTransitionPage(
-          opaque: true,
-          fullscreenDialog: true,
-          child: const VoiceCaptureScreen(),
-          transitionsBuilder: (_, animation, __, child) =>
-              FadeTransition(opacity: animation, child: child),
-        ),
-      ),
-      GoRoute(
-        parentNavigatorKey: _rootKey,
         path: AppRoutes.momentDetails,
         builder: (_, state) {
           final id = int.parse(state.pathParameters['id']!);
@@ -101,6 +90,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootKey,
         path: AppRoutes.learning,
         builder: (_, __) => const LearningScreen(),
+      ),
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.feedback,
+        builder: (_, __) => const FeedbackScreen(),
       ),
       GoRoute(
         parentNavigatorKey: _rootKey,

@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:voicenote_ai/features/feedback/data/review_prompt.dart';
+
 import 'package:voicenote_ai/features/moments/data/models/moment.dart';
 import 'package:voicenote_ai/features/moments/data/repositories/moments_repository.dart';
 
@@ -121,6 +123,9 @@ final createMomentProvider = Provider<Future<Moment> Function({
     final m = await repo.create(rawText: rawText, source: source, clientId: clientId);
     ref.invalidate(todayProvider);
     ref.read(timelineControllerProvider.notifier).refresh();
+    // Через несколько успешных моментов попросим оценку в сторе.
+    // ignore: discarded_futures
+    ReviewPrompt.bumpAndMaybeAsk();
     return m;
   };
 });

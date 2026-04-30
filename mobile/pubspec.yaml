@@ -48,6 +48,16 @@ dependencies:
   flutter_local_notifications: ^17.2.2
   shared_preferences: ^2.3.0
 
+  # Crash reporting
+  sentry_flutter: ^8.9.0
+
+  # In-store review prompt
+  in_app_review: ^2.0.9
+
+  # Device + package info for feedback context
+  device_info_plus: ^10.1.2
+  package_info_plus: ^8.0.2
+
   # Deep linking
   app_links: ^6.3.0
 

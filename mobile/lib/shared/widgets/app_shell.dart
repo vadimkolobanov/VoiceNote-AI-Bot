@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import 'package:voicenote_ai/core/router/app_routes.dart';
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/features/voice_capture/presentation/mic_fab.dart';
 
 /// AppShell — корневой каркас 4-табного UI (PRODUCT_PLAN.md §2.1):
 /// Сегодня · Хроника · Ритм · Профиль + плавающая кнопка микрофона по центру.
@@ -24,45 +24,9 @@ class AppShell extends StatelessWidget {
       backgroundColor: MX.bgBase,
       extendBody: true,
       body: child,
-      floatingActionButton: _MicFab(
-        onTap: () {
-          HapticFeedback.mediumImpact();
-          context.push(AppRoutes.voiceCapture);
-        },
-      ),
+      floatingActionButton: const MicFab(),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: _BottomBar(currentLocation: location),
-    );
-  }
-}
-
-class _MicFab extends StatelessWidget {
-  const _MicFab({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: SizedBox(
-        height: 64,
-        width: 64,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(MX.rFull),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: MX.brandGradient,
-                shape: BoxShape.circle,
-                boxShadow: MX.fabGlow,
-              ),
-              child: const Icon(LucideIcons.mic, color: Colors.white, size: 28),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

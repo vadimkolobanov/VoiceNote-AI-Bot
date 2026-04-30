@@ -82,6 +82,12 @@ class ProfileScreen extends ConsumerWidget {
                 subtitle: user?.isPro == true ? 'Активна' : 'Не активна — оформить',
                 onTap: () => context.push('/paywall'),
               ),
+              _MenuTile(
+                icon: Icons.feedback_outlined,
+                title: 'Помоги стать лучше',
+                subtitle: 'Что не так? Что классно? Что добавить?',
+                onTap: () => context.push('/feedback'),
+              ),
               const SizedBox(height: 24),
               OutlinedButton(
                 onPressed: () => ref.read(sessionControllerProvider.notifier).logout(),
