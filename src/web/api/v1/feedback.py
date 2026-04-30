@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Feedback, User
 from src.db.session import get_session
+from src.services.admin_notify import fire_and_forget, fmt_feedback
 
 from .dependencies import get_current_user
 
@@ -45,5 +46,16 @@ async def submit_feedback(
     logger.info(
         "feedback received: id=%s user=%s sentiment=%s body=%s",
         fb.id, user.id, payload.sentiment, payload.body[:80],
+    )
+    fire_and_forget(
+        fmt_feedback(
+            feedback_id=fb.id,
+            sentiment=payload.sentiment,
+            body=payload.body,
+            user_id=user.id,
+            user_label=user.display_name or user.email,
+            app_version=payload.app_version,
+            device_info=payload.device_info,
+        )
     )
     return {"status": "ok"}

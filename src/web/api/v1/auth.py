@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.models import User
 from src.db.session import get_session
 from src.services import auth_service
+from src.services.admin_notify import fire_and_forget, fmt_signup
 from src.services.auth_service import (
     EmailAlreadyRegistered,
     InvalidCredentials,
@@ -80,6 +81,13 @@ async def register_email(
                 }
             },
         )
+    fire_and_forget(
+        fmt_signup(
+            user_id=pair.user.id,
+            email=pair.user.email,
+            display_name=pair.user.display_name,
+        )
+    )
     return TokenPairResponse(
         access=pair.access, refresh=pair.refresh, user=_user_to_public(pair.user)
     )
