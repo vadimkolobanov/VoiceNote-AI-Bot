@@ -37,6 +37,7 @@ class ProfilePatchIn(BaseModel):
     timezone: Optional[str] = Field(default=None, max_length=64)
     locale: Optional[str] = Field(default=None, pattern="^(ru|en)$")
     digest_hour: Optional[int] = Field(default=None, ge=0, le=23)
+    pre_reminder_minutes: Optional[int] = Field(default=None, ge=0, le=240)
 
 
 def _to_public(u: User) -> UserPublic:
@@ -47,6 +48,7 @@ def _to_public(u: User) -> UserPublic:
         timezone=u.timezone,
         locale=u.locale,
         digest_hour=u.digest_hour,
+        pre_reminder_minutes=int(u.pre_reminder_minutes or 0),
         is_pro=u.is_pro(),
         created_at=u.created_at,
     )
@@ -71,6 +73,8 @@ async def patch_profile(
         user.locale = payload.locale
     if payload.digest_hour is not None:
         user.digest_hour = payload.digest_hour
+    if payload.pre_reminder_minutes is not None:
+        user.pre_reminder_minutes = payload.pre_reminder_minutes
     return _to_public(user)
 
 

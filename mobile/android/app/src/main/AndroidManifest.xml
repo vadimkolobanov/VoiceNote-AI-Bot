@@ -7,7 +7,7 @@
         </intent>
     </queries>
     <application
-        android:label="Methodex Manager"
+        android:label="Metodex"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

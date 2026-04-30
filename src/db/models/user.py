@@ -6,10 +6,10 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, SmallInteger, String, func
+from sqlalchemy import BigInteger, Date, DateTime, SmallInteger, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base
@@ -34,6 +34,10 @@ class User(Base):
         String(8), nullable=False, server_default="ru"
     )
     digest_hour: Mapped[Optional[int]] = mapped_column(SmallInteger, server_default="8")
+    pre_reminder_minutes: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
+    last_digest_sent_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
     # --- Подписка ---
     pro_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

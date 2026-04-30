@@ -49,6 +49,16 @@ class ProfileScreen extends ConsumerWidget {
                 onTap: user == null ? null : () => _editDigestHour(context, ref, user),
               ),
               _MenuTile(
+                icon: Icons.alarm_outlined,
+                title: 'Напомнить заранее',
+                subtitle: (user?.preReminderMinutes ?? 0) == 0
+                    ? 'В момент события'
+                    : 'За ${user!.preReminderMinutes} мин до',
+                onTap: user == null
+                    ? null
+                    : () => _editPreReminder(context, ref, user),
+              ),
+              _MenuTile(
                 icon: Icons.public,
                 title: 'Часовой пояс',
                 subtitle: user?.timezone ?? '—',
@@ -151,6 +161,23 @@ class ProfileScreen extends ConsumerWidget {
     if (result == null) return;
     await _patch(context, ref, () =>
         ref.read(profileRepositoryProvider).patch(digestHour: result));
+  }
+
+  Future<void> _editPreReminder(BuildContext context, WidgetRef ref, User user) async {
+    const options = <int>[0, 5, 10, 15, 30, 60];
+    final result = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: MX.bgCard,
+      builder: (_) => _PickerSheet<int>(
+        title: 'Напомнить заранее',
+        options: options,
+        current: user.preReminderMinutes,
+        formatLabel: (m) => m == 0 ? 'В момент события' : 'За $m мин до',
+      ),
+    );
+    if (result == null) return;
+    await _patch(context, ref, () =>
+        ref.read(profileRepositoryProvider).patch(preReminderMinutes: result));
   }
 
   Future<void> _confirmDeleteAccount(BuildContext context, WidgetRef ref) async {

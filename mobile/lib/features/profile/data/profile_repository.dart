@@ -17,6 +17,7 @@ class ProfileRepository {
     String? timezone,
     String? locale,
     int? digestHour,
+    int? preReminderMinutes,
   }) async {
     try {
       final response = await _dio.patch<Map<String, dynamic>>(
@@ -26,6 +27,8 @@ class ProfileRepository {
           if (timezone != null) 'timezone': timezone,
           if (locale != null) 'locale': locale,
           if (digestHour != null) 'digest_hour': digestHour,
+          if (preReminderMinutes != null)
+            'pre_reminder_minutes': preReminderMinutes,
         },
       );
       return User.fromJson(response.data!);

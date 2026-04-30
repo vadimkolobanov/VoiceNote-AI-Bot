@@ -23,6 +23,7 @@ class UserPublic(BaseModel):
     timezone: str
     locale: str
     digest_hour: Optional[int] = None
+    pre_reminder_minutes: int = 0
     is_pro: bool = False
     created_at: datetime
 

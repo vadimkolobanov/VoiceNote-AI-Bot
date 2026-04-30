@@ -12,6 +12,7 @@ class User {
     this.email,
     this.displayName,
     this.digestHour,
+    this.preReminderMinutes = 0,
   });
 
   final int id;
@@ -20,6 +21,7 @@ class User {
   final String timezone;
   final String locale;
   final int? digestHour;
+  final int preReminderMinutes;
   final bool isPro;
   final String createdAtIso;
 
@@ -30,6 +32,7 @@ class User {
         timezone: (json['timezone'] as String?) ?? 'Europe/Moscow',
         locale: (json['locale'] as String?) ?? 'ru',
         digestHour: (json['digest_hour'] as num?)?.toInt(),
+        preReminderMinutes: (json['pre_reminder_minutes'] as num?)?.toInt() ?? 0,
         isPro: (json['is_pro'] as bool?) ?? false,
         createdAtIso: (json['created_at'] as String?) ?? '',
       );
@@ -41,6 +44,7 @@ class User {
         'timezone': timezone,
         'locale': locale,
         'digest_hour': digestHour,
+        'pre_reminder_minutes': preReminderMinutes,
         'is_pro': isPro,
         'created_at': createdAtIso,
       };
@@ -50,6 +54,7 @@ class User {
     String? timezone,
     String? locale,
     int? digestHour,
+    int? preReminderMinutes,
     bool? isPro,
   }) =>
       User(
@@ -59,6 +64,7 @@ class User {
         timezone: timezone ?? this.timezone,
         locale: locale ?? this.locale,
         digestHour: digestHour ?? this.digestHour,
+        preReminderMinutes: preReminderMinutes ?? this.preReminderMinutes,
         isPro: isPro ?? this.isPro,
         createdAtIso: createdAtIso,
       );

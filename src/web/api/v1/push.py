@@ -57,7 +57,7 @@ async def register_token(
 
 
 class PushTestIn(BaseModel):
-    title: str = Field(default="Methodex Manager", max_length=100)
+    title: str = Field(default="Metodex", max_length=100)
     body: str = Field(default="Тестовый push 🚀", max_length=240)
 
 

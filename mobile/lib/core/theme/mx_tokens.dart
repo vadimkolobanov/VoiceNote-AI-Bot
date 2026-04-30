@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// Methodex Design System — Dart tokens.
+/// Metodex Design System — Dart tokens.
 ///
-/// Mirrors `mobile/assets/brand/methodex-tokens.css` 1:1. Treat this file as
+/// Mirrors `mobile/assets/brand/metodex-tokens.css` 1:1. Treat this file as
 /// generated — do not edit values unless the CSS tokens change first.
 abstract final class MX {
   // ── Surfaces ───────────────────────────────────────────────────────────
