@@ -95,26 +95,47 @@ def fmt_feedback(
     sentiment: str,
     body: str,
     user_id: int,
-    user_label: str | None,
+    user_email: str | None,
+    user_name: str | None,
     app_version: str | None,
     device_info: str | None,
 ) -> str:
     emoji = SENTIMENT_EMOJI.get(sentiment, "💬")
-    label = (user_label or "—").strip()
     body_short = body if len(body) <= 1500 else body[:1497] + "…"
-    return (
-        f"{emoji} <b>Feedback #{feedback_id}</b>\n\n"
-        f"<blockquote>{_esc(body_short)}</blockquote>\n"
-        f"\n"
-        f"👤 <code>user#{user_id}</code> {_esc(label)}\n"
-        f"📱 <code>{_esc(device_info or '?')}</code>\n"
-        f"🏷 <code>{_esc(app_version or '?')}</code>"
-    )
+
+    name = (user_name or "").strip() or "—"
+    email = (user_email or "").strip()
+    device = (device_info or "—").strip()
+    version = (app_version or "—").strip()
+
+    # Если есть email — даём mailto-ссылку с готовой темой.
+    if email:
+        subject = f"Re%3A%20Feedback%20%23{feedback_id}"
+        contact = (
+            f'<a href="mailto:{_esc(email)}?subject={subject}">{_esc(email)}</a>'
+        )
+    else:
+        contact = "—"
+
+    lines = [
+        f"{emoji} <b>Feedback #{feedback_id}</b>",
+        "",
+        f"<blockquote>{_esc(body_short)}</blockquote>",
+        "",
+        f"👤 {_esc(name)}  ·  <code>user#{user_id}</code>",
+        f"✉️ {contact}",
+        f"📱 <code>{_esc(device)}</code>",
+        f"🏷 <code>{_esc(version)}</code>",
+    ]
+    return "\n".join(lines)
 
 
 def fmt_signup(*, user_id: int, email: str | None, display_name: str | None) -> str:
-    label = (display_name or email or "").strip()
+    name = (display_name or "").strip() or "(без имени)"
+    em = (email or "").strip()
+    contact = f'<a href="mailto:{_esc(em)}">{_esc(em)}</a>' if em else "—"
     return (
-        f"🎉 <b>Новый юзер</b> #{user_id}\n"
-        f"{_esc(label) if label else '(без имени)'}"
+        f"🎉 <b>Новый юзер</b>  ·  <code>#{user_id}</code>\n"
+        f"👤 {_esc(name)}\n"
+        f"✉️ {contact}"
     )

@@ -53,7 +53,8 @@ async def submit_feedback(
             sentiment=payload.sentiment,
             body=payload.body,
             user_id=user.id,
-            user_label=user.display_name or user.email,
+            user_email=user.email,
+            user_name=user.display_name,
             app_version=payload.app_version,
             device_info=payload.device_info,
         )
