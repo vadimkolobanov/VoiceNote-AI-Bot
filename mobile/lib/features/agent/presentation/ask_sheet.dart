@@ -164,8 +164,14 @@ class _AskSheetState extends ConsumerState<AskSheet>
     final t = Theme.of(context);
     final mq = MediaQuery.of(context);
 
+    // Низ экрана: либо клавиатура, либо системная навигация (жесты/кнопки).
+    // useSafeArea на модалке не всегда учитывает gesture-bar Xiaomi/MIUI,
+    // поэтому добавляем viewPadding.bottom вручную.
+    final bottomPad = mq.viewInsets.bottom > 0
+        ? mq.viewInsets.bottom
+        : mq.viewPadding.bottom + 12;
     return Padding(
-      padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+      padding: EdgeInsets.only(bottom: bottomPad),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: mq.size.height * 0.88),
         child: Column(
