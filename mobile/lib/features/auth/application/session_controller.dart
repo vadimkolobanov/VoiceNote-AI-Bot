@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 
 import 'package:voicenote_ai/core/storage/secure_storage.dart';
 import 'package:voicenote_ai/features/auth/data/models/auth_tokens.dart';
 import 'package:voicenote_ai/features/auth/data/models/user.dart';
 import 'package:voicenote_ai/features/auth/data/repositories/auth_repository.dart';
+import 'package:voicenote_ai/features/profile/data/profile_repository.dart';
 import 'package:voicenote_ai/features/push/push_service.dart';
 
 enum SessionStatus { unknown, unauthenticated, authenticated }
@@ -52,10 +54,32 @@ class SessionController extends StateNotifier<SessionState> {
         value.status == SessionStatus.authenticated) {
       // ignore: discarded_futures
       _ref.read(pushServiceProvider).registerForUser();
+      // ignore: discarded_futures
+      _syncDeviceTimezone();
     } else if (prev.status == SessionStatus.authenticated &&
         value.status == SessionStatus.unauthenticated) {
       // ignore: discarded_futures
       _ref.read(pushServiceProvider).unregister();
+    }
+  }
+
+  /// Автосинк часового пояса с устройства. Если IANA-tz девайса
+  /// отличается от того, что в профиле — тихо PATCH-им. Юзер
+  /// может позже переопределить вручную через Profile → Часовой пояс
+  /// (override продержится до следующего старта приложения).
+  Future<void> _syncDeviceTimezone() async {
+    try {
+      final tz = await FlutterTimezone.getLocalTimezone();
+      final current = state.user?.timezone;
+      if (tz.isEmpty || tz == current) return;
+      // Импорт repo через Riverpod, без прямой зависимости.
+      final repo = _ref.read(profileRepositoryProvider);
+      final patched = await repo.patch(timezone: tz);
+      if (state.status == SessionStatus.authenticated) {
+        state = state.copyWith(user: patched);
+      }
+    } catch (_) {
+      // Тихий фолбэк: tz не критичен, сервер использует Europe/Moscow.
     }
   }
 

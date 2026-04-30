@@ -58,6 +58,9 @@ dependencies:
   device_info_plus: ^10.1.2
   package_info_plus: ^8.0.2
 
+  # IANA timezone of the device (для авто-синка часового пояса профиля)
+  flutter_timezone: ^3.0.1
+
   # Deep linking
   app_links: ^6.3.0
 
