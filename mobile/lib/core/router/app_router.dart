@@ -10,6 +10,8 @@ import 'package:voicenote_ai/features/facts/presentation/facts_screen.dart';
 import 'package:voicenote_ai/features/feedback/presentation/feedback_screen.dart';
 import 'package:voicenote_ai/features/learning/presentation/learning_screen.dart';
 import 'package:voicenote_ai/features/moment_details/presentation/moment_details_screen.dart';
+import 'package:voicenote_ai/features/onboarding/data/onboarding_flag.dart';
+import 'package:voicenote_ai/features/onboarding/presentation/onboarding_screen.dart';
 import 'package:voicenote_ai/features/paywall/presentation/paywall_screen.dart';
 import 'package:voicenote_ai/features/profile/presentation/profile_screen.dart';
 import 'package:voicenote_ai/features/rhythm/presentation/rhythm_screen.dart';
@@ -23,17 +25,22 @@ final _shellKey = GlobalKey<NavigatorState>();
 /// 4-tab Shell + voice modal + auth/splash. PRODUCT_PLAN.md §7.4.
 final routerProvider = Provider<GoRouter>((ref) {
   final session = ref.watch(sessionControllerProvider);
+  // Подписываемся на seen-флаг, чтобы изменения дёргали router refresh.
+  final refresh = ref.read(sessionControllerProvider.notifier).refresh;
+  ref.listen(onboardingSeenProvider, (_, __) => refresh.value++);
+  final seen = ref.read(onboardingSeenProvider);
 
   return GoRouter(
     navigatorKey: _rootKey,
     initialLocation: AppRoutes.splash,
     debugLogDiagnostics: false,
-    refreshListenable: ref.watch(sessionControllerProvider.notifier).refresh,
+    refreshListenable: refresh,
     redirect: (context, state) {
       final status = session.status;
       final loc = state.matchedLocation;
       final isSplash = loc == AppRoutes.splash;
       final isAuth = loc == AppRoutes.login;
+      final isOnboarding = loc == AppRoutes.onboarding;
 
       if (status == SessionStatus.unknown) {
         return isSplash ? null : AppRoutes.splash;
@@ -42,12 +49,32 @@ final routerProvider = Provider<GoRouter>((ref) {
         return isAuth ? null : AppRoutes.login;
       }
       // authenticated
+      // Пока seen-флаг ещё не загрузился (null) — держим на splash,
+      // чтобы не мигать «today → onboarding».
+      final currentSeen = ref.read(onboardingSeenProvider);
+      if (currentSeen == null) {
+        return isSplash ? null : AppRoutes.splash;
+      }
+      if (currentSeen == false && !isOnboarding) {
+        return AppRoutes.onboarding;
+      }
+      if (currentSeen == true && isOnboarding) {
+        return AppRoutes.today;
+      }
       if (isSplash || isAuth) return AppRoutes.today;
+      // Подавляем «не используется» предупреждение: мы читаем seen в build
+      // только чтобы провайдер инициализировался — фактическая проверка идёт
+      // через ref.read(onboardingSeenProvider) в самом редиректе.
+      assert(seen == seen);
       return null;
     },
     routes: [
       GoRoute(path: AppRoutes.splash, builder: (_, __) => const SplashScreen()),
       GoRoute(path: AppRoutes.login, builder: (_, __) => const LoginScreen()),
+      GoRoute(
+        path: AppRoutes.onboarding,
+        builder: (_, __) => const OnboardingScreen(),
+      ),
 
       ShellRoute(
         navigatorKey: _shellKey,

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
+import 'package:voicenote_ai/features/agent/presentation/ask_sheet.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/moments/application/moments_providers.dart';
 import 'package:voicenote_ai/features/moments/data/models/moment.dart';
@@ -224,6 +225,8 @@ class _Greeting extends ConsumerWidget {
               style: t.textTheme.bodyMedium?.copyWith(color: MX.fgMuted),
             ),
           ),
+          const SizedBox(height: 14),
+          _AskCta(),
         ],
       ),
     );
@@ -247,6 +250,49 @@ class _Greeting extends ConsumerWidget {
     if (s.doneToday > 0) parts.add('${s.doneToday} выполнено');
     if (s.overdueCount > 0) parts.add('${s.overdueCount} просрочено');
     return parts.join(' · ');
+  }
+}
+
+/// CTA внутри AI-баннера. Тонкая, в палитре баннера, не доминирует над
+/// приветствием.
+class _AskCta extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(MX.rMd),
+        onTap: () => AskSheet.show(context),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: MX.accentAi.withAlpha(30),
+            borderRadius: BorderRadius.circular(MX.rMd),
+            border: Border.all(color: MX.accentAi.withAlpha(70)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(LucideIcons.sparkles, size: 16, color: MX.accentAi),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Спроси меня о чём угодно',
+                    style: t.textTheme.bodyMedium?.copyWith(
+                      color: MX.fg,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const Icon(LucideIcons.arrowRight,
+                    size: 16, color: MX.accentAi),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

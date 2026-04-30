@@ -6,6 +6,7 @@ import 'package:voicenote_ai/core/errors/api_exception.dart';
 import 'package:voicenote_ai/core/theme/mx_tokens.dart';
 import 'package:voicenote_ai/features/auth/application/session_controller.dart';
 import 'package:voicenote_ai/features/auth/data/models/user.dart';
+import 'package:voicenote_ai/features/onboarding/data/onboarding_flag.dart';
 import 'package:voicenote_ai/features/profile/data/profile_repository.dart';
 
 /// S9 — Профиль (PRODUCT_PLAN.md §2.2 + §5.2 PATCH /profile).
@@ -61,7 +62,8 @@ class ProfileScreen extends ConsumerWidget {
               _MenuTile(
                 icon: Icons.public,
                 title: 'Часовой пояс',
-                subtitle: user?.timezone ?? '—',
+                subtitle:
+                    user == null ? '—' : tzHumanLabel(user.timezone),
                 onTap: user == null ? null : () => _editTimezone(context, ref, user),
               ),
               _MenuTile(
@@ -81,6 +83,15 @@ class ProfileScreen extends ConsumerWidget {
                 title: 'Подписка Pro',
                 subtitle: user?.isPro == true ? 'Активна' : 'Не активна — оформить',
                 onTap: () => context.push('/paywall'),
+              ),
+              _MenuTile(
+                icon: Icons.school_outlined,
+                title: 'Показать обзор снова',
+                subtitle: 'Три слайда о голосе, памяти и вопросах',
+                onTap: () async {
+                  await ref.read(onboardingSeenProvider.notifier).reset();
+                  if (context.mounted) context.go('/onboarding');
+                },
               ),
               _MenuTile(
                 icon: Icons.feedback_outlined,
@@ -126,30 +137,78 @@ class ProfileScreen extends ConsumerWidget {
   }
 
   Future<void> _editTimezone(BuildContext context, WidgetRef ref, User user) async {
-    const tzs = [
-      'Europe/Moscow',
-      'Europe/Kaliningrad',
-      'Europe/Samara',
-      'Europe/Kyiv',
-      'Asia/Almaty',
-      'Asia/Yekaterinburg',
-      'Asia/Krasnoyarsk',
-      'Asia/Irkutsk',
-      'Asia/Vladivostok',
-      'UTC',
+    // РФ + СНГ — фиксированный UTC, без DST.
+    // Зарубежье — только название (там DST, точный смещение зависит от сезона).
+    const tzs = <_Tz>[
+      // ── РФ + ближнее зарубежье (по offset на запад → восток) ──
+      _Tz('Europe/Kaliningrad', 'Калининград', '+2'),
+      _Tz('Europe/Minsk',       'Минск',       '+3'),
+      _Tz('Europe/Moscow',      'Москва',      '+3'),
+      _Tz('Europe/Kyiv',        'Киев',        '+3'),
+      _Tz('Europe/Volgograd',   'Волгоград',   '+3'),
+      _Tz('Europe/Samara',      'Самара',      '+4'),
+      _Tz('Europe/Saratov',     'Саратов',     '+4'),
+      _Tz('Europe/Astrakhan',   'Астрахань',   '+4'),
+      _Tz('Asia/Yekaterinburg', 'Екатеринбург', '+5'),
+      _Tz('Asia/Tashkent',      'Ташкент',     '+5'),
+      _Tz('Asia/Almaty',        'Алматы',      '+5'),
+      _Tz('Asia/Omsk',          'Омск',        '+6'),
+      _Tz('Asia/Bishkek',       'Бишкек',      '+6'),
+      _Tz('Asia/Krasnoyarsk',   'Красноярск',  '+7'),
+      _Tz('Asia/Novosibirsk',   'Новосибирск', '+7'),
+      _Tz('Asia/Barnaul',       'Барнаул',     '+7'),
+      _Tz('Asia/Tomsk',         'Томск',       '+7'),
+      _Tz('Asia/Irkutsk',       'Иркутск',     '+8'),
+      _Tz('Asia/Yakutsk',       'Якутск',      '+9'),
+      _Tz('Asia/Vladivostok',   'Владивосток', '+10'),
+      _Tz('Asia/Magadan',       'Магадан',     '+11'),
+      _Tz('Asia/Sakhalin',      'Южно-Сахалинск', '+11'),
+      _Tz('Asia/Kamchatka',     'Петропавловск-Камчатский', '+12'),
+      // ── Кавказ (DST нет) ──
+      _Tz('Asia/Tbilisi',       'Тбилиси',     '+4'),
+      _Tz('Asia/Yerevan',       'Ереван',      '+4'),
+      _Tz('Asia/Baku',          'Баку',        '+4'),
+      // ── Европа (DST есть, смещение плавает — не показываем) ──
+      _Tz('Europe/Chisinau',    'Кишинёв',     null),
+      _Tz('Europe/Berlin',      'Берлин',      null),
+      _Tz('Europe/Paris',       'Париж',       null),
+      _Tz('Europe/London',      'Лондон',      null),
+      _Tz('Europe/Lisbon',      'Лиссабон',    null),
+      // ── Азия / Ближний Восток (без DST) ──
+      _Tz('Asia/Jerusalem',     'Иерусалим',   null), // DST есть
+      _Tz('Asia/Dubai',         'Дубай',       '+4'),
+      _Tz('Asia/Bangkok',       'Бангкок',     '+7'),
+      _Tz('Asia/Shanghai',      'Шанхай',      '+8'),
+      _Tz('Asia/Tokyo',         'Токио',       '+9'),
+      // ── Америка (DST есть) ──
+      _Tz('America/New_York',   'Нью-Йорк',    null),
+      _Tz('America/Chicago',    'Чикаго',      null),
+      _Tz('America/Denver',     'Денвер',      null),
+      _Tz('America/Los_Angeles','Лос-Анджелес', null),
+      _Tz('America/Sao_Paulo',  'Сан-Паулу',   null),
+      _Tz('America/Argentina/Buenos_Aires', 'Буэнос-Айрес', null),
+      // ── Универсальный fallback ──
+      _Tz('UTC',                'UTC',         '+0'),
     ];
-    final result = await showModalBottomSheet<String>(
+
+    final result = await showModalBottomSheet<_Tz>(
       context: context,
       backgroundColor: MX.bgCard,
-      builder: (_) => _PickerSheet(
+      isScrollControlled: true,
+      builder: (_) => _PickerSheet<_Tz>(
         title: 'Часовой пояс',
         options: tzs,
-        current: user.timezone,
+        current: tzs.firstWhere(
+          (t) => t.id == user.timezone,
+          orElse: () => tzs.firstWhere((t) => t.id == 'Europe/Moscow'),
+        ),
+        formatLabel: (t) =>
+            t.utcOffset == null ? t.label : '${t.label} · UTC${t.utcOffset}',
       ),
     );
     if (result == null) return;
     await _patch(context, ref, () =>
-        ref.read(profileRepositoryProvider).patch(timezone: result));
+        ref.read(profileRepositoryProvider).patch(timezone: result.id));
   }
 
   Future<void> _editDigestHour(BuildContext context, WidgetRef ref, User user) async {
@@ -665,4 +724,69 @@ class _PickerSheet<T> extends StatelessWidget {
       ),
     );
   }
+}
+
+class _Tz {
+  const _Tz(this.id, this.label, this.utcOffset);
+  final String id;
+  final String label;
+  final String? utcOffset; // например "+3", "-5"; null если DST (плавает)
+}
+
+/// Преобразует IANA tz id (e.g. "Europe/Moscow") в человеко-читаемый
+/// «Москва · UTC+3». Если такого id нет в нашем справочнике — отдаём
+/// id как есть.
+String tzHumanLabel(String tzId) {
+  // фикс-смещения (РФ + СНГ + некоторые без DST)
+  const fixed = <String, (String, String)>{
+    'Europe/Kaliningrad':         ('Калининград', '+2'),
+    'Europe/Minsk':               ('Минск', '+3'),
+    'Europe/Moscow':              ('Москва', '+3'),
+    'Europe/Kyiv':                ('Киев', '+3'),
+    'Europe/Volgograd':           ('Волгоград', '+3'),
+    'Europe/Samara':              ('Самара', '+4'),
+    'Europe/Saratov':             ('Саратов', '+4'),
+    'Europe/Astrakhan':           ('Астрахань', '+4'),
+    'Asia/Yekaterinburg':         ('Екатеринбург', '+5'),
+    'Asia/Tashkent':              ('Ташкент', '+5'),
+    'Asia/Almaty':                ('Алматы', '+5'),
+    'Asia/Omsk':                  ('Омск', '+6'),
+    'Asia/Bishkek':               ('Бишкек', '+6'),
+    'Asia/Krasnoyarsk':           ('Красноярск', '+7'),
+    'Asia/Novosibirsk':           ('Новосибирск', '+7'),
+    'Asia/Barnaul':               ('Барнаул', '+7'),
+    'Asia/Tomsk':                 ('Томск', '+7'),
+    'Asia/Irkutsk':               ('Иркутск', '+8'),
+    'Asia/Yakutsk':               ('Якутск', '+9'),
+    'Asia/Vladivostok':           ('Владивосток', '+10'),
+    'Asia/Magadan':               ('Магадан', '+11'),
+    'Asia/Sakhalin':              ('Южно-Сахалинск', '+11'),
+    'Asia/Kamchatka':             ('Петропавловск-Камчатский', '+12'),
+    'Asia/Tbilisi':               ('Тбилиси', '+4'),
+    'Asia/Yerevan':               ('Ереван', '+4'),
+    'Asia/Baku':                  ('Баку', '+4'),
+    'Asia/Dubai':                 ('Дубай', '+4'),
+    'Asia/Bangkok':               ('Бангкок', '+7'),
+    'Asia/Shanghai':              ('Шанхай', '+8'),
+    'Asia/Tokyo':                 ('Токио', '+9'),
+    'UTC':                        ('UTC', '+0'),
+  };
+  final f = fixed[tzId];
+  if (f != null) return '${f.$1} · UTC${f.$2}';
+  // DST-зоны — без offset (плавает по сезону)
+  const dst = <String, String>{
+    'Europe/Chisinau':                       'Кишинёв',
+    'Europe/Berlin':                         'Берлин',
+    'Europe/Paris':                          'Париж',
+    'Europe/London':                         'Лондон',
+    'Europe/Lisbon':                         'Лиссабон',
+    'Asia/Jerusalem':                        'Иерусалим',
+    'America/New_York':                      'Нью-Йорк',
+    'America/Chicago':                       'Чикаго',
+    'America/Denver':                        'Денвер',
+    'America/Los_Angeles':                   'Лос-Анджелес',
+    'America/Sao_Paulo':                     'Сан-Паулу',
+    'America/Argentina/Buenos_Aires':        'Буэнос-Айрес',
+  };
+  return dst[tzId] ?? tzId;
 }
