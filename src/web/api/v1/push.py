@@ -93,7 +93,19 @@ async def send_test_push(
                 "message": {
                     "token": token,
                     "notification": {"title": payload.title, "body": payload.body},
-                    "android": {"priority": "high"},
+                    "data": {
+                        "title": payload.title,
+                        "body": payload.body,
+                        "kind": "test",
+                    },
+                    "android": {
+                        "priority": "high",
+                        "notification": {
+                            "channel_id": "reminder_v1",
+                            "default_sound": True,
+                            "default_vibrate_timings": True,
+                        },
+                    },
                 }
             }
             try:

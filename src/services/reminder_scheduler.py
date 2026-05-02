@@ -18,7 +18,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from src.db.models import Moment, PushToken, User
@@ -52,15 +52,30 @@ async def _fcm_send(
     body_clean = body.strip()
     if len(body_clean) > 200:
         body_clean = body_clean[:197] + "…"
+    # ВАЖНО: используем notification + data одновременно. notification гарантирует,
+    # что система Android (включая Xiaomi MIUI/HyperOS) покажет уведомление сама,
+    # даже если приложение убито свайпом. data нужен нашему background handler'у
+    # для inline-actions (Done/Snooze) и для навигации по тапу.
     msg = {
         "message": {
             "token": token,
-            "data": {
-                **data,
+            "notification": {
                 "title": title,
                 "body": body_clean or " ",
             },
-            "android": {"priority": "high"},
+            "data": {
+                **{k: str(v) for k, v in data.items()},
+                "title": title,
+                "body": body_clean or " ",
+            },
+            "android": {
+                "priority": "high",
+                "notification": {
+                    "channel_id": "reminder_v1",
+                    "default_sound": True,
+                    "default_vibrate_timings": True,
+                },
+            },
         }
     }
     try:
@@ -141,6 +156,7 @@ async def _tick_reminders(
             if pre_min > 0:
                 title = f"Через {pre_min} мин · {title}"
             ok_any = False
+            stale_tokens: list[str] = []
             for tok in tokens:
                 ok, err = await _fcm_send(
                     client, fcm_url, headers, tok,
@@ -152,6 +168,13 @@ async def _tick_reminders(
                     ok_any = True
                 else:
                     logger.warning("FCM send failed for moment %s: %s", m.id, err)
+                    if err and ("404" in err or "UNREGISTERED" in err or "INVALID_ARGUMENT" in err):
+                        stale_tokens.append(tok)
+            if stale_tokens:
+                await session.execute(
+                    delete(PushToken).where(PushToken.token.in_(stale_tokens))
+                )
+                logger.info("removed %d stale tokens for user %s", len(stale_tokens), user.id)
             if ok_any:
                 await session.execute(
                     update(Moment).where(Moment.id == m.id).values(notified_at=now)
@@ -267,6 +290,7 @@ async def _tick_digest(
 
             title, body = _build_digest_text(moments)
             ok_any = False
+            stale_tokens: list[str] = []
             for tok in tokens:
                 ok, err = await _fcm_send(
                     client, fcm_url, headers, tok,
@@ -278,6 +302,13 @@ async def _tick_digest(
                     ok_any = True
                 else:
                     logger.warning("digest FCM send failed for user %s: %s", user.id, err)
+                    if err and ("404" in err or "UNREGISTERED" in err or "INVALID_ARGUMENT" in err):
+                        stale_tokens.append(tok)
+            if stale_tokens:
+                await session.execute(
+                    delete(PushToken).where(PushToken.token.in_(stale_tokens))
+                )
+                logger.info("removed %d stale tokens for user %s", len(stale_tokens), user.id)
             await session.execute(
                 update(User).where(User.id == user.id).values(last_digest_sent_on=today_local)
             )
