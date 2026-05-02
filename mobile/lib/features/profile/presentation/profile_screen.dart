@@ -60,6 +60,12 @@ class ProfileScreen extends ConsumerWidget {
                     : () => _editPreReminder(context, ref, user),
               ),
               _MenuTile(
+                icon: Icons.notifications_active_outlined,
+                title: 'Уведомления и фон',
+                subtitle: 'Не приходят пуши? Чеклист и тест',
+                onTap: () => context.push('/notifications-health'),
+              ),
+              _MenuTile(
                 icon: Icons.public,
                 title: 'Часовой пояс',
                 subtitle:

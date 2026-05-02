@@ -20,4 +20,5 @@ abstract final class AppRoutes {
   static const learning = '/learning';
   static const feedback = '/feedback';
   static const paywall = '/paywall';
+  static const notificationsHealth = '/notifications-health';
 }

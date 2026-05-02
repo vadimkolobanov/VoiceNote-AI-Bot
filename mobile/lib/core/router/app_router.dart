@@ -10,6 +10,7 @@ import 'package:voicenote_ai/features/facts/presentation/facts_screen.dart';
 import 'package:voicenote_ai/features/feedback/presentation/feedback_screen.dart';
 import 'package:voicenote_ai/features/learning/presentation/learning_screen.dart';
 import 'package:voicenote_ai/features/moment_details/presentation/moment_details_screen.dart';
+import 'package:voicenote_ai/features/notifications_health/presentation/notifications_health_screen.dart';
 import 'package:voicenote_ai/features/onboarding/data/onboarding_flag.dart';
 import 'package:voicenote_ai/features/onboarding/presentation/onboarding_screen.dart';
 import 'package:voicenote_ai/features/paywall/presentation/paywall_screen.dart';
@@ -127,6 +128,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootKey,
         path: AppRoutes.paywall,
         builder: (_, __) => const PaywallScreen(),
+      ),
+      GoRoute(
+        parentNavigatorKey: _rootKey,
+        path: AppRoutes.notificationsHealth,
+        builder: (_, __) => const NotificationsHealthScreen(),
       ),
     ],
     errorBuilder: (_, state) => Scaffold(
